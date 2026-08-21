@@ -16,6 +16,8 @@ export interface RankResult {
   kind?: string;
   recommendedAction?: string;
   reason?: string;
+  draft?: string;
+  strategy?: string;
 }
 
 export interface RankResponse {
@@ -75,6 +77,8 @@ export function rankCandidates(mission: Mission, candidates: Candidate[], monthl
         bio: candidate.bio,
         tags: candidate.tags,
         kind: candidate.kind,
+        platform: candidate.platform,
+        publicMetrics: candidate.publicMetrics,
       })),
     }),
   });
