@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { apiConfigured } from './api';
+import { normalizeAppState, validateAppState } from './backup';
 import { clearRemoteStateVersion, clearSyncToken, downloadRemoteState, getSyncToken, setSyncToken, uploadRemoteState } from './sync';
 import type { AppState } from './types';
 import './sync.css';
@@ -45,8 +46,10 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
         setStatus('D1に保存済みデータはありません');
         return;
       }
-      onRestore(result.state);
-      setStatus(`D1から復元 · ${result.updatedAt ? new Date(result.updatedAt).toLocaleString('ja-JP') : '日時不明'}`);
+      const restored = normalizeAppState(result.state);
+      validateAppState(restored);
+      onRestore(restored);
+      setStatus(`D1から検証して復元 · ${result.updatedAt ? new Date(result.updatedAt).toLocaleString('ja-JP') : '日時不明'}`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : '同期ダウンロードに失敗しました');
     } finally {
@@ -70,6 +73,6 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
       <button className="primary-button" disabled={busy || !apiConfigured} onClick={download}>D1 → この端末</button>
     </div>
     <div className="sync-footer"><small>{busy ? '同期処理中…' : status}</small><button onClick={forget}>キーを忘れる</button></div>
-    <small className="sync-note">D1保存は最後に確認したリモート版と一致する時だけ成功します。別端末で更新されていた場合は上書きを止めるので、先に「D1 → この端末」で最新版を確認してください。同じキーでAI/検索・X・Instagramの保護ルートも認証します。</small>
+    <small className="sync-note">D1保存は最後に確認したリモート版と一致する時だけ成功します。別端末で更新されていた場合は上書きを止めるので、先に「D1 → この端末」で最新版を確認してください。D1から戻す状態も候補URL・関係性・日時などを検証してから端末へ反映します。同じキーでAI/検索・X・Instagramの保護ルートも認証します。</small>
   </section>;
 }
