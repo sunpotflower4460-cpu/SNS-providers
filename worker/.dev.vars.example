@@ -8,6 +8,11 @@ DEEPSEEK_API_KEY=
 DEEPSEEK_INPUT_PER_MILLION=
 DEEPSEEK_OUTPUT_PER_MILLION=
 
+# Optional free-first web discovery. Initial build only enables this adapter
+# when explicitly marked free, so a pricing-plan change cannot silently spend money.
+TAVILY_API_KEY=
+TAVILY_BILLING_MODE=free
+
 # Optional X public profile enrichment. X_USER_READ_USD must be set explicitly
 # from the current official X API pricing before any paid read is allowed.
 X_BEARER_TOKEN=
