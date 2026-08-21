@@ -131,6 +131,17 @@ CREATE TABLE IF NOT EXISTS x_owned_paging (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS x_follow_cycle_targets (
+  user_id TEXT NOT NULL,
+  cycle INTEGER NOT NULL,
+  target_key TEXT NOT NULL,
+  platform_user_id TEXT,
+  username TEXT NOT NULL,
+  seen INTEGER NOT NULL DEFAULT 0 CHECK(seen IN (0,1)),
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(user_id, cycle, target_key)
+);
+
 CREATE TABLE IF NOT EXISTS instagram_engager_snapshots (
   user_id TEXT PRIMARY KEY,
   snapshot_json TEXT NOT NULL,
@@ -143,3 +154,4 @@ CREATE INDEX IF NOT EXISTS idx_interactions_candidate ON interactions(candidate_
 CREATE INDEX IF NOT EXISTS idx_daily_queue_date ON daily_queue(user_id, queue_date, rank);
 CREATE INDEX IF NOT EXISTS idx_budget_month ON budget_ledger(user_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_x_oauth_sessions_created ON x_oauth_sessions(created_at);
+CREATE INDEX IF NOT EXISTS idx_x_follow_cycle_targets_seen ON x_follow_cycle_targets(user_id, cycle, seen);
