@@ -5,7 +5,8 @@ import type { AppState, Candidate } from './types';
 const MAX_NEW_INBOUND_CANDIDATES = 40;
 
 export function applyOwnedXSyncWithDiscovery(state: AppState, result: XOwnedSyncResponse): AppState {
-  const synced = applyOwnedXSync(state, result);
+  let synced = applyOwnedXSync(state, result);
+  synced = applyFullCycleFollowEvidence(synced, result);
   if (!result.enabled || !result.followers?.length) return synced;
 
   const existing = new Set(synced.candidates.map((candidate) => `${candidate.platform}:${candidate.username.toLowerCase()}`));
@@ -42,4 +43,49 @@ export function applyOwnedXSyncWithDiscovery(state: AppState, result: XOwnedSync
   }
 
   return additions.length ? { ...synced, candidates: [...additions, ...synced.candidates] } : synced;
+}
+
+function applyFullCycleFollowEvidence(state: AppState, result: XOwnedSyncResponse): AppState {
+  const evidence = result.followEvidence;
+  if (!evidence?.complete || evidence.targetCount <= 0) return state;
+  const seen = new Set(evidence.seenKeys);
+  const unseen = new Set(evidence.unseenKeys);
+  if (!seen.size && !unseen.size) return state;
+
+  const now = Date.now();
+  const waitDays = Math.max(1, Math.min(180, state.relationshipPolicy.followBackReviewAfterDays));
+  const candidates = state.candidates.map((candidate) => {
+    if (candidate.platform !== 'x' || !candidate.followedAt) return candidate;
+    if (seen.has(candidate.id)) {
+      return {
+        ...candidate,
+        followBack: true,
+        recommendedAction: candidate.recommendedAction === 'unfollow_review' ? 'review' as const : candidate.recommendedAction,
+        strategy: candidate.recommendedAction === 'unfollow_review'
+          ? 'X followersを1周確認して相互フォローを確認しました。関係性の質を見ながら継続交流します。'
+          : candidate.strategy,
+      };
+    }
+    if (!unseen.has(candidate.id)) return candidate;
+
+    const followedAt = new Date(candidate.followedAt).getTime();
+    const days = Number.isFinite(followedAt) ? Math.max(0, Math.floor((now - followedAt) / 86_400_000)) : 0;
+    const highMatch = candidate.match >= 80;
+    const meaningfulRelationship = candidate.relationshipScore >= 35
+      || candidate.stage === 'engaged'
+      || candidate.stage === 'conversation'
+      || candidate.stage === 'relationship';
+    const reviewDue = days >= waitDays && !((state.relationshipPolicy.preserveHighMatch && highMatch) || meaningfulRelationship);
+
+    return {
+      ...candidate,
+      followBack: false,
+      recommendedAction: reviewDue ? 'unfollow_review' as const : candidate.recommendedAction === 'unfollow_review' ? 'review' as const : candidate.recommendedAction,
+      strategy: reviewDue
+        ? `X followersを1周確認し、フォローから${days}日フォローバックなし。Mission一致度と交流履歴も弱いため、公式アプリで継続を確認する候補です。`
+        : `X followersを1周確認して現時点のフォローバックなしを確認しました。${days < waitDays ? `整理レビューまではあと${waitDays - days}日あります。` : 'Mission一致度または交流価値が高いため継続候補です。'}`,
+    };
+  });
+
+  return { ...state, candidates };
 }
