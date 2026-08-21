@@ -1,3 +1,4 @@
+import { getSyncToken } from './controlToken';
 import { selectCandidatesForRanking } from './localFilter';
 import type { Candidate, Mission, PublicMetrics } from './types';
 
@@ -68,9 +69,15 @@ export interface DiscoveryResponse {
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   if (!apiConfigured) throw new Error('API endpoint is not configured');
+  const token = getSyncToken().trim();
+  if (!token) throw new Error('先にSettingsで個人管理キーを保存してください');
   const response = await fetch(`${apiBaseUrl}${path}`, {
     ...init,
-    headers: { 'content-type': 'application/json', ...(init?.headers || {}) },
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${token}`,
+      ...(init?.headers || {}),
+    },
   });
   const body = await response.json().catch(() => null) as T | { error?: string } | null;
   if (!response.ok) {
