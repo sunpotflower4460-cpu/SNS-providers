@@ -123,7 +123,7 @@ export function applySelfAnalysis(state: AppState, result: RankResult | undefine
       score: clampScore(result.match),
       summary: result.reason?.trim() || state.selfProfile.summary,
       strategy: result.strategy?.trim() || state.selfProfile.strategy,
-      profileRewrite: result.draft?.trim() || state.selfProfile.profileRewrite,
+      profileRewrite: result.draft?.trim() || undefined,
       analyzedAt: new Date().toISOString(),
     },
     budget: {
@@ -265,14 +265,15 @@ export function applyRankResults(state: AppState, results: RankResult[], costUsd
   const candidates = state.candidates.map((candidate) => {
     const result = byId.get(candidate.id);
     if (!result) return candidate;
+    const recommendedAction = isRecommendedAction(result.recommendedAction) ? result.recommendedAction : candidate.recommendedAction;
     return {
       ...candidate,
       match: clampScore(result.match),
       kind: isCandidateKind(result.kind) ? result.kind : candidate.kind,
-      recommendedAction: isRecommendedAction(result.recommendedAction) ? result.recommendedAction : candidate.recommendedAction,
+      recommendedAction,
       reason: result.reason?.trim() || candidate.reason,
       strategy: result.strategy?.trim() || candidate.strategy,
-      draft: result.draft?.trim() || candidate.draft,
+      draft: result.draft?.trim() || undefined,
     };
   });
   return refreshRelationshipAdvice({
