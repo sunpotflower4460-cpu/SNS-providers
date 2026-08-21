@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { analyzeSelfProfile, apiConfigured, discoverSocialCandidates, enrichXProfiles, fetchBudget, rankCandidates } from './api';
 import BackupControls from './BackupControls';
 import DailyQueue from './DailyQueue';
+import { buildDailyQueue, queueSummary } from './daily';
 import { mergeDiscoveredProfiles } from './discoveryStore';
 import { addCandidateFromReference, applyRankResults, applySelfAnalysis, applyXProfiles, loadState, recordInteraction, saveState, setFollowBackStatus, syncBudget, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
 import { copyDraft, openCandidate, platformLabel } from './social';
@@ -35,27 +36,18 @@ function App() {
 
   useEffect(() => {
     if (!apiConfigured) return;
-    let cancelled = false;
     fetchBudget()
-      .then((budget) => {
-        if (cancelled) return;
-        setState((current) => syncBudget(current, budget.usedUsd, budget.limitUsd));
-        setApiNote(budget.ledgerAvailable === false ? '無料モード · 有料APIは台帳復旧まで停止' : '予算同期済み');
-      })
-      .catch(() => {
-        if (!cancelled) setApiNote('API未接続・ローカル継続');
-      });
-    return () => { cancelled = true; };
+      .then((budget) => setState((current) => syncBudget(current, budget.usedUsd, budget.limitUsd)))
+      .catch((error) => setApiNote(error instanceof Error ? `予算同期: ${error.message}` : '予算同期に失敗しました'));
   }, []);
 
-  const active = useMemo(
-    () => state.candidates.filter((candidate) => !candidate.skipped).sort((a, b) => b.match - a.match),
-    [state.candidates],
-  );
-
+  const active = useMemo(() => state.candidates.filter((candidate) => !candidate.skipped).sort((a, b) => b.match - a.match), [state.candidates]);
   const doneToday = useMemo(() => {
-    const today = new Date().toDateString();
-    return state.interactions.filter((item) => new Date(item.at).toDateString() === today).length;
+    const now = new Date();
+    return state.interactions.filter((interaction) => {
+      const at = new Date(interaction.at);
+      return at.getFullYear() === now.getFullYear() && at.getMonth() === now.getMonth() && at.getDate() === now.getDate();
+    }).length;
   }, [state.interactions]);
 
   function onOpen(candidate: Candidate) {
@@ -63,34 +55,10 @@ function App() {
     openCandidate(candidate);
   }
 
-  function resolvePending(action: 'followed' | 'skipped' | 'kept') {
+  function resolvePending(action: 'followed' | 'skipped' | 'later' | 'kept') {
     if (!pending) return;
-    setState((current) => recordInteraction(current, pending.id, action));
+    if (action !== 'later') setState((current) => recordInteraction(current, pending.id, action));
     setPending(null);
-  }
-
-  async function discoverCandidates() {
-    if (!apiConfigured) {
-      setApiNote('Worker URLを設定すると無料Web探索が使えます');
-      return;
-    }
-    setDiscovering(true);
-    setApiNote('Missionに合う公開プロフィール候補を無料探索中…');
-    try {
-      const result = await discoverSocialCandidates(state.mission);
-      if (!result.enabled) {
-        setApiNote(result.reason || '無料候補探索は現在無効です');
-        return;
-      }
-      const next = mergeDiscoveredProfiles(state, result.profiles);
-      const added = next.candidates.length - state.candidates.length;
-      setState(next);
-      setApiNote(`無料探索で${added}件追加 · ${result.credits || 0} credits · $0`);
-    } catch (error) {
-      setApiNote(error instanceof Error ? `候補探索失敗: ${error.message}` : '候補探索に失敗しました');
-    } finally {
-      setDiscovering(false);
-    }
   }
 
   async function rerankCandidates() {
@@ -98,14 +66,17 @@ function App() {
       setApiNote('Worker URLを設定するとAI再評価が使えます');
       return;
     }
-    const targets = state.candidates.filter((candidate) => !candidate.skipped).slice(0, 50);
-    if (!targets.length) return;
+    const targets = active.filter((candidate) => candidate.recommendedAction !== 'unfollow_review');
+    if (!targets.length) {
+      setApiNote('再評価する候補がありません');
+      return;
+    }
     setRanking(true);
-    setApiNote('Missionに照らしてAI評価中…');
+    setApiNote('Mission基準で候補を再評価中…');
     try {
       const result = await rankCandidates(state.mission, targets, state.budget.monthlyLimitUsd);
       setState((current) => applyRankResults(current, result.results, result.costUsd));
-      setApiNote(`${result.provider}で${result.results.length}件を評価${result.paid ? ` · $${result.costUsd.toFixed(4)}` : ' · $0'}`);
+      setApiNote(`${result.provider}で${result.results.length}件評価${result.paid ? ` · $${result.costUsd.toFixed(4)}` : ' · $0'}`);
     } catch (error) {
       setApiNote(error instanceof Error ? `AI評価失敗: ${error.message}` : 'AI評価に失敗しました');
     } finally {
@@ -113,9 +84,36 @@ function App() {
     }
   }
 
+  async function discoverCandidates() {
+    if (!apiConfigured) {
+      setApiNote('Worker URLを設定すると無料候補探索が使えます');
+      return;
+    }
+    setDiscovering(true);
+    setApiNote('Missionから公開プロフィール候補を探索中…');
+    try {
+      const result = await discoverSocialCandidates(state.mission);
+      if (!result.enabled) {
+        setApiNote(result.reason || '無料探索は現在無効です');
+        return;
+      }
+      let addedCount = 0;
+      setState((current) => {
+        const next = mergeDiscoveredProfiles(current, result.profiles);
+        addedCount = Math.max(0, next.candidates.length - current.candidates.length);
+        return next;
+      });
+      setApiNote(`${result.provider}で候補探索完了 · 新規${addedCount}件 · $${result.costUsd.toFixed(2)}`);
+    } catch (error) {
+      setApiNote(error instanceof Error ? `探索失敗: ${error.message}` : '候補探索に失敗しました');
+    } finally {
+      setDiscovering(false);
+    }
+  }
+
   async function enrichXCandidates() {
     if (!apiConfigured) {
-      setApiNote('Worker URLを設定するとX公式情報の補完が使えます');
+      setApiNote('Worker URLを設定するとX公式プロフィール補完が使えます');
       return;
     }
     const cutoff = Date.now() - 24 * 60 * 60 * 1000;
@@ -209,11 +207,11 @@ function BudgetPill({ state }: { state: AppState }) {
 function Today({ state, active, doneToday, onOpen, onTab }: {
   state: AppState; active: Candidate[]; doneToday: number; onOpen: (c: Candidate) => void; onTab: (tab: Tab) => void;
 }) {
-  const follow = active.filter((c) => c.recommendedAction === 'follow').length;
-  const reply = active.filter((c) => c.recommendedAction === 'reply').length;
-  const review = state.candidates.filter((c) => c.recommendedAction === 'unfollow_review').length;
-  const goal = Math.max(20, active.length + state.insights.length);
-  const progress = Math.min(100, Math.round((doneToday / goal) * 100));
+  const queue = buildDailyQueue(state);
+  const summary = queueSummary(queue);
+  const configuredLimit = Math.max(1, state.relationshipPolicy.dailyQueueLimit ?? 30);
+  const plannedTotal = Math.min(configuredLimit, doneToday + queue.length);
+  const progress = plannedTotal > 0 ? Math.min(100, Math.round((doneToday / plannedTotal) * 100)) : 100;
 
   return <>
     <section className="mission-card">
@@ -221,16 +219,16 @@ function Today({ state, active, doneToday, onOpen, onTab }: {
       <h1>{state.mission.primaryGoal}</h1>
       <p>{state.mission.text}</p>
       <div className="mission-progress"><span style={{ width: `${progress}%` }} /></div>
-      <div className="progress-copy"><strong>{doneToday}</strong><span>/ {goal} actions today</span></div>
+      <div className="progress-copy"><strong>{doneToday}</strong><span>/ {plannedTotal} actions today</span></div>
     </section>
 
     <section className="section-block">
       <div className="section-title"><div><span className="eyebrow">TODAY</span><h2>今日、目的に近づく</h2></div><button className="text-button" onClick={() => onTab('discover')}>すべて見る</button></div>
       <div className="metric-grid">
-        <Metric icon="＋" value={follow} label="新しくつながる" />
-        <Metric icon="↗" value={reply} label="会話を始める" />
-        <Metric icon="◎" value={state.insights.length} label="自分を改善" />
-        <Metric icon="−" value={review} label="フォロー整理" />
+        <Metric icon="＋" value={summary.connect} label="新しくつながる" />
+        <Metric icon="↗" value={summary.engage} label="会話・交流" />
+        <Metric icon="◎" value={summary.self} label="自分を改善" />
+        <Metric icon="−" value={summary.cleanup} label="フォロー整理" />
       </div>
     </section>
 
@@ -358,64 +356,68 @@ function Me({ state, onAnalyze, analyzing }: { state: AppState; onAnalyze: (prof
   const [profile, setProfile] = useState(state.selfProfile.profileText);
   const [posts, setPosts] = useState(state.selfProfile.recentPostsText);
   const score = state.selfProfile.score ?? Math.min(100, 48 + state.insights.length * 8);
+
+  useEffect(() => {
+    setProfile(state.selfProfile.profileText);
+    setPosts(state.selfProfile.recentPostsText);
+  }, [state.selfProfile.profileText, state.selfProfile.recentPostsText]);
+
   return <>
-    <PageHeading eyebrow="ME" title="自分自身も成長対象に" text="プロフィールと最近の投稿をMissionとの差分から見て、次に直す場所を決めます。" />
-    <section className="score-card"><div><span>MISSION SCORE</span><strong>{score}</strong><small>/100</small></div><p>{state.mission.primaryGoal}</p></section>
-
-    <section className="self-input-card">
-      <span className="eyebrow">ACCOUNT INPUT</span>
-      <label>現在のプロフィール / Bio<textarea rows={5} value={profile} onChange={(event) => setProfile(event.target.value)} placeholder="SNSのプロフィール文を貼り付け" /></label>
-      <label>最近の投稿<textarea rows={8} value={posts} onChange={(event) => setPosts(event.target.value)} placeholder="最近の投稿を数件まとめて貼り付け。無理に全部入れなくてOK" /></label>
-      <button className="primary-button full" disabled={analyzing} onClick={() => onAnalyze(profile, posts)}>{analyzing ? 'Missionから分析中…' : 'AIで自分を分析'}</button>
-      <small>初期PWAは手動貼り付けで$0寄りに運用。将来、本人アカウント連携へ差し替え可能です。</small>
+    <PageHeading eyebrow="ME" title="自分もMissionに近づける" text="相手探しだけでなく、自分のプロフィールと投稿の状態もAIが見ます。" />
+    <section className="score-card"><div><span>MISSION SCORE</span><strong>{score}</strong><small>/100</small></div><p>{state.selfProfile.summary || '現在地をMissionから逆算し、次に直すべきポイントを提案します。'}</p></section>
+    <section className="form-card self-analysis-card">
+      <label>現在のプロフィール<textarea value={profile} onChange={(event) => setProfile(event.target.value)} placeholder="X / Instagramのプロフィール文を貼り付け" /></label>
+      <label>最近の投稿<textarea value={posts} onChange={(event) => setPosts(event.target.value)} placeholder="最近の投稿を数件まとめて貼り付け" /></label>
+      <button className="primary-button" disabled={analyzing} onClick={() => onAnalyze(profile, posts)}>{analyzing ? '分析中…' : 'Missionから自己分析'}</button>
     </section>
-
-    {state.selfProfile.summary && <section className="self-result-card">
-      <div className="result-heading"><span className="eyebrow">AI DIAGNOSIS</span>{state.selfProfile.analyzedAt && <small>{new Date(state.selfProfile.analyzedAt).toLocaleDateString('ja-JP')} 更新</small>}</div>
-      <h3>現在地</h3><p>{state.selfProfile.summary}</p>
-      {state.selfProfile.strategy && <><h3>目的地へ近づく作戦</h3><p>{state.selfProfile.strategy}</p></>}
-      {state.selfProfile.profileRewrite && <div className="rewrite-box"><span>プロフィール改善案</span><p>{state.selfProfile.profileRewrite}</p><button onClick={() => copyDraft(state.selfProfile.profileRewrite!)}>コピー</button></div>}
-    </section>}
-
-    <div className="insight-list">{state.insights.map((insight) => <article className="insight-card" key={insight.id}><div className="insight-top"><span>{insight.category.toUpperCase()}</span><b className={`priority ${insight.priority}`}>{insight.priority}</b></div><h3>{insight.title}</h3><p>{insight.body}</p></article>)}</div>
+    {state.selfProfile.strategy && <section className="coach-card self-result"><div className="coach-icon">↗</div><div><span className="eyebrow">NEXT STRATEGY</span><h3>目的地へ近づく作戦</h3><p>{state.selfProfile.strategy}</p></div></section>}
+    {state.selfProfile.profileRewrite && <section className="form-card rewrite-card"><div className="field-title"><div><strong>プロフィール改善案</strong><span>事実を足さず、Missionへの入口を分かりやすくする</span></div><b>AI</b></div><p>{state.selfProfile.profileRewrite}</p><button className="secondary-button" onClick={() => copyDraft(state.selfProfile.profileRewrite!)}>コピー</button></section>}
+    <div className="insight-list">{state.insights.map((insight) => <article className="insight-card" key={insight.id}><div className={`priority ${insight.priority}`} /><div><span>{insight.category.toUpperCase()}</span><strong>{insight.title}</strong><p>{insight.body}</p></div></article>)}</div>
   </>;
 }
 
 function Settings({ state, onChange }: { state: AppState; onChange: (state: AppState) => void }) {
-  const [mission, setMission] = useState<Mission>(state.mission);
-  const [limit, setLimit] = useState(state.budget.monthlyLimitUsd);
-  const [reviewDays, setReviewDays] = useState(state.relationshipPolicy.followBackReviewAfterDays);
-  const [preserveHighMatch, setPreserveHighMatch] = useState(state.relationshipPolicy.preserveHighMatch);
-  function save() {
-    const next = updateMission(state, mission);
-    const withPolicy = updateRelationshipPolicy(next, { followBackReviewAfterDays: reviewDays, preserveHighMatch });
-    onChange({ ...withPolicy, budget: { ...withPolicy.budget, hardLimit: true, monthlyLimitUsd: limit, mode: limit === 0 ? 'free' : limit <= 1 ? 'eco' : limit <= 3 ? 'balanced' : 'growth' } });
+  const [missionText, setMissionText] = useState(state.mission.text);
+  const [primaryGoal, setPrimaryGoal] = useState(state.mission.primaryGoal);
+  const [communicationDNA, setCommunicationDNA] = useState(state.mission.communicationDNA);
+  const [budget, setBudget] = useState(state.budget.monthlyLimitUsd);
+  const [followBackDays, setFollowBackDays] = useState(state.relationshipPolicy.followBackReviewAfterDays);
+
+  function persist() {
+    let next = updateMission(state, { ...state.mission, text: missionText, primaryGoal, communicationDNA });
+    next = { ...next, budget: { ...next.budget, monthlyLimitUsd: Math.max(0, budget), hardLimit: true } };
+    next = updateRelationshipPolicy(next, { ...next.relationshipPolicy, followBackReviewAfterDays: Math.max(7, Math.min(90, Math.round(followBackDays || 30))) });
+    onChange(next);
   }
+
   return <>
-    <PageHeading eyebrow="SETTINGS" title="AIに目的地を教える" text="ここが推薦・文章・自己分析すべての判断軸になります。" />
-    <section className="form-card"><label>Mission<textarea value={mission.text} rows={5} onChange={(e) => setMission({ ...mission, text: e.target.value })} /></label><label>一番大事なゴール<input value={mission.primaryGoal} onChange={(e) => setMission({ ...mission, primaryGoal: e.target.value })} /></label><label>Communication DNA<textarea value={mission.communicationDNA} rows={4} onChange={(e) => setMission({ ...mission, communicationDNA: e.target.value })} /></label></section>
-    <section className="form-card relationship-settings">
-      <div className="field-title"><div><strong>フォロー整理ポリシー</strong><span>フォロバだけで機械的に解除しない</span></div><b>{reviewDays}日</b></div>
-      <input className="range" type="range" min="7" max="90" step="1" value={reviewDays} onChange={(e) => setReviewDays(Number(e.target.value))} />
-      <div className="range-labels"><span>7日</span><span>30日</span><span>90日</span></div>
-      <button className="policy-toggle" onClick={() => setPreserveHighMatch((value) => !value)}><span><strong>高Mission Matchは残す</strong><small>フォロバなしでも相性80以上や交流中の人は継続候補</small></span><i className={preserveHighMatch ? 'toggle on' : 'toggle'} /></button>
+    <PageHeading eyebrow="SETTINGS" title="AIに目的地を教える" text="この設定が候補選び・交流文・自己改善の判断軸になります。" />
+    <section className="form-card">
+      <label>Mission<textarea value={missionText} onChange={(event) => setMissionText(event.target.value)} /></label>
+      <label>最優先ゴール<input value={primaryGoal} onChange={(event) => setPrimaryGoal(event.target.value)} /></label>
+      <label>Communication DNA<textarea value={communicationDNA} onChange={(event) => setCommunicationDNA(event.target.value)} /></label>
+      <label>月間AI / API予算 <span className="inline-value">${budget.toFixed(2)}</span><input className="range" type="range" min="0" max="10" step="0.5" value={budget} onChange={(event) => setBudget(Number(event.target.value))} /></label>
+      <label>フォローバック整理レビュー <span className="inline-value">{followBackDays}日後</span><input className="range" type="range" min="7" max="90" step="1" value={followBackDays} onChange={(event) => setFollowBackDays(Number(event.target.value))} /></label>
+      <div className="hard-limit"><span>HARD LIMIT</span><strong>ON</strong><p>この上限を超える有料API処理は実行しません。</p></div>
+      <button className="primary-button" onClick={persist}>設定を保存</button>
     </section>
-    <section className="form-card budget-settings"><div className="field-title"><div><strong>月間AI/API予算</strong><span>機能を削らず、外部取得量を自動調整</span></div><b>${limit}</b></div><input className="range" type="range" min="0" max="10" step="1" value={limit} onChange={(e) => setLimit(Number(e.target.value))} /><div className="range-labels"><span>$0</span><span>$3 recommended</span><span>$10</span></div><div className="hard-limit"><span><strong>HARD LIMIT</strong><small>常時ON。設定額を超える有料リクエストを拒否</small></span><i className="toggle on" /></div><div className="budget-breakdown"><span>X <b>${state.budget.xUsd.toFixed(2)}</b></span><span>LLM <b>${state.budget.llmUsd.toFixed(2)}</b></span><span>Search <b>${state.budget.searchUsd.toFixed(2)}</b></span></div></section>
     <BackupControls state={state} onRestore={onChange} />
-    <button className="save-button" onClick={save}>設定を保存</button>
   </>;
 }
 
 function PageHeading({ eyebrow, title, text }: { eyebrow: string; title: string; text: string }) {
-  return <div className="page-heading"><span className="eyebrow">{eyebrow}</span><h1>{title}</h1><p>{text}</p></div>;
+  return <header className="page-heading"><span className="eyebrow">{eyebrow}</span><h1>{title}</h1><p>{text}</p></header>;
 }
 
-function ResultSheet({ candidate, onResolve }: { candidate: Candidate; onResolve: (action: 'followed' | 'skipped' | 'kept') => void }) {
-  return <div className="sheet-backdrop"><section className="result-sheet"><div className="sheet-handle" /><span className="eyebrow">WELCOME BACK</span><h2>@{candidate.username} はどうしました？</h2><p>結果だけ教えてください。次の推薦と関係性スコアに反映します。</p><button className="primary-button full" onClick={() => onResolve('followed')}>フォロー / 交流した</button><button className="secondary-button full" onClick={() => onResolve('kept')}>今回は見るだけ</button><button className="ghost-button full" onClick={() => onResolve('skipped')}>この候補は違う</button></section></div>;
+function ResultSheet({ candidate, onResolve }: { candidate: Candidate; onResolve: (action: 'followed' | 'skipped' | 'later' | 'kept') => void }) {
+  return <div className="sheet-backdrop"><section className="result-sheet"><div className="sheet-handle" /><span className="eyebrow">WELCOME BACK</span><h2>@{candidate.username} はどうしました？</h2><p>最終操作は公式SNS側で行います。ここでは関係性履歴だけ記録します。</p><div className="sheet-actions"><button onClick={() => onResolve('followed')}>フォローした</button><button onClick={() => onResolve('kept')}>交流した / 継続</button><button onClick={() => onResolve('skipped')}>今回は見送る</button><button className="muted" onClick={() => onResolve('later')}>後で</button></div></section></div>;
 }
 
-function compactNumber(value: number) {
-  return new Intl.NumberFormat('ja-JP', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
+function compactNumber(value?: number) {
+  const number = value || 0;
+  if (number >= 1_000_000) return `${(number / 1_000_000).toFixed(1)}M`;
+  if (number >= 1_000) return `${(number / 1_000).toFixed(1)}K`;
+  return String(number);
 }
 
 export default App;
