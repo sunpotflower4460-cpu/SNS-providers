@@ -289,11 +289,14 @@ export function applyRankResults(state: AppState, results: RankResult[], costUsd
 
 export function recordInteraction(state: AppState, candidateId: string, action: Interaction['action']): AppState {
   const now = new Date().toISOString();
+  const target = state.candidates.find((candidate) => candidate.id === candidateId);
+  const cleanupKeep = action === 'kept' && target?.recommendedAction === 'unfollow_review';
+  const recordedAction: Interaction['action'] = cleanupKeep ? 'review' : action;
   const priorEngagements = state.interactions.filter((interaction) => interaction.candidateId === candidateId && interaction.action === 'kept').length;
-  const interactions = [{ id: crypto.randomUUID(), candidateId, action, at: now }, ...state.interactions];
+  const interactions = [{ id: crypto.randomUUID(), candidateId, action: recordedAction, at: now }, ...state.interactions];
   const candidates = state.candidates.map((candidate) => {
     if (candidate.id !== candidateId) return candidate;
-    if (action === 'followed') {
+    if (recordedAction === 'followed') {
       const stage = candidate.stage === 'discovered' || candidate.stage === 'interested' ? 'following' as const : candidate.stage;
       return {
         ...candidate,
@@ -304,13 +307,22 @@ export function recordInteraction(state: AppState, candidateId: string, action: 
         lastInteractionAt: now,
       };
     }
-    if (action === 'skipped') return { ...candidate, skipped: true };
-    if (action === 'kept') {
+    if (recordedAction === 'skipped') return { ...candidate, skipped: true };
+    if (recordedAction === 'kept') {
       return {
         ...candidate,
         stage: advanceRelationshipStage(candidate.stage, priorEngagements),
         relationshipScore: addRelationshipScore(candidate.relationshipScore, 12),
         lastInteractionAt: now,
+      };
+    }
+    if (cleanupKeep) {
+      return {
+        ...candidate,
+        recommendedAction: 'review' as const,
+        draft: undefined,
+        lastInteractionAt: now,
+        strategy: '今回はフォローを継続する判断を記録しました。一定期間後に関係性をもう一度確認します。',
       };
     }
     return { ...candidate, lastInteractionAt: now };
@@ -348,13 +360,18 @@ function refreshRelationshipAdvice(state: AppState): AppState {
     const days = Math.floor((now - followedAt) / 86_400_000);
     if (days < waitDays) return candidate;
 
+    const lastInteractionAt = candidate.lastInteractionAt ? new Date(candidate.lastInteractionAt).getTime() : Number.NaN;
+    const daysSinceInteraction = Number.isFinite(lastInteractionAt) ? Math.floor((now - lastInteractionAt) / 86_400_000) : Number.POSITIVE_INFINITY;
+    const recentlyReviewedOrActive = daysSinceInteraction < waitDays;
     const highMatch = candidate.match >= 80;
-    const meaningfulRelationship = candidate.relationshipScore >= 35 || candidate.stage === 'engaged' || candidate.stage === 'recognized' || candidate.stage === 'conversation' || candidate.stage === 'relationship';
+    const meaningfulRelationship = candidate.relationshipScore >= 35 || candidate.stage === 'engaged' || candidate.stage === 'recognized' || candidate.stage === 'conversation' || candidate.stage === 'relationship' || recentlyReviewedOrActive;
     if ((state.relationshipPolicy.preserveHighMatch && highMatch) || meaningfulRelationship) {
       return {
         ...candidate,
         recommendedAction: candidate.recommendedAction === 'unfollow_review' ? 'review' as const : candidate.recommendedAction,
-        strategy: `フォローバックは${days}日確認できていませんが、Mission一致度または交流価値が高いため継続候補です。`,
+        strategy: recentlyReviewedOrActive
+          ? '最近の交流または継続判断があるため、今は整理せず関係性の変化を見ます。'
+          : `フォローバックは${days}日確認できていませんが、Mission一致度または交流価値が高いため継続候補です。`,
       };
     }
 
