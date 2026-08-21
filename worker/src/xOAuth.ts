@@ -24,6 +24,7 @@ interface StoredTokenRow {
 }
 
 const READ_ONLY_SCOPES = ['tweet.read', 'users.read', 'follows.read', 'offline.access'];
+const READ_ONLY_SCOPE_SET = new Set(READ_ONLY_SCOPES);
 const SESSION_TTL_MS = 10 * 60 * 1000;
 const REFRESH_EARLY_MS = 60 * 1000;
 
@@ -127,6 +128,7 @@ async function loadStoredToken(env: XOAuthEnv, userId: string) {
 
 async function persistTokenResponse(env: XOAuthEnv, userId: string, token: XTokenResponse, existingRefreshTokenEnc?: string | null) {
   if (!token.access_token) throw new Error('X token response did not include access_token');
+  const grantedScopes = validateGrantedScopes(token.scope);
   const accessTokenEnc = await encryptToken(env, token.access_token);
   const refreshTokenEnc = token.refresh_token
     ? await encryptToken(env, token.refresh_token)
@@ -145,7 +147,18 @@ async function persistTokenResponse(env: XOAuthEnv, userId: string, token: XToke
        expires_at = excluded.expires_at,
        scope = excluded.scope,
        updated_at = excluded.updated_at`
-  ).bind(userId, accessTokenEnc, refreshTokenEnc, expiresAt, token.scope || READ_ONLY_SCOPES.join(' '), updatedAt).run();
+  ).bind(userId, accessTokenEnc, refreshTokenEnc, expiresAt, grantedScopes.join(' '), updatedAt).run();
+}
+
+function validateGrantedScopes(scopeValue?: string) {
+  const scopes = scopeValue?.trim()
+    ? [...new Set(scopeValue.trim().split(/\s+/).filter(Boolean))]
+    : [...READ_ONLY_SCOPES];
+  const unexpected = scopes.filter((scope) => !READ_ONLY_SCOPE_SET.has(scope));
+  if (unexpected.length) throw new Error(`X OAuth returned unexpected scope(s): ${unexpected.join(', ')}`);
+  const missing = READ_ONLY_SCOPES.filter((scope) => !scopes.includes(scope));
+  if (missing.length) throw new Error(`X OAuth response is missing required scope(s): ${missing.join(', ')}`);
+  return scopes;
 }
 
 async function exchangeAuthorizationCode(env: XOAuthEnv, code: string, verifier: string) {
