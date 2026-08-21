@@ -21,8 +21,9 @@ const actionWeight: Record<RecommendedAction, number> = {
   review: 8,
 };
 
-export function buildDailyQueue(state: AppState, limit = 20): DailyQueueItem[] {
+export function buildDailyQueue(state: AppState): DailyQueueItem[] {
   const today = localDateKey(new Date());
+  const limits = workloadLimits(state);
   const completedCandidateIds = new Set(
     state.interactions
       .filter((interaction) => localDateKey(new Date(interaction.at)) === today)
@@ -37,7 +38,7 @@ export function buildDailyQueue(state: AppState, limit = 20): DailyQueueItem[] {
   const selfItems = state.insights
     .slice()
     .sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority))
-    .slice(0, 2)
+    .slice(0, limits.self)
     .map((insight, index): DailyQueueItem => ({
       id: `self-${insight.id}`,
       kind: 'self',
@@ -47,7 +48,7 @@ export function buildDailyQueue(state: AppState, limit = 20): DailyQueueItem[] {
       priority: 72 - index * 4 + (insight.priority === 'high' ? 10 : insight.priority === 'medium' ? 5 : 0),
     }));
 
-  return interleaveByGoal(relationshipItems, selfItems).slice(0, Math.max(1, limit));
+  return interleaveByGoal(relationshipItems, selfItems, limits).slice(0, limits.total);
 }
 
 export function queueSummary(items: DailyQueueItem[]) {
@@ -88,13 +89,17 @@ function queueTitle(candidate: Candidate) {
   }
 }
 
-function interleaveByGoal(relationshipItems: DailyQueueItem[], selfItems: DailyQueueItem[]) {
+function interleaveByGoal(
+  relationshipItems: DailyQueueItem[],
+  selfItems: DailyQueueItem[],
+  limits: ReturnType<typeof workloadLimits>,
+) {
   const result: DailyQueueItem[] = [];
   const buckets = {
-    conversation: relationshipItems.filter((item) => ['reply', 'dm'].includes(item.action)),
-    connect: relationshipItems.filter((item) => item.action === 'follow'),
-    light: relationshipItems.filter((item) => ['like', 'review'].includes(item.action)),
-    cleanup: relationshipItems.filter((item) => item.action === 'unfollow_review'),
+    conversation: relationshipItems.filter((item) => ['reply', 'dm'].includes(item.action)).slice(0, limits.conversation),
+    connect: relationshipItems.filter((item) => item.action === 'follow').slice(0, limits.connect),
+    light: relationshipItems.filter((item) => ['like', 'review'].includes(item.action)).slice(0, limits.light),
+    cleanup: relationshipItems.filter((item) => item.action === 'unfollow_review').slice(0, limits.cleanup),
   };
   const order = [buckets.conversation, buckets.connect, buckets.light, selfItems, buckets.cleanup];
 
@@ -105,6 +110,23 @@ function interleaveByGoal(relationshipItems: DailyQueueItem[], selfItems: DailyQ
     }
   }
   return result;
+}
+
+function workloadLimits(state: AppState) {
+  const policy = state.relationshipPolicy;
+  return {
+    total: clampInt(policy.dailyQueueLimit, 30, 1, 150),
+    connect: clampInt(policy.dailyConnectionLimit, 20, 0, 120),
+    conversation: clampInt(policy.dailyConversationLimit, 8, 0, 30),
+    light: clampInt(policy.dailyLightEngagementLimit, 8, 0, 30),
+    cleanup: clampInt(policy.dailyCleanupLimit, 5, 0, 30),
+    self: clampInt(policy.dailySelfImproveLimit, 2, 0, 5),
+  };
+}
+
+function clampInt(value: number | undefined, fallback: number, min: number, max: number) {
+  const parsed = Number.isFinite(value) ? Math.round(value!) : fallback;
+  return Math.max(min, Math.min(max, parsed));
 }
 
 function priorityRank(priority: 'high' | 'medium' | 'low') {
