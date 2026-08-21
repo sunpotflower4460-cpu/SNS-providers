@@ -1,4 +1,4 @@
-import type { Candidate, Mission } from './types';
+import type { Candidate, Mission, PublicMetrics } from './types';
 
 const rawBase = import.meta.env.VITE_API_BASE_URL?.trim() || '';
 export const apiBaseUrl = rawBase.replace(/\/$/, '');
@@ -24,6 +24,23 @@ export interface RankResponse {
   costUsd: number;
   reason?: string;
   results: RankResult[];
+}
+
+export interface XProfileResult {
+  id: string;
+  name: string;
+  username: string;
+  description: string;
+  verified: boolean;
+  createdAt?: string | null;
+  publicMetrics: PublicMetrics;
+}
+
+export interface XEnrichResponse {
+  enabled: boolean;
+  costUsd: number;
+  profiles: XProfileResult[];
+  reason?: string;
 }
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -60,5 +77,14 @@ export function rankCandidates(mission: Mission, candidates: Candidate[], monthl
         kind: candidate.kind,
       })),
     }),
+  });
+}
+
+export function enrichXProfiles(candidates: Candidate[], monthlyLimitUsd: number, userId = 'local-user') {
+  const usernames = [...new Set(candidates.filter((candidate) => candidate.platform === 'x').map((candidate) => candidate.username))].slice(0, 100);
+  if (!usernames.length) return Promise.resolve<XEnrichResponse>({ enabled: false, costUsd: 0, profiles: [], reason: 'No X candidates to enrich.' });
+  return apiFetch<XEnrichResponse>('/api/x/enrich', {
+    method: 'POST',
+    body: JSON.stringify({ userId, usernames, monthlyLimitUsd }),
   });
 }
