@@ -77,10 +77,21 @@ export interface SelfInsight {
   priority: 'high' | 'medium' | 'low';
 }
 
+export interface SelfProfileState {
+  profileText: string;
+  recentPostsText: string;
+  score?: number;
+  summary?: string;
+  strategy?: string;
+  profileRewrite?: string;
+  analyzedAt?: string;
+}
+
 export interface AppState {
   mission: Mission;
   candidates: Candidate[];
   interactions: Interaction[];
   budget: BudgetState;
   insights: SelfInsight[];
+  selfProfile: SelfProfileState;
 }
