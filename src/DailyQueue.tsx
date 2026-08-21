@@ -20,7 +20,7 @@ const actionIcon: Record<string, string> = {
 };
 
 export default function DailyQueue({ state, onOpenCandidate, onOpenMe }: Props) {
-  const items = useMemo(() => buildDailyQueue(state, 20), [state]);
+  const items = useMemo(() => buildDailyQueue(state), [state]);
   const summary = useMemo(() => queueSummary(items), [items]);
   const candidateById = useMemo(() => new Map(state.candidates.map((candidate) => [candidate.id, candidate])), [state.candidates]);
 
