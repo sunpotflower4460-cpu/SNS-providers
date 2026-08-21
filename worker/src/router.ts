@@ -34,6 +34,7 @@ interface DiscoverRequest {
 interface StateSyncRequest {
   userId?: string;
   state: unknown;
+  expectedUpdatedAt?: string | null;
 }
 
 const ROUTER_CORS_PATHS = new Set([
@@ -161,13 +162,33 @@ export default {
           const body = await request.json<StateSyncRequest>();
           const userId = sanitizeUserId(body.userId || 'local-user');
           if (!body || !body.state || typeof body.state !== 'object') return json({ error: 'state is required' }, 400, request, env);
+          if (!Object.prototype.hasOwnProperty.call(body, 'expectedUpdatedAt')) {
+            return json({ error: '同期前提バージョンがありません。先にD1から最新状態を確認してください。' }, 428, request, env);
+          }
+          if (body.expectedUpdatedAt !== null && typeof body.expectedUpdatedAt !== 'string') {
+            return json({ error: 'expectedUpdatedAt must be a string or null' }, 400, request, env);
+          }
+
           const stateJson = JSON.stringify(body.state);
           if (stateJson.length > 2_000_000) return json({ error: 'state snapshot is too large' }, 413, request, env);
           const updatedAt = new Date().toISOString();
-          await env.DB.prepare(
-            `INSERT INTO state_snapshots (user_id, state_json, updated_at) VALUES (?, ?, ?)
-             ON CONFLICT(user_id) DO UPDATE SET state_json = excluded.state_json, updated_at = excluded.updated_at`
-          ).bind(userId, stateJson, updatedAt).run();
+
+          if (body.expectedUpdatedAt === null) {
+            const inserted = await env.DB.prepare(
+              'INSERT OR IGNORE INTO state_snapshots (user_id, state_json, updated_at) VALUES (?, ?, ?)'
+            ).bind(userId, stateJson, updatedAt).run();
+            if (inserted.meta.changes === 0) {
+              return json({ error: 'D1には既存データがあります。上書き事故を防ぐため、先に「D1 → この端末」で最新版を確認してください。' }, 409, request, env);
+            }
+          } else {
+            const updated = await env.DB.prepare(
+              'UPDATE state_snapshots SET state_json = ?, updated_at = ? WHERE user_id = ? AND updated_at = ?'
+            ).bind(stateJson, updatedAt, userId, body.expectedUpdatedAt).run();
+            if (updated.meta.changes === 0) {
+              return json({ error: '別端末でD1データが更新されています。上書き事故を防ぐため、先に「D1 → この端末」で最新版を確認してください。' }, 409, request, env);
+            }
+          }
+
           return json({ ok: true, updatedAt }, 200, request, env);
         } catch (error) {
           const message = error instanceof Error ? error.message : 'State upload failed';
