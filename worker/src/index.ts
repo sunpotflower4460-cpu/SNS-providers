@@ -22,6 +22,13 @@ interface CandidateInput {
   bio?: string;
   tags?: string[];
   kind?: string;
+  platform?: string;
+  publicMetrics?: {
+    followers?: number;
+    following?: number;
+    posts?: number;
+    listed?: number;
+  };
 }
 
 interface RankRequest {
@@ -290,7 +297,15 @@ async function rankWithProvider(provider: 'groq' | 'deepseek', body: RankRequest
     mission: body.mission,
     communication_dna: body.communicationDNA || '',
     candidates: body.candidates,
-    instruction: 'Rank candidates for genuine long-term relationship value. Avoid follower-churn logic. Return concise Japanese reasons.',
+    instruction: [
+      'Rank candidates for genuine long-term relationship value, not raw follow-back probability.',
+      'Choose the best current action from follow, like, reply, dm, review, or unfollow_review.',
+      'Explain the strategic reason briefly in Japanese.',
+      'For at most the five highest-value candidates where reply or dm is genuinely appropriate, include a short natural Japanese draft that follows communication_dna.',
+      'Never use generic template praise, never invent facts or post content that is not in the supplied data, and omit draft when context is insufficient.',
+      'strategy should explain what relationship step to take now and why.',
+      'Do not recommend automated final social actions.',
+    ].join(' '),
   };
 
   const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
@@ -298,11 +313,14 @@ async function rankWithProvider(provider: 'groq' | 'deepseek', body: RankRequest
     headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
     body: JSON.stringify({
       model,
-      temperature: 0.2,
+      temperature: 0.35,
       max_tokens: MAX_OUTPUT_TOKENS,
       response_format: { type: 'json_object' },
       messages: [
-        { role: 'system', content: 'You are a social relationship strategist. Output JSON only: {"results":[{"id":string,"match":0-100,"kind":string,"recommendedAction":string,"reason":string}]}. Never recommend automated social actions.' },
+        {
+          role: 'system',
+          content: 'You are a social relationship strategist. Output JSON only: {"results":[{"id":string,"match":0-100,"kind":string,"recommendedAction":string,"reason":string,"strategy":string,"draft"?:string}]}. Drafts must sound individualized and human, but only use supplied facts. Never recommend automated social actions or follow-churn tactics.'
+        },
         { role: 'user', content: JSON.stringify(prompt) },
       ],
     }),
@@ -330,6 +348,7 @@ function localRank(mission: string, candidates: CandidateInput[]) {
       kind: candidate.kind || 'other',
       recommendedAction: 'review',
       reason: overlap > 0 ? 'Missionと共通する語やテーマがあるため、確認候補として残しました。' : '無料ローカル判定では確信度が低いため、人間の確認を優先します。',
+      strategy: 'プロフィールや投稿内容を本人が確認してから、自然な交流方法を決めます。',
     };
   }).sort((a, b) => b.match - a.match);
 }
