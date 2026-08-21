@@ -53,7 +53,7 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
     setSyncing(true);
     setNote('自分のXプロフィール・最近の投稿・フォロー関係を同期中…');
     try {
-      const result = await syncOwnedXData(state.budget.monthlyLimitUsd);
+      const result = await syncOwnedXData(state.budget.monthlyLimitUsd, state.candidates);
       if (!result.enabled) {
         setNote(result.reason || 'X owned-read同期は現在無効です');
         return;
@@ -76,7 +76,10 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
       const source = result.source === 'cache' ? 'キャッシュ' : 'X公式API';
       const cost = result.costUsd > 0 ? ` · $${result.costUsd.toFixed(4)}` : ' · $0';
       const added = addedCandidates > 0 ? ` · 新規候補${addedCandidates}人` : '';
-      setNote(`${source}から同期完了${cost}${added}`);
+      const evidence = result.followEvidence?.complete
+        ? ` · フォロバ判定${result.followEvidence.targetCount}人分を1周完了`
+        : '';
+      setNote(`${source}から同期完了${cost}${added}${evidence}`);
     } catch (error) {
       setNote(error instanceof Error ? error.message : 'Xデータ同期に失敗しました');
     } finally {
@@ -139,6 +142,6 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
         </>}
     </div>
     <small>{note}</small>
-    <small className="x-account-warning">X接続の管理とデータ同期にはSettingsの個人管理キーが必要です。同期は20時間キャッシュを優先し、取得済みfollowersの一部は追加費用なしで交流候補へ再利用します。</small>
+    <small className="x-account-warning">フォローバックの否定判定は、周回開始時に追跡中だったフォロー済み候補を1周最後まで確認できた場合だけ反映します。部分ページから「フォロバなし」とは判定しません。</small>
   </section>;
 }
