@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiConfigured } from './api';
-import { applyOwnedXSync } from './store';
+import { applyOwnedXSyncWithDiscovery } from './xOwnedStore';
 import { disconnectXOAuth, fetchXOAuthStatus, startXOAuth, syncOwnedXData, type XOAuthStatus } from './xAccount';
 import type { AppState } from './types';
 import './xAccount.css';
@@ -58,10 +58,14 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
         setNote(result.reason || 'X owned-read同期は現在無効です');
         return;
       }
-      onChange(applyOwnedXSync(state, result));
+      const beforeCount = state.candidates.length;
+      const nextState = applyOwnedXSyncWithDiscovery(state, result);
+      const addedCandidates = Math.max(0, nextState.candidates.length - beforeCount);
+      onChange(nextState);
       const source = result.source === 'cache' ? 'キャッシュ' : 'X公式API';
       const cost = result.costUsd > 0 ? ` · $${result.costUsd.toFixed(4)}` : ' · $0';
-      setNote(`${source}から同期完了${cost}`);
+      const added = addedCandidates > 0 ? ` · 新規候補${addedCandidates}人` : '';
+      setNote(`${source}から同期完了${cost}${added}`);
     } catch (error) {
       setNote(error instanceof Error ? error.message : 'Xデータ同期に失敗しました');
     } finally {
@@ -116,6 +120,6 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
         </>}
     </div>
     <small>{note}</small>
-    <small className="x-account-warning">X接続の管理とデータ同期にはSettingsの個人管理キーが必要です。同期は20時間キャッシュを優先し、同じデータの再取得コストを抑えます。</small>
+    <small className="x-account-warning">X接続の管理とデータ同期にはSettingsの個人管理キーが必要です。同期は20時間キャッシュを優先し、取得済みfollowersの一部は追加費用なしで交流候補へ再利用します。</small>
   </section>;
 }
