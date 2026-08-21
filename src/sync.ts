@@ -5,6 +5,8 @@ import type { AppState } from './types';
 
 export { clearSyncToken, getSyncToken, setSyncToken } from './controlToken';
 
+const REMOTE_VERSION_KEY = 'sns-providers:remote-state-version';
+
 interface DownloadResponse {
   found: boolean;
   state: AppState | null;
@@ -16,13 +18,32 @@ interface UploadResponse {
   updatedAt: string;
 }
 
+export function getRemoteStateVersion() {
+  return localStorage.getItem(REMOTE_VERSION_KEY);
+}
+
+export function clearRemoteStateVersion() {
+  localStorage.removeItem(REMOTE_VERSION_KEY);
+}
+
+function setRemoteStateVersion(updatedAt: string | null) {
+  if (updatedAt) localStorage.setItem(REMOTE_VERSION_KEY, updatedAt);
+  else localStorage.removeItem(REMOTE_VERSION_KEY);
+}
+
 export async function uploadRemoteState(state: AppState, token = getSyncToken(), userId = 'local-user') {
   if (!apiConfigured) throw new Error('Worker URLが設定されていません');
   if (!token.trim()) throw new Error('同期キーを入力してください');
-  return syncFetch<UploadResponse>(`/api/sync/state`, token, {
+  const result = await syncFetch<UploadResponse>(`/api/sync/state`, token, {
     method: 'PUT',
-    body: JSON.stringify({ userId, state }),
+    body: JSON.stringify({
+      userId,
+      state,
+      expectedUpdatedAt: getRemoteStateVersion(),
+    }),
   });
+  setRemoteStateVersion(result.updatedAt);
+  return result;
 }
 
 export async function downloadRemoteState(token = getSyncToken(), userId = 'local-user') {
@@ -33,6 +54,7 @@ export async function downloadRemoteState(token = getSyncToken(), userId = 'loca
     result.state = normalizeAppState(result.state);
     validateAppState(result.state);
   }
+  setRemoteStateVersion(result.updatedAt);
   return result;
 }
 
