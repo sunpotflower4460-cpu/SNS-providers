@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "security:check": "node scripts/verify-security-invariants.mjs"
+    "security:check": "node scripts/verify-security-invariants.mjs",
+    "pwa:check": "node scripts/verify-pwa-assets.mjs"
   },
   "dependencies": {
     "react": "^19.1.1",
