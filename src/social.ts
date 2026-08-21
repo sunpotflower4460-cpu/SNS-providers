@@ -8,18 +8,14 @@ export function openCandidate(candidate: Candidate) {
     return;
   }
 
-  if (candidate.platform === 'x' && candidate.recommendedAction === 'reply' && candidate.draft) {
-    const intent = new URL('https://twitter.com/intent/tweet');
-    intent.searchParams.set('text', candidate.draft);
-    window.open(intent.toString(), '_blank', 'noopener,noreferrer');
-    return;
-  }
-
-  if (candidate.platform === 'instagram' && candidate.recommendedAction === 'reply' && candidate.engagementUrl) {
+  if (candidate.recommendedAction === 'reply' && candidate.engagementUrl) {
     window.open(candidate.engagementUrl, '_blank', 'noopener,noreferrer');
     return;
   }
 
+  // A reply without a concrete post/conversation URL must not silently become a
+  // new unrelated X post. Open the profile so the user can choose the real
+  // conversation context in the official social surface.
   window.open(candidate.profileUrl, '_blank', 'noopener,noreferrer');
 }
 
