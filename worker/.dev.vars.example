@@ -18,5 +18,9 @@ TAVILY_BILLING_MODE=free
 X_BEARER_TOKEN=
 X_USER_READ_USD=
 
+# Optional personal state sync. Store only the SHA-256 hex of the secret here.
+# Example on macOS/Linux: printf '%s' 'your-long-secret' | shasum -a 256
+SYNC_TOKEN_SHA256=
+
 DEFAULT_MONTHLY_BUDGET_USD=3
 ALLOWED_ORIGIN=http://localhost:5173
