@@ -70,11 +70,16 @@ function applyFullCycleFollowEvidence(state: AppState, result: XOwnedSyncRespons
 
     const followedAt = new Date(candidate.followedAt).getTime();
     const days = Number.isFinite(followedAt) ? Math.max(0, Math.floor((now - followedAt) / 86_400_000)) : 0;
+    const lastInteractionAt = candidate.lastInteractionAt ? new Date(candidate.lastInteractionAt).getTime() : Number.NaN;
+    const daysSinceInteraction = Number.isFinite(lastInteractionAt) ? Math.floor((now - lastInteractionAt) / 86_400_000) : Number.POSITIVE_INFINITY;
+    const recentlyReviewedOrActive = daysSinceInteraction < waitDays;
     const highMatch = candidate.match >= 80;
     const meaningfulRelationship = candidate.relationshipScore >= 35
       || candidate.stage === 'engaged'
+      || candidate.stage === 'recognized'
       || candidate.stage === 'conversation'
-      || candidate.stage === 'relationship';
+      || candidate.stage === 'relationship'
+      || recentlyReviewedOrActive;
     const reviewDue = days >= waitDays && !((state.relationshipPolicy.preserveHighMatch && highMatch) || meaningfulRelationship);
 
     return {
@@ -83,7 +88,9 @@ function applyFullCycleFollowEvidence(state: AppState, result: XOwnedSyncRespons
       recommendedAction: reviewDue ? 'unfollow_review' as const : candidate.recommendedAction === 'unfollow_review' ? 'review' as const : candidate.recommendedAction,
       strategy: reviewDue
         ? `X followersを1周確認し、フォローから${days}日フォローバックなし。Mission一致度と交流履歴も弱いため、公式アプリで継続を確認する候補です。`
-        : `X followersを1周確認して現時点のフォローバックなしを確認しました。${days < waitDays ? `整理レビューまではあと${waitDays - days}日あります。` : 'Mission一致度または交流価値が高いため継続候補です。'}`,
+        : recentlyReviewedOrActive
+          ? 'X followersを1周確認して現時点のフォローバックなしを確認しましたが、最近の交流または継続判断があるため今は整理しません。'
+          : `X followersを1周確認して現時点のフォローバックなしを確認しました。${days < waitDays ? `整理レビューまではあと${waitDays - days}日あります。` : 'Mission一致度または交流価値が高いため継続候補です。'}`,
     };
   });
 
