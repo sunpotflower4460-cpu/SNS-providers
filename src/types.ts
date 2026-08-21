@@ -41,6 +41,7 @@ export interface Candidate {
   relationshipScore: number;
   stage: RelationshipStage;
   reason: string;
+  strategy?: string;
   tags: string[];
   recommendedAction: RecommendedAction;
   draft?: string;
