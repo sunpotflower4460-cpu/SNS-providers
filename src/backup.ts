@@ -32,11 +32,11 @@ export async function readBackup(file: File): Promise<AppState> {
   if (parsed.format !== 'social-mission-backup' || parsed.version !== 1 || !parsed.state) {
     throw new Error('Social Missionのバックアップ形式ではありません');
   }
-  validateState(parsed.state);
+  validateAppState(parsed.state);
   return parsed.state;
 }
 
-function validateState(state: AppState) {
+export function validateAppState(state: AppState) {
   if (!state.mission || typeof state.mission.text !== 'string') throw new Error('Missionデータが不正です');
   if (!Array.isArray(state.candidates) || !Array.isArray(state.interactions)) throw new Error('候補・交流データが不正です');
   if (!state.budget || typeof state.budget.monthlyLimitUsd !== 'number') throw new Error('予算データが不正です');
