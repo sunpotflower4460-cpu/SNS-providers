@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 
 const router = await readFile(new URL('../worker/src/router.ts', import.meta.url), 'utf8');
+const providerApi = await readFile(new URL('../worker/src/index.ts', import.meta.url), 'utf8');
 const xOAuth = await readFile(new URL('../worker/src/xOAuth.ts', import.meta.url), 'utf8');
 
 const protectedProviderPaths = [
@@ -24,6 +25,13 @@ if (!router.includes('expectedUpdatedAt') || !router.includes('INSERT OR IGNORE 
   throw new Error('D1 state sync lost its optimistic-concurrency guard.');
 }
 
+if (!providerApi.includes("markReservationUncertain(env, reservationId, 'user_read_uncertain')") || !providerApi.includes("markReservationUncertain(env, reservationId, 'rank_uncertain')")) {
+  throw new Error('Paid-provider uncertainty no longer retains conservative budget reservations.');
+}
+if (providerApi.includes('DELETE FROM budget_ledger WHERE id = ?')) {
+  throw new Error('A paid-provider failure path can delete an existing budget reservation.');
+}
+
 const scopeMatch = xOAuth.match(/const READ_ONLY_SCOPES\s*=\s*\[([^\]]+)\]/s);
 if (!scopeMatch) throw new Error('READ_ONLY_SCOPES definition was not found.');
 
@@ -38,4 +46,4 @@ if (writeScopes.length) {
   throw new Error(`Write-capable X OAuth scope detected: ${writeScopes.join(', ')}`);
 }
 
-console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, optimistic D1 sync, X scopes=${scopes.join(', ')}`);
+console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, conservative uncertain-cost accounting, optimistic D1 sync, X scopes=${scopes.join(', ')}`);
