@@ -1,3 +1,4 @@
+import { selectCandidatesForRanking } from './localFilter';
 import type { Candidate, Mission, PublicMetrics } from './types';
 
 const rawBase = import.meta.env.VITE_API_BASE_URL?.trim() || '';
@@ -91,6 +92,7 @@ export function discoverSocialCandidates(mission: Mission, userId = 'local-user'
 }
 
 export function rankCandidates(mission: Mission, candidates: Candidate[], monthlyLimitUsd: number, userId = 'local-user') {
+  const selected = selectCandidatesForRanking(mission, candidates.slice(0, 50), 30);
   return apiFetch<RankResponse>('/api/ai/rank', {
     method: 'POST',
     body: JSON.stringify({
@@ -98,7 +100,7 @@ export function rankCandidates(mission: Mission, candidates: Candidate[], monthl
       mission: missionText(mission),
       communicationDNA: mission.communicationDNA,
       monthlyLimitUsd,
-      candidates: candidates.slice(0, 50).map((candidate) => ({
+      candidates: selected.map((candidate) => ({
         id: candidate.id,
         username: candidate.username,
         bio: candidate.bio,
