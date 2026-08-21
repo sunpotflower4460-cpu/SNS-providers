@@ -75,8 +75,20 @@ interface BudgetSnapshot {
   available: boolean;
 }
 
+interface NormalizedRankResult {
+  id: string;
+  match: number;
+  kind: string;
+  recommendedAction: string;
+  reason: string;
+  strategy: string;
+  draft?: string;
+}
+
 const jsonHeaders = { 'content-type': 'application/json; charset=utf-8' };
 const MAX_OUTPUT_TOKENS = 1800;
+const ALLOWED_ACTIONS = new Set(['follow', 'like', 'reply', 'dm', 'review', 'unfollow_review']);
+const ALLOWED_KINDS = new Set(['fan', 'artist', 'creator', 'media', 'venue', 'other', 'self_profile']);
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -434,7 +446,51 @@ async function rankWithProvider(provider: 'groq' | 'deepseek', body: RankRequest
   if (!content) throw new Error(`${provider} returned no content`);
   const parsed = JSON.parse(content) as { results?: unknown[] };
   if (!Array.isArray(parsed.results)) throw new Error(`${provider} returned invalid ranking JSON`);
-  return { results: parsed.results, usage: data.usage };
+  const results = normalizeProviderResults(parsed.results, body.candidates);
+  if (!results.length) throw new Error(`${provider} returned no usable ranking results`);
+  return { results, usage: data.usage };
+}
+
+function normalizeProviderResults(rawResults: unknown[], candidates: CandidateInput[]): NormalizedRankResult[] {
+  const candidateById = new Map(candidates.map((candidate) => [candidate.id, candidate]));
+  const seenIds = new Set<string>();
+  const normalized: NormalizedRankResult[] = [];
+
+  for (const raw of rawResults.slice(0, candidates.length)) {
+    if (!raw || typeof raw !== 'object') continue;
+    const item = raw as Record<string, unknown>;
+    const id = typeof item.id === 'string' ? item.id : '';
+    if (!id || seenIds.has(id) || !candidateById.has(id)) continue;
+
+    const candidate = candidateById.get(id)!;
+    const numericMatch = typeof item.match === 'number' ? item.match : Number(item.match);
+    const match = Number.isFinite(numericMatch) ? Math.max(0, Math.min(100, Math.round(numericMatch))) : 0;
+    const requestedKind = typeof item.kind === 'string' ? item.kind : candidate.kind || 'other';
+    const kind = ALLOWED_KINDS.has(requestedKind) ? requestedKind : (ALLOWED_KINDS.has(candidate.kind || '') ? candidate.kind! : 'other');
+    const requestedAction = typeof item.recommendedAction === 'string' ? item.recommendedAction : 'review';
+    const recommendedAction = ALLOWED_ACTIONS.has(requestedAction) ? requestedAction : 'review';
+    const reason = safeText(item.reason, 1200) || 'AIから有効な理由文が返らなかったため、人間の確認を優先します。';
+    const strategy = safeText(item.strategy, 1600) || 'プロフィールと実際の発信内容を確認してから次の交流を決めます。';
+    const draft = safeText(item.draft, 1200);
+
+    normalized.push({
+      id,
+      match,
+      kind,
+      recommendedAction: candidate.kind === 'self_profile' ? 'review' : recommendedAction,
+      reason,
+      strategy,
+      ...(draft ? { draft } : {}),
+    });
+    seenIds.add(id);
+  }
+
+  return normalized;
+}
+
+function safeText(value: unknown, maxLength: number) {
+  if (typeof value !== 'string') return '';
+  return value.trim().slice(0, maxLength);
 }
 
 function localRank(mission: string, candidates: CandidateInput[]) {
