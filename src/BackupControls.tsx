@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { downloadBackup, readBackup } from './backup';
+import InstagramAccountControls from './InstagramAccountControls';
 import SyncControls from './SyncControls';
 import WorkloadControls from './WorkloadControls';
 import XAccountControls from './XAccountControls';
@@ -26,6 +27,7 @@ export default function BackupControls({ state, onRestore }: { state: AppState; 
     <WorkloadControls state={state} onChange={onRestore} />
     <SyncControls state={state} onRestore={onRestore} />
     <XAccountControls state={state} onChange={onRestore} />
+    <InstagramAccountControls state={state} onChange={onRestore} />
     <section className="form-card backup-card">
       <div className="field-title"><div><strong>ローカルデータ</strong><span>Mission・候補・関係性・設定を持ち運ぶ</span></div><b>JSON</b></div>
       <div className="backup-actions">
