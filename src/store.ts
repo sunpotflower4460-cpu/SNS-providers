@@ -3,32 +3,11 @@ import type { XOwnedSyncResponse } from './xAccount';
 import type { AppState, Candidate, Interaction, Mission, Platform, RecommendedAction, RelationshipPolicy } from './types';
 
 const KEY = 'sns-providers:v1';
-
-const seedCandidates: Candidate[] = [
-  {
-    id: 'x-1', platform: 'x', username: 'music_listener', displayName: 'Music Listener',
-    bio: 'Indie / acoustic / live music listener.', profileUrl: 'https://x.com/music_listener',
-    kind: 'fan', match: 94, relationshipScore: 12, stage: 'discovered',
-    reason: 'インディー／弾き語りへの関心が高く、ファン候補としてMissionとの一致度が高いです。',
-    tags: ['indie', 'acoustic', 'listener'], recommendedAction: 'follow'
-  },
-  {
-    id: 'ig-1', platform: 'instagram', username: 'indie_creator', displayName: 'Indie Creator',
-    bio: 'Independent visual creator and music lover.', profileUrl: 'https://www.instagram.com/indie_creator/',
-    kind: 'creator', match: 88, relationshipScore: 18, stage: 'interested',
-    reason: '音楽と映像の両方に関心があり、将来の制作交流やコラボ候補として相性があります。',
-    tags: ['visual', 'music', 'creator'], recommendedAction: 'follow'
-  },
-  {
-    id: 'x-2', platform: 'x', username: 'songwriter_friend', displayName: 'Songwriter',
-    bio: 'Singer-songwriter. Recording demos every week.', profileUrl: 'https://x.com/songwriter_friend',
-    kind: 'artist', match: 91, relationshipScore: 42, stage: 'engaged',
-    reason: '活動規模と制作テーマが近く、同業者同士の継続的な交流価値が高い候補です。',
-    strategy: 'いきなりDMではなく、制作投稿への自然な返信から関係を深める。',
-    tags: ['songwriter', 'recording'], recommendedAction: 'reply',
-    draft: '制作途中を出すのって勇気いりますよね。自分も音楽を作っていて、完成前の段階だからこそ見えるものがあるなと思います。'
-  }
-];
+const LEGACY_DEMO_CANDIDATES = new Set([
+  'x-1:x:music_listener',
+  'ig-1:instagram:indie_creator',
+  'x-2:x:songwriter_friend',
+]);
 
 const defaultState: AppState = {
   mission: {
@@ -37,7 +16,7 @@ const defaultState: AppState = {
     secondaryGoals: ['アーティスト仲間', 'クリエイターとのコラボ', '認知拡大'],
     communicationDNA: '親しみやすく、営業臭を出さない。相手の投稿内容に具体的に触れ、本当に興味を持った部分から自然な会話を始める。'
   },
-  candidates: seedCandidates,
+  candidates: [],
   interactions: [],
   budget: {
     monthlyLimitUsd: 3,
@@ -75,9 +54,15 @@ export function loadState(): AppState {
     const raw = localStorage.getItem(KEY);
     if (!raw) return defaultState;
     const parsed = JSON.parse(raw) as Partial<AppState>;
+    const candidates = Array.isArray(parsed.candidates) ? parsed.candidates.filter((candidate) => !isLegacyDemoCandidate(candidate)) : [];
+    const interactions = Array.isArray(parsed.interactions)
+      ? parsed.interactions.filter((interaction) => candidates.some((candidate) => candidate.id === interaction.candidateId))
+      : [];
     const state: AppState = {
       ...defaultState,
       ...parsed,
+      candidates,
+      interactions,
       mission: { ...defaultState.mission, ...(parsed.mission || {}) },
       budget: { ...defaultState.budget, ...(parsed.budget || {}) },
       relationshipPolicy: { ...defaultState.relationshipPolicy, ...(parsed.relationshipPolicy || {}) },
@@ -405,6 +390,10 @@ function normalizeLocalRelationshipAction(candidate: Candidate): Candidate {
     };
   }
   return candidate;
+}
+
+function isLegacyDemoCandidate(candidate: Candidate) {
+  return LEGACY_DEMO_CANDIDATES.has(`${candidate.id}:${candidate.platform}:${candidate.username.toLowerCase()}`);
 }
 
 function parseUsername(platform: Platform, value: string) {
