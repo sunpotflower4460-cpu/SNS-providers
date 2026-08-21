@@ -6,21 +6,25 @@ Server-side boundary for provider keys, ranking, free-first social discovery, pe
 
 Provider keys, Instagram access tokens and X OAuth tokens must never be shipped to the PWA bundle. The browser talks to this Worker; the Worker decides whether a free provider, paid fallback, paid X read or local scoring path is allowed.
 
+The Worker URL may be public, so provider/quota-bearing routes also require the user's personal-control Bearer token. Knowing the Worker URL alone is not enough to spend the user's small provider budget or free-tier quota.
+
 ## Routes
 
-- `GET /api/health`
+Personal-control Bearer token required unless otherwise noted:
+
+- `GET /api/health` — public health metadata only
 - `GET /api/budget?userId=local-user`
 - `POST /api/discover/social`
 - `POST /api/ai/rank`
 - `POST /api/x/enrich`
-- `POST /api/x/oauth/start` — personal-control Bearer token required
+- `POST /api/x/oauth/start`
 - `GET /api/x/oauth/callback` — X redirect, validated by one-time PKCE state
-- `GET /api/x/oauth/status?userId=local-user`
-- `DELETE /api/x/oauth/disconnect?userId=local-user` — personal-control Bearer token required
-- `POST /api/x/owned/sync` — personal-control Bearer token required
-- `POST /api/instagram/engagers/sync` — personal-control Bearer token required
-- `GET /api/sync/state?userId=local-user` — personal-control Bearer token required
-- `PUT /api/sync/state` — personal-control Bearer token required
+- `GET /api/x/oauth/status?userId=local-user` — connection metadata only
+- `DELETE /api/x/oauth/disconnect?userId=local-user`
+- `POST /api/x/owned/sync`
+- `POST /api/instagram/engagers/sync`
+- `GET /api/sync/state?userId=local-user`
+- `PUT /api/sync/state`
 
 ## Personal control key and D1 state sync
 
@@ -29,8 +33,11 @@ Personal controls are disabled unless `SYNC_TOKEN_SHA256` contains the SHA-256 h
 The same personal key protects:
 
 - D1 state upload/download
-- starting X OAuth
-- disconnecting X OAuth
+- budget status
+- AI ranking and self-analysis
+- Tavily discovery
+- optional X public-profile enrichment
+- starting/disconnecting X OAuth
 - reading the connected account's owned X data
 - synchronizing Instagram Professional comment engagers
 
@@ -42,7 +49,21 @@ printf '%s' 'replace-with-a-long-random-secret' | shasum -a 256
 
 Store that 64-character hash as `SYNC_TOKEN_SHA256`. Enter the original unhashed secret in the PWA Settings screen.
 
-`PUT /api/sync/state` stores one JSON snapshot per `userId` in D1 and `GET /api/sync/state` restores it. Snapshots are capped at 2 MB. This is access-controlled synchronization, **not application-level encryption of the state data at rest**.
+### Conflict-safe snapshot writes
+
+`GET /api/sync/state` returns the snapshot plus its `updatedAt`. The PWA remembers that remote version locally and sends it back as `expectedUpdatedAt` on the next upload.
+
+`PUT /api/sync/state` is optimistic-concurrency protected:
+
+- the request must include `expectedUpdatedAt`
+- `expectedUpdatedAt: null` can create the first snapshot only when no snapshot already exists
+- a non-null value updates only when the current D1 row still has exactly that same `updated_at`
+- if another device changed the row first, the Worker returns `409` instead of overwriting it
+- an older client that omits the concurrency precondition receives `428`
+
+This prevents silent stale-device overwrites. It is still manual snapshot synchronization rather than a field-level automatic merge engine.
+
+Snapshots are capped at 2 MB. This is access-controlled synchronization, **not application-level encryption of the state data at rest**.
 
 ## Read-only X OAuth
 
@@ -53,7 +74,7 @@ X OAuth uses Authorization Code with PKCE and the scopes are fixed in source cod
 - `follows.read`
 - `offline.access`
 
-No `tweet.write`, `follows.write`, DM-write or other social-action scope is requested.
+No `tweet.write`, `follows.write`, DM-write or other social-action scope is requested. CI parses this list and fails if a write-capable scope is added.
 
 Required Worker configuration:
 
@@ -88,11 +109,22 @@ Example body:
   "monthlyLimitUsd": 3,
   "maxFollowers": 100,
   "maxFollowing": 100,
-  "maxPosts": 20
+  "maxPosts": 20,
+  "trackedAccounts": [
+    { "key": "candidate-123", "username": "example", "platformUserId": "123456" }
+  ]
 }
 ```
 
-Follow-back reconciliation is conservative: a candidate found in a fetched follower page may be marked mutual, while a missing candidate is not treated as no-follow-back from partial coverage. Pagination can progressively widen coverage without turning partial pages into false negatives.
+### Full-cycle follow-back evidence
+
+Follow-back reconciliation is conservative.
+
+At the start of a follower pagination cycle, the Worker snapshots the bounded tracked-account set supplied by the PWA. The PWA only supplies X candidates it has actually recorded as followed. Each follower page marks matching targets as seen by platform user ID or username. A partial page never produces negative evidence.
+
+Only when the follower cycle reaches its final page does the Worker return completed `seenKeys` and `unseenKeys`. The client may then mark the frozen tracked set mutual/no-follow-back. Even then, no automatic unfollow happens: the PWA still applies the configured review window, Mission Match and relationship-value rules before showing a manual cleanup review.
+
+If evidence persistence fails, the Worker returns no negative evidence rather than guessing.
 
 ## Instagram Professional engager sync
 
@@ -102,10 +134,10 @@ The adapter is for an Instagram Professional account (Creator or Business). Conf
 
 - `INSTAGRAM_ACCESS_TOKEN` — keep server-side only
 - `INSTAGRAM_USER_ID` — the connected Instagram Professional account ID
-- `INSTAGRAM_API_VERSION` — explicitly set the currently supported Graph API version, such as `v24.0` only after verifying it is current
+- `INSTAGRAM_API_VERSION` — explicitly set the currently supported Graph API version after verifying it is current
 - `SYNC_TOKEN_SHA256` — protects the sync route
 
-For Instagram Login, the Meta app/token must have the permissions required for the chosen setup, including basic Professional-account access and comment management (currently documented as permissions such as `instagram_business_basic` and `instagram_business_manage_comments`). Verify current Meta requirements before production use because permission names and review requirements can change.
+For Instagram Login, the Meta app/token must have the permissions required for the chosen setup, including basic Professional-account access and comment management. Verify current Meta requirements before production use because permission names and review requirements can change.
 
 The current sync deliberately reads only:
 
@@ -129,7 +161,7 @@ For a larger production deployment, comment webhooks are preferable to frequent 
 
 `POST /api/discover/social` uses Tavily only when both `TAVILY_API_KEY` is configured and `TAVILY_BILLING_MODE=free`.
 
-The initial build deliberately fails closed when Tavily is not explicitly marked free. It searches the public web for X/Instagram profile-shaped results, canonicalizes them to profile URLs, and returns candidates for later Mission ranking. It does not crawl or automate the X/Instagram DOM.
+The route itself requires the personal control key. The initial build deliberately fails closed when Tavily is not explicitly marked free. It searches the public web for X/Instagram profile-shaped results, canonicalizes them to profile URLs, and returns candidates for later Mission ranking. It does not crawl or automate the X/Instagram DOM.
 
 Example:
 
@@ -144,6 +176,8 @@ Example:
 The adapter currently runs one basic search for X and one for Instagram. Free-search usage is recorded in D1 with cost `$0` when the ledger is available.
 
 ## Mission ranking
+
+`POST /api/ai/rank` requires the personal control key even when the selected provider is free, so a public Worker URL cannot be used by strangers to consume the free allocation.
 
 Before the PWA calls the Worker, it can run a zero-cost local relevance prefilter so only the strongest subset of a candidate batch consumes LLM tokens. The server then returns Mission Match, action guidance, strategy and limited message drafts in one pass.
 
@@ -169,10 +203,11 @@ Example ranking body:
 
 ## X public profile enrichment
 
-The separate `POST /api/x/enrich` route batches up to 100 known usernames through the official X User Lookup endpoint when `X_BEARER_TOKEN` and a current positive `X_USER_READ_USD` are explicitly configured. It never scrapes X pages.
+The separate `POST /api/x/enrich` route requires the personal control key and batches up to 100 known usernames through the official X User Lookup endpoint when `X_BEARER_TOKEN` and a current positive `X_USER_READ_USD` are explicitly configured. It never scrapes X pages.
 
 ## Budget behavior
 
+- `/api/budget`, ranking, Tavily discovery and X enrichment are personal-control protected.
 - Tavily discovery runs only when explicitly configured as `free`; paid discovery is disabled in the initial build.
 - Groq marked `free` is preferred and recorded at $0.
 - A paid LLM provider is not called unless positive input/output rates are explicitly configured.
@@ -187,15 +222,26 @@ The separate `POST /api/x/enrich` route batches up to 100 known usernames throug
 
 Provider prices, Owned Read eligibility, Meta permission requirements and free-tier rules can change. Verify current official provider information before enabling integrations; rates and API versions are configuration rather than hard-coded product truth.
 
+## CI safety invariants
+
+The root `npm run security:check` is executed in CI and verifies important source-level boundaries:
+
+- provider/quota-bearing routes stay behind the personal-control gate
+- X OAuth keeps its required read-only scopes and gains no write scope
+- optimistic D1 state-sync protection remains present
+
+These checks complement TypeScript/build validation so the most important cost/safety rules do not depend on documentation alone.
+
 ## Local setup
 
 1. Create a Cloudflare D1 database.
 2. Put its database ID in `wrangler.jsonc`.
 3. Apply `../db/schema.sql` to D1 (re-apply after schema additions; statements are idempotent `CREATE TABLE IF NOT EXISTS`).
 4. Copy `.dev.vars.example` to `.dev.vars` and add only the integrations you want to use.
-5. Configure the exact X callback URL in the X Developer Console if using X OAuth.
-6. Configure an Instagram Professional app/token and current API version if using comment-engager sync.
-7. Run:
+5. Configure `SYNC_TOKEN_SHA256` and save the matching raw personal key in PWA Settings before using protected Worker routes.
+6. Configure the exact X callback URL in the X Developer Console if using X OAuth.
+7. Configure an Instagram Professional app/token and current API version if using comment-engager sync.
+8. Run:
 
 ```bash
 npm install
