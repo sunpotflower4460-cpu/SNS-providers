@@ -134,5 +134,5 @@ export interface AppState {
   insights: SelfInsight[];
   selfProfile: SelfProfileState;
   xAccount: XOwnedAccountState;
-  instagramAccount: InstagramOwnedAccountState;
+  instagramAccount?: InstagramOwnedAccountState;
 }
