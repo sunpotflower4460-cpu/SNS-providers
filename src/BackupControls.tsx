@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { downloadBackup, readBackup } from './backup';
 import SyncControls from './SyncControls';
+import WorkloadControls from './WorkloadControls';
 import XAccountControls from './XAccountControls';
 import type { AppState } from './types';
 
@@ -22,6 +23,7 @@ export default function BackupControls({ state, onRestore }: { state: AppState; 
   }
 
   return <>
+    <WorkloadControls state={state} onChange={onRestore} />
     <SyncControls state={state} onRestore={onRestore} />
     <XAccountControls state={state} onChange={onRestore} />
     <section className="form-card backup-card">
