@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { analyzeSelfProfile, apiConfigured, discoverSocialCandidates, enrichXProfiles, fetchBudget, rankCandidates } from './api';
 import BackupControls from './BackupControls';
+import { getSyncToken } from './controlToken';
 import DailyQueue from './DailyQueue';
 import { buildDailyQueue, queueSummary } from './daily';
 import { mergeDiscoveredProfiles } from './discoveryStore';
@@ -36,12 +37,27 @@ function App() {
 
   useEffect(() => {
     if (!apiConfigured) return;
+    if (!getSyncToken().trim()) {
+      setApiNote('管理キー未設定 · ローカル利用可');
+      return;
+    }
     fetchBudget()
       .then((budget) => setState((current) => syncBudget(current, budget.usedUsd, budget.limitUsd)))
       .catch((error) => setApiNote(error instanceof Error ? `予算同期: ${error.message}` : '予算同期に失敗しました'));
   }, []);
 
-  const active = useMemo(() => state.candidates.filter((candidate) => !candidate.skipped).sort((a, b) => b.match - a.match), [state.candidates]);
+  const active = useMemo(() => {
+    const now = Date.now();
+    return state.candidates
+      .filter((candidate) => {
+        if (candidate.skipped) return false;
+        if (!candidate.snoozedUntil) return true;
+        const until = new Date(candidate.snoozedUntil).getTime();
+        return !Number.isFinite(until) || until <= now;
+      })
+      .sort((a, b) => b.match - a.match);
+  }, [state.candidates]);
+
   const doneToday = useMemo(() => {
     const now = new Date();
     return state.interactions.filter((interaction) => {
@@ -270,6 +286,15 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
     setReference('');
   }
 
+  function snoozeCandidate(candidate: Candidate) {
+    const until = new Date();
+    until.setHours(24, 0, 0, 0);
+    onChange({
+      ...state,
+      candidates: state.candidates.map((item) => item.id === candidate.id ? { ...item, snoozedUntil: until.toISOString() } : item),
+    });
+  }
+
   async function addFromClipboard() {
     try {
       const value = await navigator.clipboard.readText();
@@ -300,11 +325,11 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
     <div className="segmented">
       {(['all', 'x', 'instagram'] as const).map((item) => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}>{item === 'all' ? 'All' : item === 'x' ? 'X' : 'Instagram'}</button>)}
     </div>
-    <div className="card-stack">{visible.map((candidate) => <CandidateCard key={candidate.id} candidate={candidate} onOpen={onOpen} />)}</div>
+    <div className="card-stack">{visible.map((candidate) => <CandidateCard key={candidate.id} candidate={candidate} onOpen={onOpen} onLater={snoozeCandidate} />)}</div>
   </>;
 }
 
-function CandidateCard({ candidate, onOpen, featured = false }: { candidate: Candidate; onOpen: (c: Candidate) => void; featured?: boolean }) {
+function CandidateCard({ candidate, onOpen, onLater, featured = false }: { candidate: Candidate; onOpen: (c: Candidate) => void; onLater: (c: Candidate) => void; featured?: boolean }) {
   const buttonLabel = candidate.recommendedAction === 'reply' ? `${platformLabel(candidate.platform)}で返信` : candidate.recommendedAction === 'unfollow_review' ? `${platformLabel(candidate.platform)}で整理確認` : `${platformLabel(candidate.platform)}で見る`;
   return <article className={featured ? 'candidate-card featured' : 'candidate-card'}>
     <div className="candidate-head">
@@ -319,7 +344,7 @@ function CandidateCard({ candidate, onOpen, featured = false }: { candidate: Can
     <div className="tags">{candidate.tags.map((tag) => <span key={tag}>#{tag}</span>)}</div>
     {candidate.draft && <div className="draft-box"><span>AI返信案</span><p>{candidate.draft}</p><button onClick={() => copyDraft(candidate.draft!)}>コピー</button></div>}
     <div className="candidate-actions">
-      <button className="secondary-button">後で</button>
+      <button className="secondary-button" onClick={() => onLater(candidate)}>明日へ</button>
       <button className="primary-button" onClick={() => onOpen(candidate)}>{buttonLabel}<span>↗</span></button>
     </div>
   </article>;
