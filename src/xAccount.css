@@ -36,5 +36,20 @@
   text-align: center;
 }
 .x-sync-summary b { color: #d4deeb; font-size: 12px; }
+.x-pacing-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 11px;
+  border: 1px solid rgba(138,168,255,.1);
+  border-radius: 12px;
+  background: rgba(138,168,255,.035);
+}
+.x-pacing-note span {
+  color: #7788a1;
+  font-size: 7px;
+  line-height: 1.45;
+}
+.x-pacing-note b { color: #aebdff; font-size: 8px; }
 .x-account-actions { display: grid; gap: 7px; }
 .x-account-warning { color: #65758c !important; font-size: 8px !important; line-height: 1.55; }
