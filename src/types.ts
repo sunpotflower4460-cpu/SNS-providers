@@ -32,6 +32,7 @@ export interface Candidate {
   displayName: string;
   bio: string;
   profileUrl: string;
+  engagementUrl?: string;
   platformUserId?: string;
   verified?: boolean;
   publicMetrics?: PublicMetrics;
@@ -117,6 +118,13 @@ export interface XOwnedAccountState {
   pacingDaysRemaining?: number;
 }
 
+export interface InstagramOwnedAccountState {
+  lastSyncedAt?: string;
+  mediaScanned?: number;
+  commentEvents?: number;
+  engagerCount?: number;
+}
+
 export interface AppState {
   mission: Mission;
   candidates: Candidate[];
@@ -126,4 +134,5 @@ export interface AppState {
   insights: SelfInsight[];
   selfProfile: SelfProfileState;
   xAccount: XOwnedAccountState;
+  instagramAccount: InstagramOwnedAccountState;
 }
