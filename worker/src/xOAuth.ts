@@ -15,8 +15,17 @@ interface XTokenResponse {
   refresh_token?: string;
 }
 
+interface StoredTokenRow {
+  access_token_enc: string;
+  refresh_token_enc: string | null;
+  expires_at: string | null;
+  scope: string;
+  updated_at: string;
+}
+
 const READ_ONLY_SCOPES = ['tweet.read', 'users.read', 'follows.read', 'offline.access'];
 const SESSION_TTL_MS = 10 * 60 * 1000;
+const REFRESH_EARLY_MS = 60 * 1000;
 
 export function xOAuthConfigured(env: XOAuthEnv) {
   return Boolean(
@@ -70,10 +79,58 @@ export async function completeXOAuth(env: XOAuthEnv, requestUrl: URL, userId = '
   if (Date.now() - new Date(session.created_at).getTime() > SESSION_TTL_MS) throw new Error('OAuth session expired');
 
   const token = await exchangeAuthorizationCode(env, code, session.code_verifier);
-  if (!token.access_token) throw new Error('X token response did not include access_token');
+  await persistTokenResponse(env, userId, token);
+  return returnUrl(env, 'x_oauth=connected');
+}
 
+export async function xOAuthStatus(env: XOAuthEnv, userId = 'local-user') {
+  if (!xOAuthConfigured(env)) {
+    return { configured: false, connected: false, scopes: [], expiresAt: null, updatedAt: null, refreshable: false };
+  }
+  const row = await loadStoredToken(env, userId);
+  return {
+    configured: true,
+    connected: Boolean(row),
+    scopes: row?.scope ? row.scope.split(/\s+/).filter(Boolean) : [],
+    expiresAt: row?.expires_at || null,
+    updatedAt: row?.updated_at || null,
+    refreshable: Boolean(row?.refresh_token_enc),
+  };
+}
+
+export async function getValidXAccessToken(env: XOAuthEnv, userId = 'local-user') {
+  assertConfigured(env);
+  const row = await loadStoredToken(env, userId);
+  if (!row) throw new Error('X account is not connected');
+
+  const expiresAt = row.expires_at ? new Date(row.expires_at).getTime() : Number.POSITIVE_INFINITY;
+  if (expiresAt > Date.now() + REFRESH_EARLY_MS) return decryptToken(env, row.access_token_enc);
+  if (!row.refresh_token_enc) throw new Error('X access token expired and no refresh token is available');
+
+  const refreshToken = await decryptToken(env, row.refresh_token_enc);
+  const refreshed = await refreshAccessToken(env, refreshToken);
+  await persistTokenResponse(env, userId, refreshed, row.refresh_token_enc);
+  if (!refreshed.access_token) throw new Error('X refresh response did not include access_token');
+  return refreshed.access_token;
+}
+
+export async function disconnectXOAuth(env: XOAuthEnv, userId = 'local-user') {
+  await env.DB.prepare('DELETE FROM x_oauth_tokens WHERE user_id = ?').bind(userId).run();
+  return { ok: true };
+}
+
+async function loadStoredToken(env: XOAuthEnv, userId: string) {
+  return env.DB.prepare('SELECT access_token_enc, refresh_token_enc, expires_at, scope, updated_at FROM x_oauth_tokens WHERE user_id = ?')
+    .bind(userId)
+    .first<StoredTokenRow>();
+}
+
+async function persistTokenResponse(env: XOAuthEnv, userId: string, token: XTokenResponse, existingRefreshTokenEnc?: string | null) {
+  if (!token.access_token) throw new Error('X token response did not include access_token');
   const accessTokenEnc = await encryptToken(env, token.access_token);
-  const refreshTokenEnc = token.refresh_token ? await encryptToken(env, token.refresh_token) : null;
+  const refreshTokenEnc = token.refresh_token
+    ? await encryptToken(env, token.refresh_token)
+    : existingRefreshTokenEnc || null;
   const expiresAt = Number.isFinite(token.expires_in)
     ? new Date(Date.now() + Number(token.expires_in) * 1000).toISOString()
     : null;
@@ -89,37 +146,28 @@ export async function completeXOAuth(env: XOAuthEnv, requestUrl: URL, userId = '
        scope = excluded.scope,
        updated_at = excluded.updated_at`
   ).bind(userId, accessTokenEnc, refreshTokenEnc, expiresAt, token.scope || READ_ONLY_SCOPES.join(' '), updatedAt).run();
-
-  return returnUrl(env, 'x_oauth=connected');
-}
-
-export async function xOAuthStatus(env: XOAuthEnv, userId = 'local-user') {
-  if (!xOAuthConfigured(env)) return { configured: false, connected: false, scopes: [], expiresAt: null, updatedAt: null };
-  const row = await env.DB.prepare('SELECT expires_at, scope, updated_at FROM x_oauth_tokens WHERE user_id = ?')
-    .bind(userId)
-    .first<{ expires_at: string | null; scope: string; updated_at: string }>();
-  return {
-    configured: true,
-    connected: Boolean(row),
-    scopes: row?.scope ? row.scope.split(/\s+/).filter(Boolean) : [],
-    expiresAt: row?.expires_at || null,
-    updatedAt: row?.updated_at || null,
-  };
-}
-
-export async function disconnectXOAuth(env: XOAuthEnv, userId = 'local-user') {
-  await env.DB.prepare('DELETE FROM x_oauth_tokens WHERE user_id = ?').bind(userId).run();
-  return { ok: true };
 }
 
 async function exchangeAuthorizationCode(env: XOAuthEnv, code: string, verifier: string) {
-  const credentials = btoa(`${env.X_CLIENT_ID!.trim()}:${env.X_CLIENT_SECRET!.trim()}`);
   const form = new URLSearchParams({
     code,
     grant_type: 'authorization_code',
     redirect_uri: env.X_OAUTH_CALLBACK_URL!.trim(),
     code_verifier: verifier,
   });
+  return tokenRequest(env, form, 'token exchange');
+}
+
+async function refreshAccessToken(env: XOAuthEnv, refreshToken: string) {
+  const form = new URLSearchParams({
+    refresh_token: refreshToken,
+    grant_type: 'refresh_token',
+  });
+  return tokenRequest(env, form, 'token refresh');
+}
+
+async function tokenRequest(env: XOAuthEnv, form: URLSearchParams, operation: string) {
+  const credentials = btoa(`${env.X_CLIENT_ID!.trim()}:${env.X_CLIENT_SECRET!.trim()}`);
   const response = await fetch('https://api.x.com/2/oauth2/token', {
     method: 'POST',
     headers: {
@@ -128,17 +176,32 @@ async function exchangeAuthorizationCode(env: XOAuthEnv, code: string, verifier:
     },
     body: form.toString(),
   });
-  if (!response.ok) throw new Error(`X OAuth token exchange returned ${response.status}`);
+  if (!response.ok) throw new Error(`X OAuth ${operation} returned ${response.status}`);
   return response.json<XTokenResponse>();
 }
 
 async function encryptToken(env: XOAuthEnv, plaintext: string) {
-  const rawKey = parseEncryptionKey(env.OAUTH_TOKEN_ENCRYPTION_KEY_B64);
-  if (!rawKey) throw new Error('OAuth encryption key is invalid');
-  const key = await crypto.subtle.importKey('raw', rawKey, 'AES-GCM', false, ['encrypt']);
+  const key = await importEncryptionKey(env, ['encrypt']);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const cipher = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plaintext));
   return `${bytesToBase64(iv)}.${bytesToBase64(new Uint8Array(cipher))}`;
+}
+
+async function decryptToken(env: XOAuthEnv, payload: string) {
+  const [ivValue, cipherValue] = payload.split('.');
+  if (!ivValue || !cipherValue) throw new Error('Stored OAuth token is malformed');
+  const iv = base64ToBytes(ivValue);
+  const cipher = base64ToBytes(cipherValue);
+  if (iv.length !== 12) throw new Error('Stored OAuth token IV is invalid');
+  const key = await importEncryptionKey(env, ['decrypt']);
+  const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipher);
+  return new TextDecoder().decode(plaintext);
+}
+
+async function importEncryptionKey(env: XOAuthEnv, usages: KeyUsage[]) {
+  const rawKey = parseEncryptionKey(env.OAUTH_TOKEN_ENCRYPTION_KEY_B64);
+  if (!rawKey) throw new Error('OAuth encryption key is invalid');
+  return crypto.subtle.importKey('raw', rawKey, 'AES-GCM', false, usages);
 }
 
 function parseEncryptionKey(value?: string) {
@@ -191,6 +254,11 @@ function bytesToBase64(bytes: Uint8Array) {
   let binary = '';
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary);
+}
+
+function base64ToBytes(value: string) {
+  const binary = atob(value);
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }
 
 function bytesToBase64Url(bytes: Uint8Array) {
