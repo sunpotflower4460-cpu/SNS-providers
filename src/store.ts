@@ -1,5 +1,5 @@
 import type { RankResult, XProfileResult } from './api';
-import type { AppState, Candidate, Interaction, Mission, Platform, RecommendedAction } from './types';
+import type { AppState, Candidate, Interaction, Mission, Platform, RecommendedAction, RelationshipPolicy } from './types';
 
 const KEY = 'sns-providers:v1';
 
@@ -47,6 +47,10 @@ const defaultState: AppState = {
     searchUsd: 0,
     mode: 'balanced'
   },
+  relationshipPolicy: {
+    followBackReviewAfterDays: 30,
+    preserveHighMatch: true,
+  },
   insights: [
     { id: 'i1', category: 'profile', priority: 'high', title: '初見の人への入口を強くする', body: '何を作っている人かに加えて、初めて来た人がすぐ音楽を聴ける導線をプロフィール上部に置くとMissionに近づきやすくなります。' },
     { id: 'i2', category: 'content', priority: 'medium', title: 'リスナー向け投稿を少し増やす', body: '制作側の投稿だけでなく、曲の世界観や聴きどころを短く体験できる投稿を混ぜるとファン候補との接点が増えます。' },
@@ -63,13 +67,15 @@ export function loadState(): AppState {
     const raw = localStorage.getItem(KEY);
     if (!raw) return defaultState;
     const parsed = JSON.parse(raw) as Partial<AppState>;
-    return {
+    const state: AppState = {
       ...defaultState,
       ...parsed,
       mission: { ...defaultState.mission, ...(parsed.mission || {}) },
       budget: { ...defaultState.budget, ...(parsed.budget || {}) },
+      relationshipPolicy: { ...defaultState.relationshipPolicy, ...(parsed.relationshipPolicy || {}) },
       selfProfile: { ...defaultState.selfProfile, ...(parsed.selfProfile || {}) },
     };
+    return refreshRelationshipAdvice(state);
   } catch {
     return defaultState;
   }
@@ -81,6 +87,15 @@ export function saveState(state: AppState) {
 
 export function updateMission(state: AppState, mission: Mission): AppState {
   return { ...state, mission };
+}
+
+export function updateRelationshipPolicy(state: AppState, policy: RelationshipPolicy): AppState {
+  return refreshRelationshipAdvice({ ...state, relationshipPolicy: policy });
+}
+
+export function setFollowBackStatus(state: AppState, candidateId: string, followBack: boolean | null): AppState {
+  const candidates = state.candidates.map((candidate) => candidate.id === candidateId ? { ...candidate, followBack } : candidate);
+  return refreshRelationshipAdvice({ ...state, candidates });
 }
 
 export function updateSelfProfileInputs(state: AppState, profileText: string, recentPostsText: string): AppState {
@@ -184,7 +199,7 @@ export function applyRankResults(state: AppState, results: RankResult[], costUsd
       draft: result.draft?.trim() || candidate.draft,
     };
   });
-  return {
+  return refreshRelationshipAdvice({
     ...state,
     candidates,
     budget: {
@@ -192,7 +207,7 @@ export function applyRankResults(state: AppState, results: RankResult[], costUsd
       usedUsd: Math.max(0, state.budget.usedUsd + Math.max(0, costUsd)),
       llmUsd: Math.max(0, state.budget.llmUsd + Math.max(0, costUsd)),
     },
-  };
+  });
 }
 
 export function recordInteraction(state: AppState, candidateId: string, action: Interaction['action']): AppState {
@@ -200,12 +215,47 @@ export function recordInteraction(state: AppState, candidateId: string, action: 
   const interactions = [{ id: crypto.randomUUID(), candidateId, action, at: now }, ...state.interactions];
   const candidates = state.candidates.map((candidate) => {
     if (candidate.id !== candidateId) return candidate;
-    if (action === 'followed') return { ...candidate, stage: 'following' as const, followedAt: candidate.followedAt ?? now, lastInteractionAt: now };
+    if (action === 'followed') return { ...candidate, stage: 'following' as const, followedAt: candidate.followedAt ?? now, followBack: candidate.followBack ?? null, lastInteractionAt: now };
     if (action === 'skipped') return { ...candidate, skipped: true };
     if (action === 'kept') return { ...candidate, lastInteractionAt: now };
     return { ...candidate, lastInteractionAt: now };
   });
-  return { ...state, interactions, candidates };
+  return refreshRelationshipAdvice({ ...state, interactions, candidates });
+}
+
+function refreshRelationshipAdvice(state: AppState): AppState {
+  const now = Date.now();
+  const waitDays = Math.max(1, Math.min(180, state.relationshipPolicy.followBackReviewAfterDays));
+  const candidates = state.candidates.map((candidate) => {
+    if (!candidate.followedAt || candidate.followBack !== false) {
+      if (candidate.followBack === true && candidate.recommendedAction === 'unfollow_review') {
+        return { ...candidate, recommendedAction: 'review' as const, strategy: '相互フォローを確認済み。関係性の質を見ながら継続交流します。' };
+      }
+      return candidate;
+    }
+
+    const followedAt = new Date(candidate.followedAt).getTime();
+    if (!Number.isFinite(followedAt)) return candidate;
+    const days = Math.floor((now - followedAt) / 86_400_000);
+    if (days < waitDays) return candidate;
+
+    const highMatch = candidate.match >= 80;
+    const meaningfulRelationship = candidate.relationshipScore >= 35 || candidate.stage === 'engaged' || candidate.stage === 'conversation' || candidate.stage === 'relationship';
+    if ((state.relationshipPolicy.preserveHighMatch && highMatch) || meaningfulRelationship) {
+      return {
+        ...candidate,
+        recommendedAction: candidate.recommendedAction === 'unfollow_review' ? 'review' as const : candidate.recommendedAction,
+        strategy: `フォローバックは${days}日確認できていませんが、Mission一致度または交流価値が高いため継続候補です。`,
+      };
+    }
+
+    return {
+      ...candidate,
+      recommendedAction: 'unfollow_review' as const,
+      strategy: `フォローから${days}日、フォローバックなし。Mission一致度と交流履歴も弱いため、公式アプリで確認して整理する候補です。`,
+    };
+  });
+  return { ...state, candidates };
 }
 
 function parseUsername(platform: Platform, value: string) {
