@@ -1,4 +1,4 @@
-import type { AppState, Candidate, Interaction, RelationshipPolicy } from './types';
+import type { AppState, Candidate, Interaction, RelationshipPolicy, SelfInsight } from './types';
 
 interface BackupEnvelope {
   format: 'social-mission-backup';
@@ -28,6 +28,9 @@ const allowedStages = new Set(['discovered', 'interested', 'following', 'engaged
 const allowedKinds = new Set(['fan', 'artist', 'creator', 'media', 'venue', 'other']);
 const allowedActions = new Set(['follow', 'like', 'reply', 'dm', 'review', 'unfollow_review']);
 const allowedInteractionActions = new Set([...allowedActions, 'followed', 'skipped', 'kept']);
+const allowedBudgetModes = new Set(['free', 'eco', 'balanced', 'growth']);
+const allowedInsightCategories = new Set(['profile', 'content', 'network']);
+const allowedInsightPriorities = new Set(['high', 'medium', 'low']);
 
 export function downloadBackup(state: AppState) {
   const payload: BackupEnvelope = {
@@ -60,35 +63,61 @@ export async function readBackup(file: File): Promise<AppState> {
 }
 
 export function normalizeAppState(state: AppState): AppState {
-  const relationshipPolicy = state.relationshipPolicy && typeof state.relationshipPolicy === 'object'
-    ? { ...relationshipDefaults, ...state.relationshipPolicy }
-    : { ...relationshipDefaults };
-  const candidates = Array.isArray(state.candidates)
+  const candidates = Array.isArray(state?.candidates)
     ? state.candidates.map(normalizeCandidate).filter((candidate): candidate is Candidate => Boolean(candidate))
     : [];
   const candidateIds = new Set(candidates.map((candidate) => candidate.id));
-  const normalizedInteractions = Array.isArray(state.interactions)
+  const normalizedInteractions = Array.isArray(state?.interactions)
     ? state.interactions.map(normalizeInteraction).filter((interaction): interaction is Interaction => interaction !== null)
     : [];
   const interactions = normalizedInteractions.filter((interaction) => candidateIds.has(interaction.candidateId));
+  const secondaryGoals = Array.isArray(state?.mission?.secondaryGoals)
+    ? state.mission.secondaryGoals.map((goal) => safeText(goal, 180)).filter(Boolean).slice(0, 20)
+    : [];
+  const insights = Array.isArray(state?.insights)
+    ? state.insights.map(normalizeInsight).filter((insight): insight is SelfInsight => insight !== null).slice(0, 50)
+    : [];
 
   return {
-    ...state,
-    relationshipPolicy,
-    xAccount: state.xAccount && typeof state.xAccount === 'object' ? state.xAccount : {},
-    instagramAccount: state.instagramAccount && typeof state.instagramAccount === 'object' ? state.instagramAccount : undefined,
+    mission: {
+      text: safeText(state?.mission?.text, 4000),
+      primaryGoal: safeText(state?.mission?.primaryGoal, 400) || '良質なつながりを増やす',
+      secondaryGoals,
+      communicationDNA: safeText(state?.mission?.communicationDNA, 4000),
+    },
     candidates,
     interactions,
-    insights: Array.isArray(state.insights) ? state.insights : [],
+    budget: {
+      monthlyLimitUsd: clampNumber(state?.budget?.monthlyLimitUsd, 0, 100, 3),
+      hardLimit: true,
+      usedUsd: clampNumber(state?.budget?.usedUsd, 0, 1_000_000, 0),
+      xUsd: clampNumber(state?.budget?.xUsd, 0, 1_000_000, 0),
+      llmUsd: clampNumber(state?.budget?.llmUsd, 0, 1_000_000, 0),
+      searchUsd: clampNumber(state?.budget?.searchUsd, 0, 1_000_000, 0),
+      mode: allowedBudgetModes.has(state?.budget?.mode) ? state.budget.mode : 'balanced',
+    },
+    relationshipPolicy: normalizeRelationshipPolicy(state?.relationshipPolicy),
+    insights,
+    selfProfile: {
+      profileText: safeText(state?.selfProfile?.profileText, 20_000),
+      recentPostsText: safeText(state?.selfProfile?.recentPostsText, 50_000),
+      score: optionalScore(state?.selfProfile?.score),
+      summary: safeText(state?.selfProfile?.summary, 3000) || undefined,
+      strategy: safeText(state?.selfProfile?.strategy, 5000) || undefined,
+      profileRewrite: safeText(state?.selfProfile?.profileRewrite, 3000) || undefined,
+      analyzedAt: validOptionalIso(state?.selfProfile?.analyzedAt),
+    },
+    xAccount: normalizeXAccount(state?.xAccount),
+    instagramAccount: normalizeInstagramAccount(state?.instagramAccount),
   };
 }
 
 export function validateAppState(state: AppState) {
-  if (!state.mission || typeof state.mission.text !== 'string') throw new Error('Missionデータが不正です');
+  if (!state.mission || typeof state.mission.text !== 'string' || typeof state.mission.primaryGoal !== 'string' || !Array.isArray(state.mission.secondaryGoals)) throw new Error('Missionデータが不正です');
   if (!Array.isArray(state.candidates) || !Array.isArray(state.interactions)) throw new Error('候補・交流データが不正です');
-  if (!state.budget || typeof state.budget.monthlyLimitUsd !== 'number' || !Number.isFinite(state.budget.monthlyLimitUsd)) throw new Error('予算データが不正です');
+  if (!state.budget || typeof state.budget.monthlyLimitUsd !== 'number' || !Number.isFinite(state.budget.monthlyLimitUsd) || state.budget.hardLimit !== true) throw new Error('予算データが不正です');
   if (!state.relationshipPolicy || typeof state.relationshipPolicy.followBackReviewAfterDays !== 'number') throw new Error('関係性ポリシーが不正です');
-  if (!state.selfProfile || typeof state.selfProfile.profileText !== 'string') throw new Error('自己分析データが不正です');
+  if (!state.selfProfile || typeof state.selfProfile.profileText !== 'string' || typeof state.selfProfile.recentPostsText !== 'string') throw new Error('自己分析データが不正です');
   if (!state.xAccount || typeof state.xAccount !== 'object') throw new Error('Xアカウント同期データが不正です');
 
   for (const candidate of state.candidates) {
@@ -98,6 +127,19 @@ export function validateAppState(state: AppState) {
   }
 }
 
+function normalizeRelationshipPolicy(policy: RelationshipPolicy | undefined): RelationshipPolicy {
+  return {
+    followBackReviewAfterDays: clampInteger(policy?.followBackReviewAfterDays, 7, 180, relationshipDefaults.followBackReviewAfterDays),
+    preserveHighMatch: typeof policy?.preserveHighMatch === 'boolean' ? policy.preserveHighMatch : relationshipDefaults.preserveHighMatch,
+    dailyQueueLimit: clampInteger(policy?.dailyQueueLimit, 1, 200, relationshipDefaults.dailyQueueLimit || 30),
+    dailyConnectionLimit: clampInteger(policy?.dailyConnectionLimit, 0, 200, relationshipDefaults.dailyConnectionLimit || 20),
+    dailyConversationLimit: clampInteger(policy?.dailyConversationLimit, 0, 100, relationshipDefaults.dailyConversationLimit || 8),
+    dailyLightEngagementLimit: clampInteger(policy?.dailyLightEngagementLimit, 0, 100, relationshipDefaults.dailyLightEngagementLimit || 8),
+    dailyCleanupLimit: clampInteger(policy?.dailyCleanupLimit, 0, 100, relationshipDefaults.dailyCleanupLimit || 5),
+    dailySelfImproveLimit: clampInteger(policy?.dailySelfImproveLimit, 0, 20, relationshipDefaults.dailySelfImproveLimit || 2),
+  };
+}
+
 function normalizeCandidate(raw: Candidate): Candidate | null {
   if (!raw || typeof raw !== 'object' || (raw.platform !== 'x' && raw.platform !== 'instagram')) return null;
   const id = safeText(raw.id, 180);
@@ -105,8 +147,8 @@ function normalizeCandidate(raw: Candidate): Candidate | null {
   if (!id || !username || legacyDemoCandidates.has(`${id}:${raw.platform}:${username.toLowerCase()}`)) return null;
 
   return {
-    ...raw,
     id,
+    platform: raw.platform,
     username,
     displayName: safeText(raw.displayName, 180) || username,
     bio: safeText(raw.bio, 5000),
@@ -149,6 +191,53 @@ function normalizeInteraction(raw: Interaction): Interaction | null {
   };
 }
 
+function normalizeInsight(raw: SelfInsight): SelfInsight | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const id = safeText(raw.id, 180);
+  const title = safeText(raw.title, 300);
+  const body = safeText(raw.body, 3000);
+  if (!id || !title || !body) return null;
+  return {
+    id,
+    title,
+    body,
+    category: allowedInsightCategories.has(raw.category) ? raw.category : 'profile',
+    priority: allowedInsightPriorities.has(raw.priority) ? raw.priority : 'medium',
+  };
+}
+
+function normalizeXAccount(account: AppState['xAccount'] | undefined): AppState['xAccount'] {
+  if (!account || typeof account !== 'object') return {};
+  return {
+    username: safeText(account.username, 15) || undefined,
+    displayName: safeText(account.displayName, 180) || undefined,
+    verified: typeof account.verified === 'boolean' ? account.verified : undefined,
+    publicMetrics: normalizeMetrics(account.publicMetrics),
+    lastSyncedAt: validOptionalIso(account.lastSyncedAt),
+    followerSampleCount: optionalNonNegativeInt(account.followerSampleCount),
+    followingSampleCount: optionalNonNegativeInt(account.followingSampleCount),
+    recentPostCount: optionalNonNegativeInt(account.recentPostCount),
+    followersComplete: typeof account.followersComplete === 'boolean' ? account.followersComplete : undefined,
+    followingComplete: typeof account.followingComplete === 'boolean' ? account.followingComplete : undefined,
+    postsComplete: typeof account.postsComplete === 'boolean' ? account.postsComplete : undefined,
+    followerCycle: optionalNonNegativeInt(account.followerCycle),
+    followingCycle: optionalNonNegativeInt(account.followingCycle),
+    lastSyncCostUsd: optionalNonNegativeNumber(account.lastSyncCostUsd),
+    pacedCapUsd: optionalNonNegativeNumber(account.pacedCapUsd),
+    pacingDaysRemaining: optionalNonNegativeInt(account.pacingDaysRemaining),
+  };
+}
+
+function normalizeInstagramAccount(account: AppState['instagramAccount']): AppState['instagramAccount'] {
+  if (!account || typeof account !== 'object') return undefined;
+  return {
+    lastSyncedAt: validOptionalIso(account.lastSyncedAt),
+    mediaScanned: optionalNonNegativeInt(account.mediaScanned),
+    commentEvents: optionalNonNegativeInt(account.commentEvents),
+    engagerCount: optionalNonNegativeInt(account.engagerCount),
+  };
+}
+
 function sanitizeUsername(platform: Candidate['platform'], value: unknown) {
   if (typeof value !== 'string') return '';
   const username = value.trim().replace(/^@/, '');
@@ -184,9 +273,33 @@ function nonNegativeInt(value: unknown) {
   return Number.isFinite(number) ? Math.max(0, Math.round(number)) : 0;
 }
 
-function clampScore(value: unknown) {
+function optionalNonNegativeInt(value: unknown) {
+  if (value == null) return undefined;
+  return nonNegativeInt(value);
+}
+
+function optionalNonNegativeNumber(value: unknown) {
+  if (value == null) return undefined;
   const number = Number(value);
-  return Number.isFinite(number) ? Math.max(0, Math.min(100, Math.round(number))) : 0;
+  return Number.isFinite(number) ? Math.max(0, number) : undefined;
+}
+
+function clampInteger(value: unknown, min: number, max: number, fallback: number) {
+  return Math.round(clampNumber(value, min, max, fallback));
+}
+
+function clampNumber(value: unknown, min: number, max: number, fallback: number) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(min, Math.min(max, number)) : fallback;
+}
+
+function optionalScore(value: unknown) {
+  if (value == null) return undefined;
+  return clampScore(value);
+}
+
+function clampScore(value: unknown) {
+  return clampInteger(value, 0, 100, 0);
 }
 
 function safeText(value: unknown, maxLength: number) {
