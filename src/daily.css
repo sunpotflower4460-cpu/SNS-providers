@@ -1,0 +1,30 @@
+.daily-queue {
+  margin-top: 26px;
+  padding: 17px;
+  border: 1px solid rgba(138,168,255,.16);
+  border-radius: 23px;
+  background: linear-gradient(155deg, rgba(138,168,255,.075), rgba(255,255,255,.024));
+}
+.daily-queue.empty { padding: 20px; }
+.daily-queue.empty h3 { margin: 7px 0 5px; font-size: 15px; }
+.daily-queue.empty p { margin: 0; color: #8e9bb0; font-size: 10px; line-height: 1.6; }
+.daily-queue-head { display: flex; justify-content: space-between; align-items: end; gap: 12px; }
+.daily-queue-head h2 { margin: 4px 0 0; font-size: 18px; letter-spacing: -.025em; }
+.queue-count { flex: none; padding: 5px 8px; border-radius: 999px; border: 1px solid rgba(255,255,255,.08); color: #9faec4; font-size: 8px; background: rgba(255,255,255,.03); }
+.queue-summary { display: grid; grid-template-columns: repeat(4,1fr); gap: 6px; margin: 13px 0; }
+.queue-summary span { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 4px; border: 1px solid rgba(255,255,255,.06); border-radius: 12px; color: #8190a5; font-size: 8px; background: rgba(0,0,0,.08); }
+.queue-summary b { color: #dce6f5; font-size: 14px; }
+.queue-list { display: grid; gap: 7px; }
+.queue-row { width: 100%; display: grid; grid-template-columns: 22px 32px minmax(0,1fr) 15px; gap: 8px; align-items: center; min-height: 61px; padding: 9px; border: 1px solid rgba(255,255,255,.065); border-radius: 15px; color: inherit; background: rgba(255,255,255,.025); text-align: left; }
+.queue-row.cleanup { border-color: rgba(255,143,159,.14); background: rgba(255,143,159,.035); }
+.queue-rank { color: #657389; font-size: 9px; text-align: center; }
+.queue-action-icon { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; color: #79e7c5; background: rgba(121,231,197,.08); font-size: 13px; font-weight: 800; }
+.queue-row.cleanup .queue-action-icon { color: #ff9eab; background: rgba(255,143,159,.08); }
+.queue-copy { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.queue-copy strong { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.queue-copy small { color: #8390a4; font-size: 8px; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.queue-arrow { color: #6e7c91; font-size: 20px; }
+.queue-more { margin: 10px 2px 0; color: #708097; font-size: 8px; text-align: center; }
+@media (max-width: 380px) {
+  .queue-summary { grid-template-columns: repeat(2,1fr); }
+}

@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'feat/**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run security:check
+      - run: npm run pwa:check
+      - run: npm run build
+      - name: Verify local-root production build
+        run: npm run dist:check
+      - name: Build with GitHub Pages base path and Worker origin
+        run: npm run build
+        env:
+          VITE_BASE_PATH: /SNS-providers/
+          VITE_API_BASE_URL: https://social-mission-api.example.workers.dev
+      - name: Verify GitHub Pages production build
+        run: npm run dist:check
+        env:
+          VITE_BASE_PATH: /SNS-providers/
+          VITE_API_BASE_URL: https://social-mission-api.example.workers.dev
+
+  worker:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - run: npm run typecheck

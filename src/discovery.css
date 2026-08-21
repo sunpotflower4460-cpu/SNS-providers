@@ -1,0 +1,27 @@
+.discovery-button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 34px minmax(0,1fr);
+  gap: 2px 10px;
+  align-items: center;
+  min-height: 62px;
+  padding: 10px 12px;
+  border: 1px solid rgba(121,231,197,.18);
+  border-radius: 16px;
+  color: #eaf3ff;
+  background: linear-gradient(135deg, rgba(121,231,197,.12), rgba(138,168,255,.07));
+  text-align: left;
+}
+.discovery-button > span {
+  grid-row: 1 / span 2;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  color: #06111c;
+  background: linear-gradient(135deg, #79e7c5, #8ee5ff);
+  font-weight: 900;
+}
+.discovery-button strong { font-size: 11px; }
+.discovery-button small { color: #8f9fb3; font-size: 8px; line-height: 1.4; }
