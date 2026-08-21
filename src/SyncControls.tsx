@@ -11,7 +11,7 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
 
   function saveToken() {
     setSyncToken(token);
-    setStatus(token.trim() ? '同期キーをこの端末に保存しました' : '同期キーを削除しました');
+    setStatus(token.trim() ? '個人管理キーをこの端末に保存しました' : '個人管理キーを削除しました');
   }
 
   async function upload() {
@@ -48,18 +48,18 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
   function forget() {
     clearSyncToken();
     setToken('');
-    setStatus('この端末の同期キーを削除しました');
+    setStatus('この端末の個人管理キーを削除しました');
   }
 
   return <section className="form-card sync-card">
-    <div className="field-title"><div><strong>個人D1同期</strong><span>別端末へMission・候補・関係性を引き継ぐ</span></div><b>SYNC</b></div>
-    <label>同期キー<input type="password" autoComplete="off" value={token} onChange={(event) => setToken(event.target.value)} placeholder="Worker側のSHA-256元キー" /></label>
+    <div className="field-title"><div><strong>個人管理キー / D1同期</strong><span>X接続の保護と、別端末へのMission・候補・関係性引き継ぎ</span></div><b>KEY</b></div>
+    <label>個人管理キー<input type="password" autoComplete="off" value={token} onChange={(event) => setToken(event.target.value)} placeholder="Worker側のSHA-256元キー" /></label>
     <div className="sync-actions">
       <button className="secondary-button" disabled={busy} onClick={saveToken}>キーを保存</button>
       <button className="secondary-button" disabled={busy || !apiConfigured} onClick={upload}>この端末 → D1</button>
       <button className="primary-button" disabled={busy || !apiConfigured} onClick={download}>D1 → この端末</button>
     </div>
     <div className="sync-footer"><small>{busy ? '同期処理中…' : status}</small><button onClick={forget}>キーを忘れる</button></div>
-    <small className="sync-note">同期キーそのものはD1やバックアップJSONへ保存しません。D1上の状態データは暗号化ではなくアクセス制御されたスナップショットです。</small>
+    <small className="sync-note">同じキーでX OAuthの開始/解除とX owned-read同期も保護します。生キーはD1やバックアップJSONへ保存せず、この端末のlocalStorageだけに保持します。</small>
   </section>;
 }
