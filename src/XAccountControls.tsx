@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { apiConfigured } from './api';
-import { disconnectXOAuth, fetchXOAuthStatus, startXOAuth, type XOAuthStatus } from './xAccount';
+import { applyOwnedXSync } from './store';
+import { disconnectXOAuth, fetchXOAuthStatus, startXOAuth, syncOwnedXData, type XOAuthStatus } from './xAccount';
+import type { AppState } from './types';
 import './xAccount.css';
 
 const emptyStatus: XOAuthStatus = {
@@ -9,11 +11,13 @@ const emptyStatus: XOAuthStatus = {
   scopes: [],
   expiresAt: null,
   updatedAt: null,
+  refreshable: false,
 };
 
-export default function XAccountControls() {
+export default function XAccountControls({ state, onChange }: { state: AppState; onChange: (state: AppState) => void }) {
   const [status, setStatus] = useState<XOAuthStatus>(emptyStatus);
   const [loading, setLoading] = useState(apiConfigured);
+  const [syncing, setSyncing] = useState(false);
   const [note, setNote] = useState(apiConfigured ? '接続状態を確認中…' : 'Worker未接続');
 
   useEffect(() => {
@@ -34,6 +38,37 @@ export default function XAccountControls() {
     return () => { cancelled = true; };
   }, []);
 
+  async function connect() {
+    setLoading(true);
+    try {
+      setNote('Xの読み取り専用認可へ移動します…');
+      await startXOAuth();
+    } catch (error) {
+      setNote(error instanceof Error ? error.message : 'X接続開始に失敗しました');
+      setLoading(false);
+    }
+  }
+
+  async function sync() {
+    setSyncing(true);
+    setNote('自分のXプロフィール・最近の投稿・フォロー関係を同期中…');
+    try {
+      const result = await syncOwnedXData(state.budget.monthlyLimitUsd);
+      if (!result.enabled) {
+        setNote(result.reason || 'X owned-read同期は現在無効です');
+        return;
+      }
+      onChange(applyOwnedXSync(state, result));
+      const source = result.source === 'cache' ? 'キャッシュ' : 'X公式API';
+      const cost = result.costUsd > 0 ? ` · $${result.costUsd.toFixed(4)}` : ' · $0';
+      setNote(`${source}から同期完了${cost}`);
+    } catch (error) {
+      setNote(error instanceof Error ? error.message : 'Xデータ同期に失敗しました');
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   async function disconnect() {
     setLoading(true);
     try {
@@ -49,7 +84,7 @@ export default function XAccountControls() {
 
   return <section className="form-card x-account-card">
     <div className="field-title">
-      <div><strong>Xアカウント</strong><span>自分の投稿・フォロー関係を将来自動分析するための読み取り接続</span></div>
+      <div><strong>Xアカウント</strong><span>自分のプロフィール・投稿・フォロー関係をMission分析へ反映</span></div>
       <b className={status.connected ? 'connected' : ''}>{status.connected ? 'READ' : 'X'}</b>
     </div>
 
@@ -59,17 +94,28 @@ export default function XAccountControls() {
     </div>
 
     {status.connected && <div className="x-connection-details">
-      <span><b>状態</b> 接続済み</span>
+      <span><b>状態</b> 接続済み{status.refreshable ? ' · 自動refresh対応' : ''}</span>
       <span><b>Scopes</b> {status.scopes.join(' · ') || 'read-only'}</span>
-      {status.updatedAt && <span><b>更新</b> {new Date(status.updatedAt).toLocaleString('ja-JP')}</span>}
+      {status.updatedAt && <span><b>Token更新</b> {new Date(status.updatedAt).toLocaleString('ja-JP')}</span>}
+      {state.xAccount.username && <span><b>同期アカウント</b> @{state.xAccount.username}</span>}
+      {state.xAccount.lastSyncedAt && <span><b>データ同期</b> {new Date(state.xAccount.lastSyncedAt).toLocaleString('ja-JP')}</span>}
+    </div>}
+
+    {state.xAccount.username && <div className="x-sync-summary">
+      <span><b>{state.xAccount.followerSampleCount || 0}</b> followers確認</span>
+      <span><b>{state.xAccount.followingSampleCount || 0}</b> following確認</span>
+      <span><b>{state.xAccount.recentPostCount || 0}</b> posts取得</span>
     </div>}
 
     <div className="x-account-actions">
       {!status.connected
-        ? <button className="primary-button" disabled={loading || !apiConfigured || !status.configured} onClick={() => startXOAuth()}>{loading ? '確認中…' : 'Xを読み取り専用で接続'}</button>
-        : <button className="secondary-button" disabled={loading} onClick={disconnect}>{loading ? '処理中…' : 'この端末/Workerの接続を外す'}</button>}
+        ? <button className="primary-button" disabled={loading || !apiConfigured || !status.configured} onClick={connect}>{loading ? '確認中…' : 'Xを読み取り専用で接続'}</button>
+        : <>
+          <button className="primary-button" disabled={syncing || loading} onClick={sync}>{syncing ? '同期中…' : 'Xデータを同期'}</button>
+          <button className="secondary-button" disabled={loading || syncing} onClick={disconnect}>{loading ? '処理中…' : 'X接続を外す'}</button>
+        </>}
     </div>
     <small>{note}</small>
-    <small className="x-account-warning">この「接続解除」はWorkerに保存したtokenを削除します。X側のアプリ許可そのものを完全に取り消したい場合は、Xの連携アプリ設定からも取り消してください。</small>
+    <small className="x-account-warning">X接続の管理とデータ同期にはSettingsの個人管理キーが必要です。同期は20時間キャッシュを優先し、同じデータの再取得コストを抑えます。</small>
   </section>;
 }
