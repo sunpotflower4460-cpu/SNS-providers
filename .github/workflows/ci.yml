@@ -19,19 +19,26 @@ jobs:
       - run: npm install --no-audit --no-fund
       - run: npm run typecheck
       - run: npm run security:check
+      - run: npm run pwa:check
       - run: npm run build
       - name: Build with GitHub Pages base path and Worker origin
         run: npm run build
         env:
           VITE_BASE_PATH: /SNS-providers/
           VITE_API_BASE_URL: https://social-mission-api.example.workers.dev
-      - name: Verify production CSP Worker binding
+      - name: Verify production PWA and CSP bindings
         run: |
           grep -F "connect-src 'self' https://social-mission-api.example.workers.dev;" dist/index.html
           if grep -F "__CSP_CONNECT_SRC__" dist/index.html; then
             echo "CSP placeholder was not replaced"
             exit 1
           fi
+          test -s dist/icon-180.png
+          test -s dist/icon-192.png
+          test -s dist/icon-512.png
+          grep -F "/SNS-providers/icon-180.png" dist/index.html
+          grep -F '"src": "./icon-192.png"' dist/manifest.webmanifest
+          grep -F '"src": "./icon-512.png"' dist/manifest.webmanifest
 
   worker:
     runs-on: ubuntu-latest
