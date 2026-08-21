@@ -67,9 +67,10 @@ export function normalizeAppState(state: AppState): AppState {
     ? state.candidates.map(normalizeCandidate).filter((candidate): candidate is Candidate => Boolean(candidate))
     : [];
   const candidateIds = new Set(candidates.map((candidate) => candidate.id));
-  const interactions = Array.isArray(state.interactions)
-    ? state.interactions.map(normalizeInteraction).filter((interaction): interaction is Interaction => Boolean(interaction) && candidateIds.has(interaction.candidateId))
+  const normalizedInteractions = Array.isArray(state.interactions)
+    ? state.interactions.map(normalizeInteraction).filter((interaction): interaction is Interaction => interaction !== null)
     : [];
+  const interactions = normalizedInteractions.filter((interaction) => candidateIds.has(interaction.candidateId));
 
   return {
     ...state,
