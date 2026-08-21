@@ -1,5 +1,6 @@
 import type { DiscoveredProfileResult } from './api';
 import type { AppState, Candidate } from './types';
+import './discovery.css';
 
 export function mergeDiscoveredProfiles(state: AppState, profiles: DiscoveredProfileResult[]): AppState {
   const existing = new Set(state.candidates.map((candidate) => `${candidate.platform}:${candidate.username.toLowerCase()}`));
