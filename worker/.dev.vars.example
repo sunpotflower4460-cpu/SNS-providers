@@ -35,7 +35,16 @@ OAUTH_TOKEN_ENCRYPTION_KEY_B64=
 X_OWNED_READ_ELIGIBLE=false
 X_OWNED_READ_USD=
 
-# Personal control token. It gates D1 state sync, X OAuth start/disconnect, and owned X reads.
+# Optional Instagram Professional account engager sync.
+# Uses the official Instagram API with Instagram Login / Graph API only to read comments
+# on media owned by the configured Creator/Business account. Keep the token server-side.
+INSTAGRAM_ACCESS_TOKEN=
+INSTAGRAM_USER_ID=
+# Set explicitly to the currently supported Meta Graph API version, e.g. v24.0 after verifying.
+INSTAGRAM_API_VERSION=
+
+# Personal control token. It gates D1 state sync, X OAuth start/disconnect, owned X reads,
+# and Instagram Professional engager sync.
 # Store only the SHA-256 hex on the Worker; the raw value stays on the user's device.
 # Example on macOS/Linux: printf '%s' 'your-long-secret' | shasum -a 256
 SYNC_TOKEN_SHA256=
