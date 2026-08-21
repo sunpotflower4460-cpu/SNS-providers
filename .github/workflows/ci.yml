@@ -19,10 +19,18 @@ jobs:
       - run: npm install --no-audit --no-fund
       - run: npm run typecheck
       - run: npm run build
-      - name: Build with GitHub Pages base path
+      - name: Build with GitHub Pages base path and Worker origin
         run: npm run build
         env:
           VITE_BASE_PATH: /SNS-providers/
+          VITE_API_BASE_URL: https://social-mission-api.example.workers.dev
+      - name: Verify production CSP Worker binding
+        run: |
+          grep -F "connect-src 'self' https://social-mission-api.example.workers.dev;" dist/index.html
+          if grep -F "__CSP_CONNECT_SRC__" dist/index.html; then
+            echo "CSP placeholder was not replaced"
+            exit 1
+          fi
 
   worker:
     runs-on: ubuntu-latest
