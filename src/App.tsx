@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { loadState, recordInteraction, saveState, updateMission } from './store';
+import { apiConfigured, fetchBudget, rankCandidates } from './api';
+import { addCandidateFromReference, applyRankResults, loadState, recordInteraction, saveState, syncBudget, updateMission } from './store';
 import { copyDraft, openCandidate, platformLabel } from './social';
-import type { AppState, Candidate, Mission } from './types';
+import type { AppState, Candidate, Mission, Platform } from './types';
 
 type Tab = 'today' | 'discover' | 'relations' | 'me' | 'settings';
 
@@ -21,8 +22,25 @@ function App() {
   const [state, setState] = useState<AppState>(() => loadState());
   const [tab, setTab] = useState<Tab>('today');
   const [pending, setPending] = useState<Candidate | null>(null);
+  const [ranking, setRanking] = useState(false);
+  const [apiNote, setApiNote] = useState(apiConfigured ? 'API接続待機' : 'ローカルモード');
 
   useEffect(() => saveState(state), [state]);
+
+  useEffect(() => {
+    if (!apiConfigured) return;
+    let cancelled = false;
+    fetchBudget()
+      .then((budget) => {
+        if (cancelled) return;
+        setState((current) => syncBudget(current, budget.usedUsd, budget.limitUsd));
+        setApiNote('予算同期済み');
+      })
+      .catch(() => {
+        if (!cancelled) setApiNote('API未接続・ローカル継続');
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   const active = useMemo(
     () => state.candidates.filter((candidate) => !candidate.skipped).sort((a, b) => b.match - a.match),
@@ -45,20 +63,40 @@ function App() {
     setPending(null);
   }
 
+  async function rerankCandidates() {
+    if (!apiConfigured) {
+      setApiNote('Worker URLを設定するとAI再評価が使えます');
+      return;
+    }
+    const targets = state.candidates.filter((candidate) => !candidate.skipped).slice(0, 50);
+    if (!targets.length) return;
+    setRanking(true);
+    setApiNote('Missionに照らしてAI評価中…');
+    try {
+      const result = await rankCandidates(state.mission, targets, state.budget.monthlyLimitUsd);
+      setState((current) => applyRankResults(current, result.results, result.costUsd));
+      setApiNote(`${result.provider}で${result.results.length}件を評価${result.paid ? ` · $${result.costUsd.toFixed(4)}` : ' · $0'}`);
+    } catch (error) {
+      setApiNote(error instanceof Error ? `AI評価失敗: ${error.message}` : 'AI評価に失敗しました');
+    } finally {
+      setRanking(false);
+    }
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
         <div className="brand-mark">S</div>
         <div className="topbar-copy">
           <strong>Social Mission</strong>
-          <span>AI relationship navigator</span>
+          <span>{apiNote}</span>
         </div>
         <BudgetPill state={state} />
       </header>
 
       <main className="page">
         {tab === 'today' && <Today state={state} active={active} doneToday={doneToday} onOpen={onOpen} onTab={setTab} />}
-        {tab === 'discover' && <Discover candidates={active} onOpen={onOpen} />}
+        {tab === 'discover' && <Discover state={state} candidates={active} onOpen={onOpen} onChange={setState} onRerank={rerankCandidates} ranking={ranking} apiNote={apiNote} />}
         {tab === 'relations' && <Relations state={state} onOpen={onOpen} />}
         {tab === 'me' && <Me state={state} />}
         {tab === 'settings' && <Settings state={state} onChange={setState} />}
@@ -78,8 +116,8 @@ function App() {
 }
 
 function BudgetPill({ state }: { state: AppState }) {
-  const pct = Math.min(100, Math.round((state.budget.usedUsd / state.budget.monthlyLimitUsd) * 100));
-  return <div className="budget-pill"><span>{pct}%</span><strong>${state.budget.usedUsd.toFixed(2)}</strong></div>;
+  const pct = state.budget.monthlyLimitUsd > 0 ? Math.min(100, Math.round((state.budget.usedUsd / state.budget.monthlyLimitUsd) * 100)) : 0;
+  return <div className="budget-pill"><span>{state.budget.monthlyLimitUsd === 0 ? 'FREE' : `${pct}%`}</span><strong>${state.budget.usedUsd.toFixed(2)}</strong></div>;
 }
 
 function Today({ state, active, doneToday, onOpen, onTab }: {
@@ -128,11 +166,48 @@ function Metric({ icon, value, label }: { icon: string; value: number; label: st
   return <div className="metric-card"><span className="metric-icon">{icon}</span><strong>{value}</strong><small>{label}</small></div>;
 }
 
-function Discover({ candidates, onOpen }: { candidates: Candidate[]; onOpen: (c: Candidate) => void }) {
+function Discover({ state, candidates, onOpen, onChange, onRerank, ranking, apiNote }: {
+  state: AppState;
+  candidates: Candidate[];
+  onOpen: (c: Candidate) => void;
+  onChange: (state: AppState) => void;
+  onRerank: () => void;
+  ranking: boolean;
+  apiNote: string;
+}) {
   const [filter, setFilter] = useState<'all' | 'x' | 'instagram'>('all');
+  const [platform, setPlatform] = useState<Platform>('instagram');
+  const [reference, setReference] = useState('');
   const visible = candidates.filter((candidate) => filter === 'all' || candidate.platform === filter);
+
+  function addReference(value = reference) {
+    if (!value.trim()) return;
+    onChange(addCandidateFromReference(state, platform, value));
+    setReference('');
+  }
+
+  async function addFromClipboard() {
+    try {
+      const value = await navigator.clipboard.readText();
+      if (value) addReference(value);
+    } catch {
+      setReference((current) => current || '');
+    }
+  }
+
   return <>
     <PageHeading eyebrow="DISCOVER" title="今日会うべき人" text="数ではなく、Missionへの近さで並べています。" />
+
+    <section className="import-card">
+      <div className="import-head"><div><span className="eyebrow">ADD CANDIDATE</span><strong>見つけた人を1タップで候補へ</strong></div><span className="status-chip">{apiNote}</span></div>
+      <div className="mini-segmented">
+        <button className={platform === 'instagram' ? 'active' : ''} onClick={() => setPlatform('instagram')}>Instagram</button>
+        <button className={platform === 'x' ? 'active' : ''} onClick={() => setPlatform('x')}>X</button>
+      </div>
+      <div className="import-row"><input value={reference} onChange={(event) => setReference(event.target.value)} placeholder="プロフィールURL または @username" /><button onClick={() => addReference()}>追加</button></div>
+      <div className="import-actions"><button className="secondary-button" onClick={addFromClipboard}>クリップボードから追加</button><button className="primary-button" disabled={ranking} onClick={onRerank}>{ranking ? 'AI評価中…' : 'AIで候補を再評価'}</button></div>
+    </section>
+
     <div className="segmented">
       {(['all', 'x', 'instagram'] as const).map((item) => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}>{item === 'all' ? 'All' : item === 'x' ? 'X' : 'Instagram'}</button>)}
     </div>
@@ -187,14 +262,15 @@ function Me({ state }: { state: AppState }) {
 function Settings({ state, onChange }: { state: AppState; onChange: (state: AppState) => void }) {
   const [mission, setMission] = useState<Mission>(state.mission);
   const [limit, setLimit] = useState(state.budget.monthlyLimitUsd);
+  const [hardLimit, setHardLimit] = useState(state.budget.hardLimit);
   function save() {
     const next = updateMission(state, mission);
-    onChange({ ...next, budget: { ...next.budget, monthlyLimitUsd: limit, mode: limit === 0 ? 'free' : limit <= 1 ? 'eco' : limit <= 3 ? 'balanced' : 'growth' } });
+    onChange({ ...next, budget: { ...next.budget, hardLimit, monthlyLimitUsd: limit, mode: limit === 0 ? 'free' : limit <= 1 ? 'eco' : limit <= 3 ? 'balanced' : 'growth' } });
   }
   return <>
     <PageHeading eyebrow="SETTINGS" title="AIに目的地を教える" text="ここが推薦・文章・自己分析すべての判断軸になります。" />
     <section className="form-card"><label>Mission<textarea value={mission.text} rows={5} onChange={(e) => setMission({ ...mission, text: e.target.value })} /></label><label>一番大事なゴール<input value={mission.primaryGoal} onChange={(e) => setMission({ ...mission, primaryGoal: e.target.value })} /></label><label>Communication DNA<textarea value={mission.communicationDNA} rows={4} onChange={(e) => setMission({ ...mission, communicationDNA: e.target.value })} /></label></section>
-    <section className="form-card budget-settings"><div className="field-title"><div><strong>月間AI/API予算</strong><span>機能を削らず、外部取得量を自動調整</span></div><b>${limit}</b></div><input className="range" type="range" min="0" max="10" step="1" value={limit} onChange={(e) => setLimit(Number(e.target.value))} /><div className="range-labels"><span>$0</span><span>$3 recommended</span><span>$10</span></div><div className="hard-limit"><span><strong>HARD LIMIT</strong><small>設定額を超える有料リクエストを拒否</small></span><i className={state.budget.hardLimit ? 'toggle on' : 'toggle'} /></div></section>
+    <section className="form-card budget-settings"><div className="field-title"><div><strong>月間AI/API予算</strong><span>機能を削らず、外部取得量を自動調整</span></div><b>${limit}</b></div><input className="range" type="range" min="0" max="10" step="1" value={limit} onChange={(e) => setLimit(Number(e.target.value))} /><div className="range-labels"><span>$0</span><span>$3 recommended</span><span>$10</span></div><button className="hard-limit" onClick={() => setHardLimit((value) => !value)}><span><strong>HARD LIMIT</strong><small>設定額を超える有料リクエストを拒否</small></span><i className={hardLimit ? 'toggle on' : 'toggle'} /></button></section>
     <button className="save-button" onClick={save}>設定を保存</button>
   </>;
 }
