@@ -1,0 +1,19 @@
+{
+  "name": "Social Mission",
+  "short_name": "Mission",
+  "description": "AI relationship navigator for purposeful social growth",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#07101d",
+  "theme_color": "#07101d",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
