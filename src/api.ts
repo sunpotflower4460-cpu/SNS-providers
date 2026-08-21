@@ -8,6 +8,7 @@ export interface BudgetResponse {
   usedUsd: number;
   limitUsd: number;
   remainingUsd: number;
+  ledgerAvailable?: boolean;
 }
 
 export interface RankResult {
@@ -68,7 +69,7 @@ export function rankCandidates(mission: Mission, candidates: Candidate[], monthl
     method: 'POST',
     body: JSON.stringify({
       userId,
-      mission: `${mission.primaryGoal}\n${mission.text}\nSecondary: ${mission.secondaryGoals.join(', ')}`,
+      mission: missionText(mission),
       communicationDNA: mission.communicationDNA,
       monthlyLimitUsd,
       candidates: candidates.slice(0, 50).map((candidate) => ({
@@ -84,6 +85,28 @@ export function rankCandidates(mission: Mission, candidates: Candidate[], monthl
   });
 }
 
+export function analyzeSelfProfile(mission: Mission, profileText: string, recentPostsText: string, monthlyLimitUsd: number, userId = 'local-user') {
+  const compactProfile = profileText.trim().slice(0, 10_000);
+  const compactPosts = recentPostsText.trim().slice(0, 20_000);
+  return apiFetch<RankResponse>('/api/ai/rank', {
+    method: 'POST',
+    body: JSON.stringify({
+      userId,
+      mission: missionText(mission),
+      communicationDNA: mission.communicationDNA,
+      monthlyLimitUsd,
+      candidates: [{
+        id: '__self__',
+        username: 'self',
+        kind: 'self_profile',
+        platform: 'self',
+        bio: `PROFILE\n${compactProfile}\n\nRECENT POSTS\n${compactPosts}`,
+        tags: ['self-analysis'],
+      }],
+    }),
+  });
+}
+
 export function enrichXProfiles(candidates: Candidate[], monthlyLimitUsd: number, userId = 'local-user') {
   const usernames = [...new Set(candidates.filter((candidate) => candidate.platform === 'x').map((candidate) => candidate.username))].slice(0, 100);
   if (!usernames.length) return Promise.resolve<XEnrichResponse>({ enabled: false, costUsd: 0, profiles: [], reason: 'No X candidates to enrich.' });
@@ -91,4 +114,8 @@ export function enrichXProfiles(candidates: Candidate[], monthlyLimitUsd: number
     method: 'POST',
     body: JSON.stringify({ userId, usernames, monthlyLimitUsd }),
   });
+}
+
+function missionText(mission: Mission) {
+  return `${mission.primaryGoal}\n${mission.text}\nSecondary: ${mission.secondaryGoals.join(', ')}`;
 }
