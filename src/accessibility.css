@@ -1,0 +1,61 @@
+:where(button, a, input, textarea, select):focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+button,
+a,
+input,
+textarea,
+select {
+  -webkit-tap-highlight-color: rgba(121, 231, 197, .16);
+}
+
+button {
+  touch-action: manipulation;
+}
+
+@media (pointer: coarse) {
+  .form-card input,
+  .form-card textarea,
+  .import-row input {
+    font-size: 16px;
+  }
+
+  .segmented button,
+  .mini-segmented button,
+  .followback-controls button,
+  .sync-footer button,
+  .draft-box button,
+  .coach-card button,
+  .text-button {
+    min-height: 42px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --line: rgba(255, 255, 255, .2);
+    --muted: #b6c2d3;
+  }
+
+  .secondary-button,
+  .candidate-card,
+  .form-card,
+  .metric-card,
+  .relation-card,
+  .daily-queue {
+    border-width: 2px;
+  }
+}
