@@ -50,6 +50,7 @@ export interface Candidate {
   followBack?: boolean | null;
   lastInteractionAt?: string;
   skipped?: boolean;
+  snoozedUntil?: string;
 }
 
 export interface Interaction {
