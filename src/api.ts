@@ -110,11 +110,16 @@ export function rankCandidates(mission: Mission, candidates: Candidate[], monthl
       candidates: selected.map((candidate) => ({
         id: candidate.id,
         username: candidate.username,
-        bio: candidate.bio,
-        tags: candidate.tags,
+        bio: candidate.bio.slice(0, 1200),
+        tags: candidate.tags.slice(0, 20),
         kind: candidate.kind,
         platform: candidate.platform,
         publicMetrics: candidate.publicMetrics,
+        relationshipStage: candidate.stage,
+        relationshipScore: candidate.relationshipScore,
+        reason: candidate.reason.slice(0, 800),
+        strategy: candidate.strategy?.slice(0, 1000),
+        engagementUrl: candidate.engagementUrl,
       })),
     }),
   });
