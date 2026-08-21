@@ -122,6 +122,15 @@ CREATE TABLE IF NOT EXISTS x_owned_snapshots (
   synced_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS x_owned_paging (
+  user_id TEXT PRIMARY KEY,
+  followers_cursor TEXT,
+  following_cursor TEXT,
+  followers_cycle INTEGER NOT NULL DEFAULT 0,
+  following_cycle INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_candidates_user_match ON candidates(user_id, mission_match DESC);
 CREATE INDEX IF NOT EXISTS idx_candidates_stage ON candidates(user_id, stage);
 CREATE INDEX IF NOT EXISTS idx_interactions_candidate ON interactions(candidate_id, occurred_at DESC);
