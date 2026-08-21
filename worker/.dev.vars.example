@@ -18,6 +18,17 @@ TAVILY_BILLING_MODE=free
 X_BEARER_TOKEN=
 X_USER_READ_USD=
 
+# Optional read-only X OAuth 2.0 PKCE connection.
+# Configure the X App as a confidential Web App and set the exact Worker callback URL.
+# Requested scopes are fixed in code to: tweet.read users.read follows.read offline.access
+X_CLIENT_ID=
+X_CLIENT_SECRET=
+X_OAUTH_CALLBACK_URL=http://localhost:8787/api/x/oauth/callback
+PWA_RETURN_URL=http://localhost:5173/
+# Base64 of exactly 32 random bytes, used for AES-GCM encryption of X access/refresh tokens.
+# Example: openssl rand -base64 32
+OAUTH_TOKEN_ENCRYPTION_KEY_B64=
+
 # Optional personal state sync. Store only the SHA-256 hex of the secret here.
 # Example on macOS/Linux: printf '%s' 'your-long-secret' | shasum -a 256
 SYNC_TOKEN_SHA256=
