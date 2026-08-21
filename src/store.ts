@@ -51,13 +51,25 @@ const defaultState: AppState = {
     { id: 'i1', category: 'profile', priority: 'high', title: '初見の人への入口を強くする', body: '何を作っている人かに加えて、初めて来た人がすぐ音楽を聴ける導線をプロフィール上部に置くとMissionに近づきやすくなります。' },
     { id: 'i2', category: 'content', priority: 'medium', title: 'リスナー向け投稿を少し増やす', body: '制作側の投稿だけでなく、曲の世界観や聴きどころを短く体験できる投稿を混ぜるとファン候補との接点が増えます。' },
     { id: 'i3', category: 'network', priority: 'medium', title: '同業者への偏りを抑える', body: '新規交流の一部をリスナー・映像制作者・イベント関係へ振り分けるとネットワークがMissionに近づきます。' }
-  ]
+  ],
+  selfProfile: {
+    profileText: '',
+    recentPostsText: ''
+  }
 };
 
 export function loadState(): AppState {
   try {
     const raw = localStorage.getItem(KEY);
-    return raw ? { ...defaultState, ...JSON.parse(raw) } : defaultState;
+    if (!raw) return defaultState;
+    const parsed = JSON.parse(raw) as Partial<AppState>;
+    return {
+      ...defaultState,
+      ...parsed,
+      mission: { ...defaultState.mission, ...(parsed.mission || {}) },
+      budget: { ...defaultState.budget, ...(parsed.budget || {}) },
+      selfProfile: { ...defaultState.selfProfile, ...(parsed.selfProfile || {}) },
+    };
   } catch {
     return defaultState;
   }
@@ -69,6 +81,30 @@ export function saveState(state: AppState) {
 
 export function updateMission(state: AppState, mission: Mission): AppState {
   return { ...state, mission };
+}
+
+export function updateSelfProfileInputs(state: AppState, profileText: string, recentPostsText: string): AppState {
+  return { ...state, selfProfile: { ...state.selfProfile, profileText, recentPostsText } };
+}
+
+export function applySelfAnalysis(state: AppState, result: RankResult | undefined, costUsd = 0): AppState {
+  if (!result) return state;
+  return {
+    ...state,
+    selfProfile: {
+      ...state.selfProfile,
+      score: clampScore(result.match),
+      summary: result.reason?.trim() || state.selfProfile.summary,
+      strategy: result.strategy?.trim() || state.selfProfile.strategy,
+      profileRewrite: result.draft?.trim() || state.selfProfile.profileRewrite,
+      analyzedAt: new Date().toISOString(),
+    },
+    budget: {
+      ...state.budget,
+      usedUsd: Math.max(0, state.budget.usedUsd + Math.max(0, costUsd)),
+      llmUsd: Math.max(0, state.budget.llmUsd + Math.max(0, costUsd)),
+    },
+  };
 }
 
 export function syncBudget(state: AppState, usedUsd: number, serverLimitUsd: number): AppState {
