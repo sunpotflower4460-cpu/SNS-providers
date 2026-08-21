@@ -35,7 +35,13 @@ interface Usage {
   completion_tokens?: number;
 }
 
+interface RatePair {
+  input: number;
+  output: number;
+}
+
 const jsonHeaders = { 'content-type': 'application/json; charset=utf-8' };
+const MAX_OUTPUT_TOKENS = 1800;
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -66,30 +72,32 @@ export default {
         const remainingUsd = Math.max(0, effectiveLimit - usedUsd);
 
         if (env.GROQ_API_KEY) {
-          const result = await rankWithProvider('groq', body, env);
-          const costUsd = env.GROQ_BILLING_MODE === 'paid'
-            ? calculateCost(result.usage, env.GROQ_INPUT_PER_MILLION, env.GROQ_OUTPUT_PER_MILLION)
-            : 0;
-          if (costUsd <= remainingUsd) {
+          const paid = env.GROQ_BILLING_MODE === 'paid';
+          const rates = paid ? parseRates(env.GROQ_INPUT_PER_MILLION, env.GROQ_OUTPUT_PER_MILLION) : null;
+          const preflight = paid ? (rates ? estimateMaxCost(body, rates) : Number.POSITIVE_INFINITY) : 0;
+
+          if (preflight <= remainingUsd) {
+            const result = await rankWithProvider('groq', body, env);
+            const costUsd = paid && rates ? calculateCost(result.usage, rates) : 0;
             await recordUsage(env, userId, 'groq', 'rank', costUsd, result.usage);
-            return json({ provider: 'groq', paid: costUsd > 0, costUsd, results: result.results }, 200, cors);
+            return json({ provider: 'groq', paid, costUsd, results: result.results }, 200, cors);
           }
         }
 
         if (env.DEEPSEEK_API_KEY && remainingUsd > 0) {
-          const estimatedUsd = 0.02;
-          if (estimatedUsd <= remainingUsd) {
+          const rates = parseRates(env.DEEPSEEK_INPUT_PER_MILLION, env.DEEPSEEK_OUTPUT_PER_MILLION);
+          const preflight = rates ? estimateMaxCost(body, rates) : Number.POSITIVE_INFINITY;
+
+          if (rates && preflight <= remainingUsd) {
             const result = await rankWithProvider('deepseek', body, env);
-            const costUsd = calculateCost(result.usage, env.DEEPSEEK_INPUT_PER_MILLION, env.DEEPSEEK_OUTPUT_PER_MILLION);
-            if (costUsd <= remainingUsd) {
-              await recordUsage(env, userId, 'deepseek', 'rank', costUsd, result.usage);
-              return json({ provider: 'deepseek', paid: costUsd > 0, costUsd, results: result.results }, 200, cors);
-            }
+            const costUsd = calculateCost(result.usage, rates);
+            await recordUsage(env, userId, 'deepseek', 'rank', costUsd, result.usage);
+            return json({ provider: 'deepseek', paid: true, costUsd, results: result.results }, 200, cors);
           }
         }
 
         const results = localRank(body.mission, body.candidates);
-        return json({ provider: 'local', paid: false, costUsd: 0, reason: 'Free providers unavailable or HARD LIMIT protected the budget.', results }, 200, cors);
+        return json({ provider: 'local', paid: false, costUsd: 0, reason: 'Free providers unavailable, paid rates are not configured, or HARD LIMIT protected the budget.', results }, 200, cors);
       }
 
       return json({ error: 'Not found' }, 404, cors);
@@ -107,7 +115,7 @@ function corsHeaders(request: Request, env: Env) {
     'access-control-allow-origin': allowed === '*' ? '*' : allowed === origin ? origin : allowed,
     'access-control-allow-methods': 'GET,POST,OPTIONS',
     'access-control-allow-headers': 'content-type,authorization',
-    'vary': 'Origin',
+    vary: 'Origin',
   };
 }
 
@@ -122,8 +130,11 @@ function configuredLimit(env: Env) {
 
 function validateRankRequest(body: RankRequest) {
   if (!body || typeof body.mission !== 'string' || !body.mission.trim()) throw new Error('mission is required');
+  if (body.mission.length > 4000) throw new Error('mission is too long');
+  if ((body.communicationDNA || '').length > 4000) throw new Error('communicationDNA is too long');
   if (!Array.isArray(body.candidates) || body.candidates.length === 0) throw new Error('candidates are required');
   if (body.candidates.length > 50) throw new Error('rank accepts at most 50 candidates per batch');
+  if (JSON.stringify(body).length > 60_000) throw new Error('rank request is too large');
 }
 
 async function monthUsage(env: Env, userId: string) {
@@ -149,15 +160,30 @@ async function recordUsage(env: Env, userId: string, provider: string, operation
       usage?.prompt_tokens || 0, usage?.completion_tokens || 0, new Date().toISOString()
     ).run();
   } catch {
-    // The PWA remains usable before D1 migrations are applied; deployment diagnostics should surface this separately.
+    // Local-first mode remains usable before migrations; deployment diagnostics should surface missing D1 separately.
   }
 }
 
-function calculateCost(usage: Usage | undefined, inputRate?: string, outputRate?: string) {
-  if (!usage) return 0;
-  const input = Number(inputRate || 0);
-  const output = Number(outputRate || 0);
-  return ((usage.prompt_tokens || 0) / 1_000_000) * input + ((usage.completion_tokens || 0) / 1_000_000) * output;
+function parseRates(inputRate?: string, outputRate?: string): RatePair | null {
+  const input = Number(inputRate);
+  const output = Number(outputRate);
+  if (!Number.isFinite(input) || input <= 0 || !Number.isFinite(output) || output <= 0) return null;
+  return { input, output };
+}
+
+function estimateMaxCost(body: RankRequest, rates: RatePair) {
+  // Deliberately conservative. We prefer falling back to free/local work over risking the hard cap.
+  const estimatedInputTokens = JSON.stringify(body).length * 2 + 1500;
+  return (estimatedInputTokens / 1_000_000) * rates.input + (MAX_OUTPUT_TOKENS / 1_000_000) * rates.output;
+}
+
+function calculateCost(usage: Usage | undefined, rates: RatePair) {
+  if (!usage) return estimateUnknownUsageCost(rates);
+  return ((usage.prompt_tokens || 0) / 1_000_000) * rates.input + ((usage.completion_tokens || 0) / 1_000_000) * rates.output;
+}
+
+function estimateUnknownUsageCost(rates: RatePair) {
+  return (5000 / 1_000_000) * rates.input + (MAX_OUTPUT_TOKENS / 1_000_000) * rates.output;
 }
 
 async function rankWithProvider(provider: 'groq' | 'deepseek', body: RankRequest, env: Env) {
@@ -178,7 +204,7 @@ async function rankWithProvider(provider: 'groq' | 'deepseek', body: RankRequest
     body: JSON.stringify({
       model,
       temperature: 0.2,
-      max_tokens: 1800,
+      max_tokens: MAX_OUTPUT_TOKENS,
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: 'You are a social relationship strategist. Output JSON only: {"results":[{"id":string,"match":0-100,"kind":string,"recommendedAction":string,"reason":string}]}. Never recommend automated social actions.' },
