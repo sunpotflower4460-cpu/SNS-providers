@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { apiConfigured } from './api';
-import { clearSyncToken, downloadRemoteState, getSyncToken, setSyncToken, uploadRemoteState } from './sync';
+import { clearRemoteStateVersion, clearSyncToken, downloadRemoteState, getSyncToken, setSyncToken, uploadRemoteState } from './sync';
 import type { AppState } from './types';
 import './sync.css';
 
@@ -10,16 +10,22 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
   const [busy, setBusy] = useState(false);
 
   function saveToken() {
+    const previous = getSyncToken().trim();
+    const next = token.trim();
+    if (previous !== next) clearRemoteStateVersion();
     setSyncToken(token);
-    setStatus(token.trim() ? '個人管理キーをこの端末に保存しました' : '個人管理キーを削除しました');
+    setStatus(next ? '個人管理キーをこの端末に保存しました' : '個人管理キーを削除しました');
   }
 
   async function upload() {
     setBusy(true);
     try {
+      const previous = getSyncToken().trim();
+      const next = token.trim();
+      if (previous !== next) clearRemoteStateVersion();
       setSyncToken(token);
       const result = await uploadRemoteState(state, token);
-      setStatus(`D1へ保存 · ${new Date(result.updatedAt).toLocaleString('ja-JP')}`);
+      setStatus(`D1へ安全に保存 · ${new Date(result.updatedAt).toLocaleString('ja-JP')}`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : '同期アップロードに失敗しました');
     } finally {
@@ -30,6 +36,9 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
   async function download() {
     setBusy(true);
     try {
+      const previous = getSyncToken().trim();
+      const next = token.trim();
+      if (previous !== next) clearRemoteStateVersion();
       setSyncToken(token);
       const result = await downloadRemoteState(token);
       if (!result.found || !result.state) {
@@ -47,8 +56,9 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
 
   function forget() {
     clearSyncToken();
+    clearRemoteStateVersion();
     setToken('');
-    setStatus('この端末の個人管理キーを削除しました');
+    setStatus('この端末の個人管理キーとD1同期バージョンを削除しました');
   }
 
   return <section className="form-card sync-card">
@@ -60,6 +70,6 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
       <button className="primary-button" disabled={busy || !apiConfigured} onClick={download}>D1 → この端末</button>
     </div>
     <div className="sync-footer"><small>{busy ? '同期処理中…' : status}</small><button onClick={forget}>キーを忘れる</button></div>
-    <small className="sync-note">同じキーでX OAuthの開始/解除とX owned-read同期も保護します。生キーはD1やバックアップJSONへ保存せず、この端末のlocalStorageだけに保持します。</small>
+    <small className="sync-note">D1保存は最後に確認したリモート版と一致する時だけ成功します。別端末で更新されていた場合は上書きを止めるので、先に「D1 → この端末」で最新版を確認してください。同じキーでAI/検索・X・Instagramの保護ルートも認証します。</small>
   </section>;
 }
