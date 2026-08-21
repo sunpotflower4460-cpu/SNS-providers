@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { downloadBackup, readBackup } from './backup';
+import InstallControls from './InstallControls';
 import InstagramAccountControls from './InstagramAccountControls';
 import SyncControls from './SyncControls';
 import WorkloadControls from './WorkloadControls';
@@ -24,6 +25,7 @@ export default function BackupControls({ state, onRestore }: { state: AppState; 
   }
 
   return <>
+    <InstallControls />
     <WorkloadControls state={state} onChange={onRestore} />
     <SyncControls state={state} onRestore={onRestore} />
     <XAccountControls state={state} onChange={onRestore} />
