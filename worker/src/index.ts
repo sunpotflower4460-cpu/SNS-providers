@@ -495,7 +495,9 @@ function normalizeProviderResults(rawResults: unknown[], candidates: CandidateIn
     const reason = safeText(item.reason, 1200) || 'AIから有効な理由文が返らなかったため、人間の確認を優先します。';
     const strategy = safeText(item.strategy, 1600) || 'プロフィールと実際の発信内容を確認してから次の交流を決めます。';
     const rawDraft = safeText(item.draft, 1200);
-    const draftAllowed = (recommendedAction === 'reply' && hasEngagementContext) || (recommendedAction === 'dm' && dmReady);
+    const draftAllowed = candidate.kind === 'self_profile'
+      || (recommendedAction === 'reply' && hasEngagementContext)
+      || (recommendedAction === 'dm' && dmReady);
     const draft = draftAllowed ? rawDraft : '';
 
     normalized.push({
