@@ -8,6 +8,7 @@ import { mergeDiscoveredProfiles } from './discoveryStore';
 import { addCandidateFromReference, applyRankResults, applySelfAnalysis, applyXProfiles, loadState, recordInteraction, saveState, setFollowBackStatus, syncBudget, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
 import { copyDraft, openCandidate, platformLabel } from './social';
 import type { AppState, Candidate, Mission, Platform } from './types';
+import { useLocalDayKey } from './useLocalDay';
 
 type Tab = 'today' | 'discover' | 'relations' | 'me' | 'settings';
 
@@ -32,6 +33,7 @@ function App() {
   const [enrichingX, setEnrichingX] = useState(false);
   const [analyzingSelf, setAnalyzingSelf] = useState(false);
   const [apiNote, setApiNote] = useState(apiConfigured ? 'API接続待機' : 'ローカルモード');
+  const localDay = useLocalDayKey();
 
   useEffect(() => saveState(state), [state]);
 
@@ -56,7 +58,7 @@ function App() {
         return !Number.isFinite(until) || until <= now;
       })
       .sort((a, b) => b.match - a.match);
-  }, [state.candidates]);
+  }, [state.candidates, localDay]);
 
   const doneToday = useMemo(() => {
     const now = new Date();
@@ -64,7 +66,7 @@ function App() {
       const at = new Date(interaction.at);
       return at.getFullYear() === now.getFullYear() && at.getMonth() === now.getMonth() && at.getDate() === now.getDate();
     }).length;
-  }, [state.interactions]);
+  }, [state.interactions, localDay]);
 
   function onOpen(candidate: Candidate) {
     setPending(candidate);
