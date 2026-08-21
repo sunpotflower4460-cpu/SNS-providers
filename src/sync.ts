@@ -1,8 +1,9 @@
 import { apiBaseUrl, apiConfigured } from './api';
 import { normalizeAppState, validateAppState } from './backup';
+import { getSyncToken } from './controlToken';
 import type { AppState } from './types';
 
-const TOKEN_KEY = 'sns-providers:sync-token';
+export { clearSyncToken, getSyncToken, setSyncToken } from './controlToken';
 
 interface DownloadResponse {
   found: boolean;
@@ -13,20 +14,6 @@ interface DownloadResponse {
 interface UploadResponse {
   ok: boolean;
   updatedAt: string;
-}
-
-export function getSyncToken() {
-  return localStorage.getItem(TOKEN_KEY) || '';
-}
-
-export function setSyncToken(token: string) {
-  const normalized = token.trim();
-  if (!normalized) localStorage.removeItem(TOKEN_KEY);
-  else localStorage.setItem(TOKEN_KEY, normalized);
-}
-
-export function clearSyncToken() {
-  localStorage.removeItem(TOKEN_KEY);
 }
 
 export async function uploadRemoteState(state: AppState, token = getSyncToken(), userId = 'local-user') {
