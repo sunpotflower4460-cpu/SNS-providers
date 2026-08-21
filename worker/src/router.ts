@@ -1,11 +1,17 @@
 import api from './index';
 import { discoverSocialProfiles } from './discovery';
+import { completeXOAuth, disconnectXOAuth, startXOAuth, xOAuthStatus } from './xOAuth';
 
 interface Env {
   DB: D1Database;
   TAVILY_API_KEY?: string;
   TAVILY_BILLING_MODE?: 'free' | 'paid';
   SYNC_TOKEN_SHA256?: string;
+  X_CLIENT_ID?: string;
+  X_CLIENT_SECRET?: string;
+  X_OAUTH_CALLBACK_URL?: string;
+  PWA_RETURN_URL?: string;
+  OAUTH_TOKEN_ENCRYPTION_KEY_B64?: string;
   ALLOWED_ORIGIN?: string;
   [key: string]: unknown;
 }
@@ -24,8 +30,48 @@ interface StateSyncRequest {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    if (request.method === 'OPTIONS' && (url.pathname === '/api/discover/social' || url.pathname === '/api/sync/state')) {
+    if (request.method === 'OPTIONS' && ['/api/discover/social', '/api/sync/state', '/api/x/oauth/status', '/api/x/oauth/disconnect'].includes(url.pathname)) {
       return new Response(null, { status: 204, headers: corsHeaders(request, env) });
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/x/oauth/start') {
+      try {
+        const authorizeUrl = await startXOAuth(env);
+        return Response.redirect(authorizeUrl, 302);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'X OAuth start failed';
+        return json({ error: message }, 503, request, env);
+      }
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/x/oauth/callback') {
+      try {
+        const returnTo = await completeXOAuth(env, url);
+        return Response.redirect(returnTo, 302);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'X OAuth callback failed';
+        return json({ error: message }, 400, request, env);
+      }
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/x/oauth/status') {
+      try {
+        const userId = sanitizeUserId(url.searchParams.get('userId') || 'local-user');
+        return json(await xOAuthStatus(env, userId), 200, request, env);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'X OAuth status failed';
+        return json({ error: message }, 400, request, env);
+      }
+    }
+
+    if (request.method === 'DELETE' && url.pathname === '/api/x/oauth/disconnect') {
+      try {
+        const userId = sanitizeUserId(url.searchParams.get('userId') || 'local-user');
+        return json(await disconnectXOAuth(env, userId), 200, request, env);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'X OAuth disconnect failed';
+        return json({ error: message }, 400, request, env);
+      }
     }
 
     if (url.pathname === '/api/sync/state') {
@@ -143,7 +189,7 @@ function corsHeaders(request: Request, env: Env) {
   const allowed = env.ALLOWED_ORIGIN || '*';
   return {
     'access-control-allow-origin': allowed === '*' ? '*' : allowed === origin ? origin : allowed,
-    'access-control-allow-methods': 'GET,POST,PUT,OPTIONS',
+    'access-control-allow-methods': 'GET,POST,PUT,DELETE,OPTIONS',
     'access-control-allow-headers': 'content-type,authorization',
     vary: 'Origin',
   };
