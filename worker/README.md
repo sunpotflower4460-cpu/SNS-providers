@@ -1,6 +1,6 @@
 # Social Mission Worker
 
-Server-side boundary for provider keys, ranking, free-first social discovery, X public profile enrichment, D1 usage accounting and the monthly HARD LIMIT.
+Server-side boundary for provider keys, ranking, free-first social discovery, optional personal state sync, X public profile enrichment, D1 usage accounting and the monthly HARD LIMIT.
 
 ## Why it exists
 
@@ -13,6 +13,22 @@ Provider keys and future social OAuth secrets must never be shipped to the PWA b
 - `POST /api/discover/social`
 - `POST /api/ai/rank`
 - `POST /api/x/enrich`
+- `GET /api/sync/state?userId=local-user`
+- `PUT /api/sync/state`
+
+### Personal D1 state sync
+
+State sync is optional and disabled unless `SYNC_TOKEN_SHA256` contains the SHA-256 hex of a user-chosen secret. The raw secret is entered on the user's device at runtime and is sent only as a Bearer token to the Worker; it is not committed to the repository or included in the PWA backup JSON.
+
+Generate the Worker-side hash, for example:
+
+```bash
+printf '%s' 'replace-with-a-long-random-secret' | shasum -a 256
+```
+
+Store that 64-character hash as the Worker secret/variable `SYNC_TOKEN_SHA256`. Enter the original unhashed secret in the PWA Settings screen.
+
+`PUT /api/sync/state` stores one JSON snapshot per `userId` in D1 and `GET /api/sync/state` restores it. Snapshots are capped at 2 MB. This is access-controlled synchronization, **not application-level encryption of the state data at rest**; use the manual JSON backup instead if you do not want account state stored in D1.
 
 ### Free social discovery
 
