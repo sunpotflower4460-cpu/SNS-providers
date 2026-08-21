@@ -24,6 +24,7 @@ const actionWeight: Record<RecommendedAction, number> = {
 export function buildDailyQueue(state: AppState): DailyQueueItem[] {
   const today = localDateKey(new Date());
   const limits = workloadLimits(state);
+  const now = Date.now();
   const completedCandidateIds = new Set(
     state.interactions
       .filter((interaction) => localDateKey(new Date(interaction.at)) === today)
@@ -31,7 +32,7 @@ export function buildDailyQueue(state: AppState): DailyQueueItem[] {
   );
 
   const relationshipItems = state.candidates
-    .filter((candidate) => !candidate.skipped && !completedCandidateIds.has(candidate.id))
+    .filter((candidate) => !candidate.skipped && !isSnoozed(candidate, now) && !completedCandidateIds.has(candidate.id))
     .map(candidateToQueueItem)
     .sort((a, b) => b.priority - a.priority);
 
@@ -122,6 +123,12 @@ function workloadLimits(state: AppState) {
     cleanup: clampInt(policy.dailyCleanupLimit, 5, 0, 30),
     self: clampInt(policy.dailySelfImproveLimit, 2, 0, 5),
   };
+}
+
+function isSnoozed(candidate: Candidate, now: number) {
+  if (!candidate.snoozedUntil) return false;
+  const until = new Date(candidate.snoozedUntil).getTime();
+  return Number.isFinite(until) && until > now;
 }
 
 function clampInt(value: number | undefined, fallback: number, min: number, max: number) {
