@@ -1,5 +1,5 @@
 import { apiBaseUrl, apiConfigured } from './api';
-import { validateAppState } from './backup';
+import { normalizeAppState, validateAppState } from './backup';
 import type { AppState } from './types';
 
 const TOKEN_KEY = 'sns-providers:sync-token';
@@ -42,7 +42,10 @@ export async function downloadRemoteState(token = getSyncToken(), userId = 'loca
   if (!apiConfigured) throw new Error('Worker URLが設定されていません');
   if (!token.trim()) throw new Error('同期キーを入力してください');
   const result = await syncFetch<DownloadResponse>(`/api/sync/state?userId=${encodeURIComponent(userId)}`, token);
-  if (result.found && result.state) validateAppState(result.state);
+  if (result.found && result.state) {
+    result.state = normalizeAppState(result.state);
+    validateAppState(result.state);
+  }
   return result;
 }
 
