@@ -29,7 +29,14 @@ PWA_RETURN_URL=http://localhost:5173/
 # Example: openssl rand -base64 32
 OAUTH_TOKEN_ENCRYPTION_KEY_B64=
 
-# Optional personal state sync. Store only the SHA-256 hex of the secret here.
+# Owned Reads are cheaper only when the authenticated X account is actually eligible
+# under X's current Owned Reads rules (the app owner reading their own data).
+# Verify current Developer Console pricing before enabling; leave false/blank to fail closed.
+X_OWNED_READ_ELIGIBLE=false
+X_OWNED_READ_USD=
+
+# Personal control token. It gates D1 state sync, X OAuth start/disconnect, and owned X reads.
+# Store only the SHA-256 hex on the Worker; the raw value stays on the user's device.
 # Example on macOS/Linux: printf '%s' 'your-long-secret' | shasum -a 256
 SYNC_TOKEN_SHA256=
 
