@@ -20,17 +20,21 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
     const strategy = engager.lastCommentText
       ? `直近コメント「${engager.lastCommentText.slice(0, 120)}」の文脈から、まず自然に返信・プロフィール確認を優先。いきなり営業DMには進めません。`
       : '既に相手から反応があるため、まずコメント文脈の確認や自然な返信を優先します。';
+    const existingEngagementUrl = existing?.engagementUrl;
+    const engagementUrl = engager.latestMediaPermalink || existingEngagementUrl;
+    const recommendedAction: Candidate['recommendedAction'] = engagementUrl ? 'reply' : 'review';
 
     if (existing) {
       updates.set(existing.id, {
         ...existing,
-        engagementUrl: engager.latestMediaPermalink || existing.engagementUrl,
+        engagementUrl,
         relationshipScore: Math.max(existing.relationshipScore, relationshipScore),
         match: Math.max(existing.match, match),
         stage: promoteStage(existing.stage),
         reason,
         strategy,
-        recommendedAction: existing.recommendedAction === 'unfollow_review' ? existing.recommendedAction : 'reply',
+        recommendedAction,
+        draft: recommendedAction === 'reply' ? existing.draft : undefined,
         platformUserId: engager.id || existing.platformUserId,
         profileSyncedAt: syncedAt,
         lastInteractionAt: engager.lastCommentAt || existing.lastInteractionAt,
@@ -46,7 +50,7 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
       displayName: engager.username,
       bio: '',
       profileUrl: engager.profileUrl,
-      engagementUrl: engager.latestMediaPermalink || undefined,
+      engagementUrl,
       platformUserId: engager.id,
       profileSyncedAt: syncedAt,
       kind: 'fan',
@@ -56,7 +60,7 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
       reason,
       strategy,
       tags: ['inbound', 'commenter'],
-      recommendedAction: 'reply',
+      recommendedAction,
       lastInteractionAt: engager.lastCommentAt || syncedAt,
     });
   }
