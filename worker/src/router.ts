@@ -84,7 +84,7 @@ export default {
     if (request.method === 'GET' && url.pathname === '/api/x/oauth/callback') {
       try {
         const returnTo = await completeXOAuth(env, url);
-        return Response.redirect(returnTo, 302);
+        return redirect(returnTo);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'X OAuth callback failed';
         return json({ error: message }, 400, request, env);
@@ -265,7 +265,25 @@ async function recordFreeSearchUsage(env: Env, userId: string, credits: number) 
 function json(data: unknown, status: number, request: Request, env: Env) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'content-type': 'application/json; charset=utf-8', ...corsHeaders(request, env) },
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+      'referrer-policy': 'no-referrer',
+      ...corsHeaders(request, env),
+    },
+  });
+}
+
+function redirect(location: string) {
+  return new Response(null, {
+    status: 302,
+    headers: {
+      location,
+      'cache-control': 'no-store',
+      'referrer-policy': 'no-referrer',
+      'x-content-type-options': 'nosniff',
+    },
   });
 }
 
