@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { apiConfigured, enrichXProfiles, fetchBudget, rankCandidates } from './api';
-import { addCandidateFromReference, applyRankResults, applyXProfiles, loadState, recordInteraction, saveState, syncBudget, updateMission } from './store';
+import { analyzeSelfProfile, apiConfigured, enrichXProfiles, fetchBudget, rankCandidates } from './api';
+import { addCandidateFromReference, applyRankResults, applySelfAnalysis, applyXProfiles, loadState, recordInteraction, saveState, syncBudget, updateMission, updateSelfProfileInputs } from './store';
 import { copyDraft, openCandidate, platformLabel } from './social';
 import type { AppState, Candidate, Mission, Platform } from './types';
 
@@ -24,6 +24,7 @@ function App() {
   const [pending, setPending] = useState<Candidate | null>(null);
   const [ranking, setRanking] = useState(false);
   const [enrichingX, setEnrichingX] = useState(false);
+  const [analyzingSelf, setAnalyzingSelf] = useState(false);
   const [apiNote, setApiNote] = useState(apiConfigured ? 'API接続待機' : 'ローカルモード');
 
   useEffect(() => saveState(state), [state]);
@@ -35,7 +36,7 @@ function App() {
       .then((budget) => {
         if (cancelled) return;
         setState((current) => syncBudget(current, budget.usedUsd, budget.limitUsd));
-        setApiNote('予算同期済み');
+        setApiNote(budget.ledgerAvailable === false ? '無料モード · 有料APIは台帳復旧まで停止' : '予算同期済み');
       })
       .catch(() => {
         if (!cancelled) setApiNote('API未接続・ローカル継続');
@@ -117,6 +118,29 @@ function App() {
     }
   }
 
+  async function analyzeMe(profileText: string, recentPostsText: string) {
+    setState((current) => updateSelfProfileInputs(current, profileText, recentPostsText));
+    if (!profileText.trim() && !recentPostsText.trim()) {
+      setApiNote('プロフィールまたは最近の投稿を入力してください');
+      return;
+    }
+    if (!apiConfigured) {
+      setApiNote('Worker URLを設定すると自己分析が使えます');
+      return;
+    }
+    setAnalyzingSelf(true);
+    setApiNote('自分のアカウントをMissionから逆算して分析中…');
+    try {
+      const result = await analyzeSelfProfile(state.mission, profileText, recentPostsText, state.budget.monthlyLimitUsd);
+      setState((current) => applySelfAnalysis(updateSelfProfileInputs(current, profileText, recentPostsText), result.results[0], result.costUsd));
+      setApiNote(`${result.provider}で自己分析完了${result.paid ? ` · $${result.costUsd.toFixed(4)}` : ' · $0'}`);
+    } catch (error) {
+      setApiNote(error instanceof Error ? `自己分析失敗: ${error.message}` : '自己分析に失敗しました');
+    } finally {
+      setAnalyzingSelf(false);
+    }
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -132,7 +156,7 @@ function App() {
         {tab === 'today' && <Today state={state} active={active} doneToday={doneToday} onOpen={onOpen} onTab={setTab} />}
         {tab === 'discover' && <Discover state={state} candidates={active} onOpen={onOpen} onChange={setState} onRerank={rerankCandidates} onEnrichX={enrichXCandidates} ranking={ranking} enrichingX={enrichingX} apiNote={apiNote} />}
         {tab === 'relations' && <Relations state={state} onOpen={onOpen} />}
-        {tab === 'me' && <Me state={state} />}
+        {tab === 'me' && <Me state={state} onAnalyze={analyzeMe} analyzing={analyzingSelf} />}
         {tab === 'settings' && <Settings state={state} onChange={setState} />}
       </main>
 
@@ -266,6 +290,7 @@ function CandidateCard({ candidate, onOpen, featured = false }: { candidate: Can
     {candidate.bio && <p className="candidate-bio">{candidate.bio}</p>}
     {candidate.publicMetrics && <div className="profile-metrics"><span><b>{compactNumber(candidate.publicMetrics.followers)}</b> followers</span><span><b>{compactNumber(candidate.publicMetrics.posts)}</b> posts</span></div>}
     <p className="reason">{candidate.reason}</p>
+    {candidate.strategy && <div className="strategy-note"><span>AI STRATEGY</span><p>{candidate.strategy}</p></div>}
     <div className="tags">{candidate.tags.map((tag) => <span key={tag}>#{tag}</span>)}</div>
     {candidate.draft && <div className="draft-box"><span>AI返信案</span><p>{candidate.draft}</p><button onClick={() => copyDraft(candidate.draft!)}>コピー</button></div>}
     <div className="candidate-actions">
@@ -292,12 +317,30 @@ function Relations({ state, onOpen }: { state: AppState; onOpen: (c: Candidate) 
   </>;
 }
 
-function Me({ state }: { state: AppState }) {
-  const score = Math.round(state.insights.reduce((sum, item) => sum + (item.priority === 'high' ? 20 : item.priority === 'medium' ? 25 : 30), 0) / Math.max(1, state.insights.length) + 48);
+function Me({ state, onAnalyze, analyzing }: { state: AppState; onAnalyze: (profile: string, posts: string) => void; analyzing: boolean }) {
+  const [profile, setProfile] = useState(state.selfProfile.profileText);
+  const [posts, setPosts] = useState(state.selfProfile.recentPostsText);
+  const score = state.selfProfile.score ?? Math.min(100, 48 + state.insights.length * 8);
   return <>
-    <PageHeading eyebrow="ME" title="自分自身も成長対象に" text="Missionとの差分をAIが見つけ、外への交流と内側の改善を同じ方向へ揃えます。" />
-    <section className="score-card"><div><span>MISSION SCORE</span><strong>{Math.min(100, score)}</strong><small>/100</small></div><p>{state.mission.primaryGoal}</p></section>
-    <div className="insight-list">{state.insights.map((insight) => <article className="insight-card" key={insight.id}><div className="insight-top"><span>{insight.category.toUpperCase()}</span><b className={`priority ${insight.priority}`}>{insight.priority}</b></div><h3>{insight.title}</h3><p>{insight.body}</p><button>改善案を見る <span>→</span></button></article>)}</div>
+    <PageHeading eyebrow="ME" title="自分自身も成長対象に" text="プロフィールと最近の投稿をMissionとの差分から見て、次に直す場所を決めます。" />
+    <section className="score-card"><div><span>MISSION SCORE</span><strong>{score}</strong><small>/100</small></div><p>{state.mission.primaryGoal}</p></section>
+
+    <section className="self-input-card">
+      <span className="eyebrow">ACCOUNT INPUT</span>
+      <label>現在のプロフィール / Bio<textarea rows={5} value={profile} onChange={(event) => setProfile(event.target.value)} placeholder="SNSのプロフィール文を貼り付け" /></label>
+      <label>最近の投稿<textarea rows={8} value={posts} onChange={(event) => setPosts(event.target.value)} placeholder="最近の投稿を数件まとめて貼り付け。無理に全部入れなくてOK" /></label>
+      <button className="primary-button full" disabled={analyzing} onClick={() => onAnalyze(profile, posts)}>{analyzing ? 'Missionから分析中…' : 'AIで自分を分析'}</button>
+      <small>初期PWAは手動貼り付けで$0寄りに運用。将来、本人アカウント連携へ差し替え可能です。</small>
+    </section>
+
+    {state.selfProfile.summary && <section className="self-result-card">
+      <div className="result-heading"><span className="eyebrow">AI DIAGNOSIS</span>{state.selfProfile.analyzedAt && <small>{new Date(state.selfProfile.analyzedAt).toLocaleDateString('ja-JP')} 更新</small>}</div>
+      <h3>現在地</h3><p>{state.selfProfile.summary}</p>
+      {state.selfProfile.strategy && <><h3>目的地へ近づく作戦</h3><p>{state.selfProfile.strategy}</p></>}
+      {state.selfProfile.profileRewrite && <div className="rewrite-box"><span>プロフィール改善案</span><p>{state.selfProfile.profileRewrite}</p><button onClick={() => copyDraft(state.selfProfile.profileRewrite!)}>コピー</button></div>}
+    </section>}
+
+    <div className="insight-list">{state.insights.map((insight) => <article className="insight-card" key={insight.id}><div className="insight-top"><span>{insight.category.toUpperCase()}</span><b className={`priority ${insight.priority}`}>{insight.priority}</b></div><h3>{insight.title}</h3><p>{insight.body}</p></article>)}</div>
   </>;
 }
 
@@ -311,7 +354,7 @@ function Settings({ state, onChange }: { state: AppState; onChange: (state: AppS
   return <>
     <PageHeading eyebrow="SETTINGS" title="AIに目的地を教える" text="ここが推薦・文章・自己分析すべての判断軸になります。" />
     <section className="form-card"><label>Mission<textarea value={mission.text} rows={5} onChange={(e) => setMission({ ...mission, text: e.target.value })} /></label><label>一番大事なゴール<input value={mission.primaryGoal} onChange={(e) => setMission({ ...mission, primaryGoal: e.target.value })} /></label><label>Communication DNA<textarea value={mission.communicationDNA} rows={4} onChange={(e) => setMission({ ...mission, communicationDNA: e.target.value })} /></label></section>
-    <section className="form-card budget-settings"><div className="field-title"><div><strong>月間AI/API予算</strong><span>機能を削らず、外部取得量を自動調整</span></div><b>${limit}</b></div><input className="range" type="range" min="0" max="10" step="1" value={limit} onChange={(e) => setLimit(Number(e.target.value))} /><div className="range-labels"><span>$0</span><span>$3 recommended</span><span>$10</span></div><div className="hard-limit"><span><strong>HARD LIMIT</strong><small>常時ON。設定額を超える有料リクエストを拒否</small></span><i className="toggle on" /></div></section>
+    <section className="form-card budget-settings"><div className="field-title"><div><strong>月間AI/API予算</strong><span>機能を削らず、外部取得量を自動調整</span></div><b>${limit}</b></div><input className="range" type="range" min="0" max="10" step="1" value={limit} onChange={(e) => setLimit(Number(e.target.value))} /><div className="range-labels"><span>$0</span><span>$3 recommended</span><span>$10</span></div><div className="hard-limit"><span><strong>HARD LIMIT</strong><small>常時ON。設定額を超える有料リクエストを拒否</small></span><i className="toggle on" /></div><div className="budget-breakdown"><span>X <b>${state.budget.xUsd.toFixed(2)}</b></span><span>LLM <b>${state.budget.llmUsd.toFixed(2)}</b></span><span>Search <b>${state.budget.searchUsd.toFixed(2)}</b></span></div></section>
     <button className="save-button" onClick={save}>設定を保存</button>
   </>;
 }
