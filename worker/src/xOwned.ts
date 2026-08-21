@@ -96,7 +96,7 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
     const [followersResult, followingResult, postsResult] = await Promise.all([
       allocation.followers > 0 ? fetchUsersPage(accessToken, profile.id, 'followers', allocation.followers) : emptyList<XUser>(),
       allocation.following > 0 ? fetchUsersPage(accessToken, profile.id, 'following', allocation.following) : emptyList<XUser>(),
-      allocation.posts > 0 ? fetchPostsPage(accessToken, profile.id, allocation.posts) : emptyList<XPost>(),
+      allocation.posts >= 5 ? fetchPostsPage(accessToken, profile.id, allocation.posts) : emptyList<XPost>(),
     ]);
 
     const followerCount = followersResult.data.length;
@@ -202,7 +202,7 @@ function emptyList<T>() {
 
 function allocateResources(total: number, followers: number, following: number, posts: number) {
   let remaining = total;
-  const allocatedPosts = Math.min(posts, remaining);
+  const allocatedPosts = posts >= 5 && remaining >= 5 ? Math.min(posts, remaining) : 0;
   remaining -= allocatedPosts;
   const allocatedFollowers = Math.min(followers, remaining);
   remaining -= allocatedFollowers;
