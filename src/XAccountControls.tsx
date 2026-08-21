@@ -59,7 +59,18 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
         return;
       }
       const beforeCount = state.candidates.length;
-      const nextState = applyOwnedXSyncWithDiscovery(state, result);
+      const syncedState = applyOwnedXSyncWithDiscovery(state, result);
+      const nextState: AppState = {
+        ...syncedState,
+        xAccount: {
+          ...syncedState.xAccount,
+          followerCycle: result.coverage?.followers.cycle ?? syncedState.xAccount.followerCycle,
+          followingCycle: result.coverage?.following.cycle ?? syncedState.xAccount.followingCycle,
+          lastSyncCostUsd: result.costUsd,
+          pacedCapUsd: result.pacing?.pacedCapUsd ?? syncedState.xAccount.pacedCapUsd,
+          pacingDaysRemaining: result.pacing?.daysRemaining ?? syncedState.xAccount.pacingDaysRemaining,
+        },
+      };
       const addedCandidates = Math.max(0, nextState.candidates.length - beforeCount);
       onChange(nextState);
       const source = result.source === 'cache' ? 'キャッシュ' : 'X公式API';
@@ -105,11 +116,19 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
       {state.xAccount.lastSyncedAt && <span><b>データ同期</b> {new Date(state.xAccount.lastSyncedAt).toLocaleString('ja-JP')}</span>}
     </div>}
 
-    {state.xAccount.username && <div className="x-sync-summary">
-      <span><b>{state.xAccount.followerSampleCount || 0}</b> followers確認</span>
-      <span><b>{state.xAccount.followingSampleCount || 0}</b> following確認</span>
-      <span><b>{state.xAccount.recentPostCount || 0}</b> posts取得</span>
-    </div>}
+    {state.xAccount.username && <>
+      <div className="x-sync-summary">
+        <span><b>{state.xAccount.followerSampleCount || 0}</b> followers確認</span>
+        <span><b>{state.xAccount.followingSampleCount || 0}</b> following確認</span>
+        <span><b>{state.xAccount.recentPostCount || 0}</b> posts取得</span>
+      </div>
+      <div className="x-pacing-note">
+        <span>followers巡回 <b>{(state.xAccount.followerCycle || 0) + 1}周目</b></span>
+        <span>following巡回 <b>{(state.xAccount.followingCycle || 0) + 1}周目</b></span>
+        {state.xAccount.pacedCapUsd != null && <span>今回ペース上限 <b>${state.xAccount.pacedCapUsd.toFixed(3)}</b></span>}
+        {state.xAccount.pacingDaysRemaining != null && <span>月末まで <b>{state.xAccount.pacingDaysRemaining}日</b></span>}
+      </div>
+    </>}
 
     <div className="x-account-actions">
       {!status.connected
