@@ -20,6 +20,10 @@ if (!/if \(PROVIDER_COST_PATHS\.has\(url\.pathname\)\)\s*\{[\s\S]{0,300}?authori
   throw new Error('Provider-cost routes are not guarded by authorizeSync().');
 }
 
+if (!router.includes('expectedUpdatedAt') || !router.includes('INSERT OR IGNORE INTO state_snapshots') || !router.includes('AND updated_at = ?')) {
+  throw new Error('D1 state sync lost its optimistic-concurrency guard.');
+}
+
 const scopeMatch = xOAuth.match(/const READ_ONLY_SCOPES\s*=\s*\[([^\]]+)\]/s);
 if (!scopeMatch) throw new Error('READ_ONLY_SCOPES definition was not found.');
 
@@ -34,4 +38,4 @@ if (writeScopes.length) {
   throw new Error(`Write-capable X OAuth scope detected: ${writeScopes.join(', ')}`);
 }
 
-console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, X scopes=${scopes.join(', ')}`);
+console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, optimistic D1 sync, X scopes=${scopes.join(', ')}`);
