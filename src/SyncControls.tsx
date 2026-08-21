@@ -55,7 +55,7 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
     <div className="field-title"><div><strong>個人D1同期</strong><span>別端末へMission・候補・関係性を引き継ぐ</span></div><b>SYNC</b></div>
     <label>同期キー<input type="password" autoComplete="off" value={token} onChange={(event) => setToken(event.target.value)} placeholder="Worker側のSHA-256元キー" /></label>
     <div className="sync-actions">
-      <button className="secondary-button" disabled={busy || !apiConfigured} onClick={saveToken}>キーを保存</button>
+      <button className="secondary-button" disabled={busy} onClick={saveToken}>キーを保存</button>
       <button className="secondary-button" disabled={busy || !apiConfigured} onClick={upload}>この端末 → D1</button>
       <button className="primary-button" disabled={busy || !apiConfigured} onClick={download}>D1 → この端末</button>
     </div>
