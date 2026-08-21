@@ -22,6 +22,7 @@ export default function BackupControls({ state, onRestore }: { state: AppState; 
   }
 
   return <>
+    <SyncControls state={state} onRestore={onRestore} />
     <XAccountControls state={state} onChange={onRestore} />
     <section className="form-card backup-card">
       <div className="field-title"><div><strong>ローカルデータ</strong><span>Mission・候補・関係性・設定を持ち運ぶ</span></div><b>JSON</b></div>
@@ -30,8 +31,7 @@ export default function BackupControls({ state, onRestore }: { state: AppState; 
         <button className="secondary-button" onClick={() => inputRef.current?.click()}>バックアップを復元</button>
       </div>
       <input ref={inputRef} className="visually-hidden" type="file" accept="application/json,.json" onChange={(event) => restore(event.target.files?.[0])} />
-      <small>{status || 'APIキー・SNSパスワード・D1同期キーはバックアップに含まれません。'}</small>
+      <small>{status || 'APIキー・SNSパスワード・個人管理キーはバックアップに含まれません。'}</small>
     </section>
-    <SyncControls state={state} onRestore={onRestore} />
   </>;
 }
