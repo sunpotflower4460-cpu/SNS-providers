@@ -9,17 +9,18 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "security:check": "node scripts/verify-security-invariants.mjs",
-    "pwa:check": "node scripts/verify-pwa-assets.mjs"
+    "pwa:check": "node scripts/verify-pwa-assets.mjs",
+    "dist:check": "node scripts/verify-built-pwa.mjs"
   },
   "dependencies": {
-    "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "react": "19.1.1",
+    "react-dom": "19.1.1"
   },
   "devDependencies": {
-    "@types/react": "^19.1.10",
-    "@types/react-dom": "^19.1.7",
-    "@vitejs/plugin-react": "^5.0.2",
-    "typescript": "^5.9.2",
-    "vite": "^7.1.3"
+    "@types/react": "19.1.10",
+    "@types/react-dom": "19.1.7",
+    "@vitejs/plugin-react": "5.0.2",
+    "typescript": "5.9.2",
+    "vite": "7.1.3"
   }
 }
