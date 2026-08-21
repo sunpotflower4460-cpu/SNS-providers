@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { downloadBackup, readBackup } from './backup';
 import SyncControls from './SyncControls';
+import XAccountControls from './XAccountControls';
 import type { AppState } from './types';
 
 export default function BackupControls({ state, onRestore }: { state: AppState; onRestore: (state: AppState) => void }) {
@@ -21,6 +22,7 @@ export default function BackupControls({ state, onRestore }: { state: AppState; 
   }
 
   return <>
+    <XAccountControls />
     <section className="form-card backup-card">
       <div className="field-title"><div><strong>ローカルデータ</strong><span>Mission・候補・関係性・設定を持ち運ぶ</span></div><b>JSON</b></div>
       <div className="backup-actions">
