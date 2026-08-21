@@ -72,6 +72,12 @@ export interface BudgetState {
 export interface RelationshipPolicy {
   followBackReviewAfterDays: number;
   preserveHighMatch: boolean;
+  dailyQueueLimit?: number;
+  dailyConnectionLimit?: number;
+  dailyConversationLimit?: number;
+  dailyLightEngagementLimit?: number;
+  dailyCleanupLimit?: number;
+  dailySelfImproveLimit?: number;
 }
 
 export interface SelfInsight {
