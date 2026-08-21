@@ -22,11 +22,12 @@ Mission-driven, mobile-first PWA for growing meaningful social relationships wit
 - configurable follow-back review window with Mission-aware keep/cleanup advice
 - AI self-analysis from profile + recent post text, including Mission Score, diagnosis, strategy and profile rewrite suggestion
 - JSON backup/restore for local-first Mission, candidate and relationship state
+- optional token-gated D1 snapshot sync for moving state between personal devices
 - configurable monthly API/LLM budget with a $3 default and always-on HARD LIMIT
 - free-first AI provider routing with local fallback
 - fail-closed paid usage when the D1 budget ledger or explicit current provider rates are unavailable
 - pre-request budget reservations for paid calls to reduce concurrent overspend risk
-- D1-ready schema for candidates, interactions, Daily Queue, insights and budget ledger
+- D1 schema for candidates, interactions, Daily Queue, insights, budget ledger and personal state snapshots
 - GitHub Pages PWA deployment workflow plus subpath-safe manifest / Service Worker
 - CI for web, Worker and GitHub Pages base-path builds
 
@@ -42,7 +43,7 @@ npm install
 npm run dev
 ```
 
-`VITE_API_BASE_URL` is optional. Leave it empty for local-only mode. Point it at the deployed Worker to enable free discovery, live budget sync, AI ranking, self-analysis and optionally budget-guarded X profile enrichment.
+`VITE_API_BASE_URL` is optional. Leave it empty for local-only mode. Point it at the deployed Worker to enable free discovery, live budget sync, AI ranking, self-analysis, optional personal D1 state sync and optionally budget-guarded X profile enrichment.
 
 Production validation:
 
@@ -62,7 +63,7 @@ npm install
 npm run typecheck
 ```
 
-See `worker/README.md` for D1, secrets, free provider configuration, provider-rate configuration and deployment.
+See `worker/README.md` for D1, sync-token hashing, secrets, free provider configuration, provider-rate configuration and deployment.
 
 Paid usage is fail-closed. If D1 budget accounting is unavailable, paid provider rates are missing, or a reservation would exceed the HARD LIMIT, paid LLM/X requests are blocked. Free Tavily discovery, free Groq or local scoring can continue when their relevant free-mode configuration is available.
 
@@ -78,7 +79,7 @@ Paid usage is fail-closed. If D1 budget accounting is unavailable, paid provider
 8. In Relations, mark follow-back status as `相互 / フォロバなし / 未確認`.
 9. After the configured waiting period, weak/no-follow-back relationships can appear as cleanup review candidates; high-Mission or meaningful relationships are preserved.
 10. In Me, paste the current profile and several recent posts to get Mission-based account improvement guidance.
-11. Settings can export/import a JSON backup while the app is still local-first.
+11. Settings can export/import a JSON backup. If personal D1 sync is configured, the same Settings screen can manually push/pull the state snapshot between devices.
 
 ## Low-cost strategy
 
@@ -103,19 +104,25 @@ Provider prices and free tiers change, so paid rates and free/paid billing-mode 
 
 GitHub requires custom Pages workflows to be enabled for the repository before the first deployment. Once enabled, merging to `main` triggers the deployment. If the Worker has been deployed, add a repository Actions variable named `VITE_API_BASE_URL` containing the Worker origin; otherwise the deployed PWA runs in local-only mode.
 
+## Personal D1 sync
+
+The PWA can store one state snapshot in D1 when `SYNC_TOKEN_SHA256` is configured on the Worker. The original secret is entered only on the user's device and is never included in the repository or JSON backup.
+
+This is access control, not application-level encryption of the D1 snapshot. Manual JSON backup remains available for users who do not want state persisted on the server.
+
 ## Architecture
 
-The browser-first v0.1 stores interaction state locally so the PWA is immediately usable. Cloudflare Workers + D1 provide the server boundary for provider keys and budget accounting.
+The browser-first v0.1 stores interaction state locally so the PWA is immediately usable. Cloudflare Workers + D1 provide the server boundary for provider keys, budget accounting and optional personal state snapshots.
 
-- `src/` — PWA UI, local store, Daily Queue, backup/restore, API client, social handoff, discovery, ranking and self-analysis integration
+- `src/` — PWA UI, local store, Daily Queue, backup/restore, optional D1 sync, API client, social handoff, discovery, ranking and self-analysis integration
 - `public/` — portable manifest, icon and Service Worker
-- `worker/` — Worker API, free-first discovery/provider routing, budget ledger safeguards and X profile enrichment
+- `worker/` — Worker API, free-first discovery/provider routing, state-sync gate, budget ledger safeguards and X profile enrichment
 - `db/schema.sql` — D1 data model
 - `docs/ARCHITECTURE.md` — product/technical architecture and invariants
 
 ## Next implementation milestones
 
-- authenticated offline-first D1 sync for candidate/relationship history
+- conflict-aware automatic/offline-first D1 sync instead of manual snapshots
 - owned-account X OAuth adapter for followers/following/self-post analysis without browser secrets
 - Instagram permitted-source ingestion beyond public-web candidate discovery
 - scheduled Daily Queue refresh plus push notification delivery
