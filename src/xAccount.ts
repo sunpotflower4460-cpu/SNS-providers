@@ -33,6 +33,13 @@ export interface XOwnedPost {
   };
 }
 
+interface XCoverageSlice {
+  fetched: number;
+  complete: boolean;
+  cycle?: number;
+  rotated?: boolean;
+}
+
 export interface XOwnedSyncResponse {
   enabled: boolean;
   source: 'x' | 'cache' | 'disabled';
@@ -44,11 +51,16 @@ export interface XOwnedSyncResponse {
   following?: XOwnedUser[];
   posts?: XOwnedPost[];
   coverage?: {
-    followers: { fetched: number; complete: boolean };
-    following: { fetched: number; complete: boolean };
+    followers: XCoverageSlice;
+    following: XCoverageSlice;
     posts: { fetched: number; complete: boolean };
   };
   requested?: { followers: number; following: number; posts: number };
+  pacing?: {
+    daysRemaining: number;
+    pacedCapUsd: number;
+    globalRemainingUsd: number;
+  };
 }
 
 export async function fetchXOAuthStatus(userId = 'local-user') {
@@ -87,7 +99,7 @@ export async function syncOwnedXData(monthlyLimitUsd: number, userId = 'local-us
 
 function requiredControlToken() {
   const token = getSyncToken().trim();
-  if (!token) throw new Error('先にSettingsの個人D1同期で管理キーを保存してください');
+  if (!token) throw new Error('先にSettingsの個人管理キーを保存してください');
   return token;
 }
 
