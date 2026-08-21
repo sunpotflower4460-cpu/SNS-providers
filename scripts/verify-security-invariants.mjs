@@ -4,6 +4,7 @@ const router = await readFile(new URL('../worker/src/router.ts', import.meta.url
 const providerApi = await readFile(new URL('../worker/src/index.ts', import.meta.url), 'utf8');
 const xOAuth = await readFile(new URL('../worker/src/xOAuth.ts', import.meta.url), 'utf8');
 const backup = await readFile(new URL('../src/backup.ts', import.meta.url), 'utf8');
+const syncControls = await readFile(new URL('../src/SyncControls.tsx', import.meta.url), 'utf8');
 const store = await readFile(new URL('../src/store.ts', import.meta.url), 'utf8');
 const social = await readFile(new URL('../src/social.ts', import.meta.url), 'utf8');
 
@@ -51,6 +52,12 @@ if (!providerApi.includes("recommendedAction === 'reply' && !hasEngagementContex
 if (!backup.includes('safeSocialUrl(raw.platform, raw.engagementUrl)') || !backup.includes("profileUrl: raw.platform === 'x' ? `https://x.com/${username}`")) {
   throw new Error('Restored state no longer canonicalizes social URLs.');
 }
+if (!backup.includes('secondaryGoals') || !backup.includes('monthlyLimitUsd: clampNumber') || !backup.includes('hardLimit: true')) {
+  throw new Error('Full restored AppState normalization or HARD LIMIT restoration was weakened.');
+}
+if (!syncControls.includes('normalizeAppState(result.state)') || !syncControls.includes('validateAppState(restored)')) {
+  throw new Error('D1 restores can bypass AppState normalization/validation.');
+}
 if (!backup.includes('legacyDemoCandidates') || !store.includes('LEGACY_DEMO_CANDIDATES') || !store.includes('candidates: []')) {
   throw new Error('Legacy demo candidates can leak back into a real user queue.');
 }
@@ -75,4 +82,4 @@ if (writeScopes.length) {
   throw new Error(`Write-capable X OAuth scope detected: ${writeScopes.join(', ')}`);
 }
 
-console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, sanitized restored state, no demo candidates, conservative CRM progression, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, X scopes=${scopes.join(', ')}`);
+console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, fully normalized JSON/D1 restores, no demo candidates, conservative CRM progression, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, X scopes=${scopes.join(', ')}`);
