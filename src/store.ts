@@ -1,4 +1,5 @@
 import type { RankResult, XProfileResult } from './api';
+import type { XOwnedSyncResponse } from './xAccount';
 import type { AppState, Candidate, Interaction, Mission, Platform, RecommendedAction, RelationshipPolicy } from './types';
 
 const KEY = 'sns-providers:v1';
@@ -59,7 +60,8 @@ const defaultState: AppState = {
   selfProfile: {
     profileText: '',
     recentPostsText: ''
-  }
+  },
+  xAccount: {}
 };
 
 export function loadState(): AppState {
@@ -74,6 +76,7 @@ export function loadState(): AppState {
       budget: { ...defaultState.budget, ...(parsed.budget || {}) },
       relationshipPolicy: { ...defaultState.relationshipPolicy, ...(parsed.relationshipPolicy || {}) },
       selfProfile: { ...defaultState.selfProfile, ...(parsed.selfProfile || {}) },
+      xAccount: { ...defaultState.xAccount, ...(parsed.xAccount || {}) },
     };
     return refreshRelationshipAdvice(state);
   } catch {
@@ -182,6 +185,70 @@ export function applyXProfiles(state: AppState, profiles: XProfileResult[], cost
       xUsd: Math.max(0, state.budget.xUsd + Math.max(0, costUsd)),
     },
   };
+}
+
+export function applyOwnedXSync(state: AppState, result: XOwnedSyncResponse): AppState {
+  if (!result.enabled || !result.profile) return state;
+  const followers = result.followers || [];
+  const following = result.following || [];
+  const posts = result.posts || [];
+  const followerSet = new Set(followers.map((user) => user.username.toLowerCase()));
+  const followingSet = new Set(following.map((user) => user.username.toLowerCase()));
+  const profileByUsername = new Map([...followers, ...following].map((user) => [user.username.toLowerCase(), user]));
+  const followersComplete = Boolean(result.coverage?.followers.complete);
+  const syncedAt = result.syncedAt || new Date().toISOString();
+
+  const candidates = state.candidates.map((candidate) => {
+    if (candidate.platform !== 'x') return candidate;
+    const username = candidate.username.toLowerCase();
+    const relatedProfile = profileByUsername.get(username);
+    const isFollower = followerSet.has(username);
+    const isFollowing = followingSet.has(username);
+    const followBack = isFollower ? true : followersComplete && candidate.followedAt ? false : candidate.followBack;
+    const stage = isFollowing && (candidate.stage === 'discovered' || candidate.stage === 'interested') ? 'following' as const : candidate.stage;
+    return {
+      ...candidate,
+      stage,
+      followBack,
+      platformUserId: relatedProfile?.id || candidate.platformUserId,
+      displayName: relatedProfile?.name || candidate.displayName,
+      bio: relatedProfile?.description || candidate.bio,
+      verified: relatedProfile ? relatedProfile.verified : candidate.verified,
+      publicMetrics: relatedProfile?.publicMetrics || candidate.publicMetrics,
+      profileSyncedAt: relatedProfile ? syncedAt : candidate.profileSyncedAt,
+    };
+  });
+
+  const profileText = result.profile.description || state.selfProfile.profileText;
+  const recentPostsText = posts.map((post) => post.text.trim()).filter(Boolean).join('\n\n---\n\n') || state.selfProfile.recentPostsText;
+  const selfInputsChanged = profileText !== state.selfProfile.profileText || recentPostsText !== state.selfProfile.recentPostsText;
+
+  return refreshRelationshipAdvice({
+    ...state,
+    candidates,
+    selfProfile: selfInputsChanged ? {
+      profileText,
+      recentPostsText,
+    } : state.selfProfile,
+    xAccount: {
+      username: result.profile.username,
+      displayName: result.profile.name,
+      verified: result.profile.verified,
+      publicMetrics: result.profile.publicMetrics,
+      lastSyncedAt: syncedAt,
+      followerSampleCount: result.coverage?.followers.fetched ?? followers.length,
+      followingSampleCount: result.coverage?.following.fetched ?? following.length,
+      recentPostCount: result.coverage?.posts.fetched ?? posts.length,
+      followersComplete,
+      followingComplete: Boolean(result.coverage?.following.complete),
+      postsComplete: Boolean(result.coverage?.posts.complete),
+    },
+    budget: {
+      ...state.budget,
+      usedUsd: Math.max(0, state.budget.usedUsd + Math.max(0, result.costUsd || 0)),
+      xUsd: Math.max(0, state.budget.xUsd + Math.max(0, result.costUsd || 0)),
+    },
+  });
 }
 
 export function applyRankResults(state: AppState, results: RankResult[], costUsd = 0): AppState {
