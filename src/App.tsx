@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { analyzeSelfProfile, apiConfigured, enrichXProfiles, fetchBudget, rankCandidates } from './api';
+import BackupControls from './BackupControls';
 import { addCandidateFromReference, applyRankResults, applySelfAnalysis, applyXProfiles, loadState, recordInteraction, saveState, setFollowBackStatus, syncBudget, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
 import { copyDraft, openCandidate, platformLabel } from './social';
 import type { AppState, Candidate, Mission, Platform } from './types';
@@ -374,6 +375,7 @@ function Settings({ state, onChange }: { state: AppState; onChange: (state: AppS
       <button className="policy-toggle" onClick={() => setPreserveHighMatch((value) => !value)}><span><strong>高Mission Matchは残す</strong><small>フォロバなしでも相性80以上や交流中の人は継続候補</small></span><i className={preserveHighMatch ? 'toggle on' : 'toggle'} /></button>
     </section>
     <section className="form-card budget-settings"><div className="field-title"><div><strong>月間AI/API予算</strong><span>機能を削らず、外部取得量を自動調整</span></div><b>${limit}</b></div><input className="range" type="range" min="0" max="10" step="1" value={limit} onChange={(e) => setLimit(Number(e.target.value))} /><div className="range-labels"><span>$0</span><span>$3 recommended</span><span>$10</span></div><div className="hard-limit"><span><strong>HARD LIMIT</strong><small>常時ON。設定額を超える有料リクエストを拒否</small></span><i className="toggle on" /></div><div className="budget-breakdown"><span>X <b>${state.budget.xUsd.toFixed(2)}</b></span><span>LLM <b>${state.budget.llmUsd.toFixed(2)}</b></span><span>Search <b>${state.budget.searchUsd.toFixed(2)}</b></span></div></section>
+    <BackupControls state={state} onRestore={onChange} />
     <button className="save-button" onClick={save}>設定を保存</button>
   </>;
 }
