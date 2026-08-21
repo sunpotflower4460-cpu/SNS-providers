@@ -1,5 +1,6 @@
-const CACHE = 'social-mission-v1';
-const CORE = ['/', '/manifest.webmanifest', '/icon.svg'];
+const CACHE = 'social-mission-v2';
+const ROOT = new URL('./', self.registration.scope).pathname;
+const CORE = [ROOT, `${ROOT}manifest.webmanifest`, `${ROOT}icon.svg`];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(CORE)));
@@ -18,10 +19,12 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     fetch(event.request)
       .then((response) => {
-        const copy = response.clone();
-        caches.open(CACHE).then((cache) => cache.put(event.request, copy));
+        if (response.ok && new URL(event.request.url).origin === self.location.origin) {
+          const copy = response.clone();
+          caches.open(CACHE).then((cache) => cache.put(event.request, copy));
+        }
         return response;
       })
-      .catch(() => caches.match(event.request).then((cached) => cached || caches.match('/')))
+      .catch(() => caches.match(event.request).then((cached) => cached || caches.match(ROOT)))
   );
 });
