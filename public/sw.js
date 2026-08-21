@@ -1,7 +1,14 @@
-const CACHE = 'social-mission-v3';
+const CACHE = 'social-mission-v4';
 const SCOPE_URL = new URL('./', self.registration.scope);
 const ROOT = SCOPE_URL.pathname;
-const CORE = [ROOT, `${ROOT}manifest.webmanifest`, `${ROOT}icon.svg`];
+const CORE = [
+  ROOT,
+  `${ROOT}manifest.webmanifest`,
+  `${ROOT}icon.svg`,
+  `${ROOT}icon-180.png`,
+  `${ROOT}icon-192.png`,
+  `${ROOT}icon-512.png`,
+];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(precacheAppShell());
