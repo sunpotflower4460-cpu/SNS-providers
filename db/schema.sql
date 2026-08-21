@@ -131,6 +131,12 @@ CREATE TABLE IF NOT EXISTS x_owned_paging (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS instagram_engager_snapshots (
+  user_id TEXT PRIMARY KEY,
+  snapshot_json TEXT NOT NULL,
+  synced_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_candidates_user_match ON candidates(user_id, mission_match DESC);
 CREATE INDEX IF NOT EXISTS idx_candidates_stage ON candidates(user_id, stage);
 CREATE INDEX IF NOT EXISTS idx_interactions_candidate ON interactions(candidate_id, occurred_at DESC);
