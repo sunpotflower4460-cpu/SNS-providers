@@ -23,6 +23,7 @@ const seedCandidates: Candidate[] = [
     bio: 'Singer-songwriter. Recording demos every week.', profileUrl: 'https://x.com/songwriter_friend',
     kind: 'artist', match: 91, relationshipScore: 42, stage: 'engaged',
     reason: '活動規模と制作テーマが近く、同業者同士の継続的な交流価値が高い候補です。',
+    strategy: 'いきなりDMではなく、制作投稿への自然な返信から関係を深める。',
     tags: ['songwriter', 'recording'], recommendedAction: 'reply',
     draft: '制作途中を出すのって勇気いりますよね。自分も音楽を作っていて、完成前の段階だからこそ見えるものがあるなと思います。'
   }
@@ -143,6 +144,8 @@ export function applyRankResults(state: AppState, results: RankResult[], costUsd
       kind: isCandidateKind(result.kind) ? result.kind : candidate.kind,
       recommendedAction: isRecommendedAction(result.recommendedAction) ? result.recommendedAction : candidate.recommendedAction,
       reason: result.reason?.trim() || candidate.reason,
+      strategy: result.strategy?.trim() || candidate.strategy,
+      draft: result.draft?.trim() || candidate.draft,
     };
   });
   return {
