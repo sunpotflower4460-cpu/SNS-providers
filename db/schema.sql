@@ -101,8 +101,24 @@ CREATE TABLE IF NOT EXISTS state_snapshots (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS x_oauth_sessions (
+  state TEXT PRIMARY KEY,
+  code_verifier TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS x_oauth_tokens (
+  user_id TEXT PRIMARY KEY,
+  access_token_enc TEXT NOT NULL,
+  refresh_token_enc TEXT,
+  expires_at TEXT,
+  scope TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_candidates_user_match ON candidates(user_id, mission_match DESC);
 CREATE INDEX IF NOT EXISTS idx_candidates_stage ON candidates(user_id, stage);
 CREATE INDEX IF NOT EXISTS idx_interactions_candidate ON interactions(candidate_id, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_daily_queue_date ON daily_queue(user_id, queue_date, rank);
 CREATE INDEX IF NOT EXISTS idx_budget_month ON budget_ledger(user_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_x_oauth_sessions_created ON x_oauth_sessions(created_at);
