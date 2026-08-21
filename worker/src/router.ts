@@ -36,19 +36,36 @@ interface StateSyncRequest {
   state: unknown;
 }
 
+const ROUTER_CORS_PATHS = new Set([
+  '/api/budget',
+  '/api/ai/rank',
+  '/api/x/enrich',
+  '/api/discover/social',
+  '/api/sync/state',
+  '/api/x/oauth/start',
+  '/api/x/oauth/status',
+  '/api/x/oauth/disconnect',
+  '/api/x/owned/sync',
+  '/api/instagram/engagers/sync',
+]);
+
+const PROVIDER_COST_PATHS = new Set([
+  '/api/budget',
+  '/api/ai/rank',
+  '/api/x/enrich',
+  '/api/discover/social',
+]);
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    if (request.method === 'OPTIONS' && [
-      '/api/discover/social',
-      '/api/sync/state',
-      '/api/x/oauth/start',
-      '/api/x/oauth/status',
-      '/api/x/oauth/disconnect',
-      '/api/x/owned/sync',
-      '/api/instagram/engagers/sync',
-    ].includes(url.pathname)) {
+    if (request.method === 'OPTIONS' && ROUTER_CORS_PATHS.has(url.pathname)) {
       return new Response(null, { status: 204, headers: corsHeaders(request, env) });
+    }
+
+    if (PROVIDER_COST_PATHS.has(url.pathname)) {
+      const authorized = await authorizeSync(request, env);
+      if (!authorized.ok) return json({ error: authorized.reason }, authorized.status, request, env);
     }
 
     if (request.method === 'POST' && url.pathname === '/api/x/oauth/start') {
