@@ -70,6 +70,9 @@ if (!store.includes("interaction.action === 'kept'") || !store.includes('advance
 if (social.includes('intent/tweet') || social.includes('intent/follow')) {
   throw new Error('Legacy X intent handoff can bypass the official profile/conversation review flow.');
 }
+if (social.includes('window.open(candidate.profileUrl') || !social.includes('canonicalProfileUrl(candidate.platform, candidate.username)') || !social.includes('safeEngagementUrl(candidate.platform, candidate.engagementUrl)')) {
+  throw new Error('Social handoff can trust stored URLs instead of canonical official-platform destinations.');
+}
 
 const scopeMatch = xOAuth.match(/const READ_ONLY_SCOPES\s*=\s*\[([^\]]+)\]/s);
 if (!scopeMatch) throw new Error('READ_ONLY_SCOPES definition was not found.');
@@ -88,4 +91,4 @@ if (!xOAuth.includes('validateGrantedScopes(token.scope)') || !xOAuth.includes('
   throw new Error('X OAuth no longer fail-closes on unexpected or missing granted scopes.');
 }
 
-console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, fully normalized JSON/D1 restores, no demo candidates, conservative CRM progression, guarded social drafts + self-profile rewrite, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, requested+granted X scopes=${scopes.join(', ')}`);
+console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, fully normalized JSON/D1 restores, no demo candidates, conservative CRM progression, canonical official-platform handoff, guarded social drafts + self-profile rewrite, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, requested+granted X scopes=${scopes.join(', ')}`);
