@@ -1,13 +1,17 @@
 {
+  "id": "./",
   "name": "Social Mission",
   "short_name": "Mission",
-  "description": "AI relationship navigator for purposeful social growth",
+  "description": "Missionに沿ってX・Instagramのつながりと交流を育てるAIナビゲーター",
+  "lang": "ja",
+  "dir": "ltr",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "background_color": "#07101d",
   "theme_color": "#07101d",
   "orientation": "portrait-primary",
+  "categories": ["social", "productivity"],
   "icons": [
     {
       "src": "./icon.svg",
