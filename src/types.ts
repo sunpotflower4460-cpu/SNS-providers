@@ -104,6 +104,11 @@ export interface XOwnedAccountState {
   followersComplete?: boolean;
   followingComplete?: boolean;
   postsComplete?: boolean;
+  followerCycle?: number;
+  followingCycle?: number;
+  lastSyncCostUsd?: number;
+  pacedCapUsd?: number;
+  pacingDaysRemaining?: number;
 }
 
 export interface AppState {
