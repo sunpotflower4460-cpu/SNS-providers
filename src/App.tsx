@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { analyzeSelfProfile, apiConfigured, enrichXProfiles, fetchBudget, rankCandidates } from './api';
 import BackupControls from './BackupControls';
+import DailyQueue from './DailyQueue';
 import { addCandidateFromReference, applyRankResults, applySelfAnalysis, applyXProfiles, loadState, recordInteraction, saveState, setFollowBackStatus, syncBudget, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
 import { copyDraft, openCandidate, platformLabel } from './social';
 import type { AppState, Candidate, Mission, Platform } from './types';
@@ -182,7 +183,6 @@ function BudgetPill({ state }: { state: AppState }) {
 function Today({ state, active, doneToday, onOpen, onTab }: {
   state: AppState; active: Candidate[]; doneToday: number; onOpen: (c: Candidate) => void; onTab: (tab: Tab) => void;
 }) {
-  const first = active[0];
   const follow = active.filter((c) => c.recommendedAction === 'follow').length;
   const reply = active.filter((c) => c.recommendedAction === 'reply').length;
   const review = state.candidates.filter((c) => c.recommendedAction === 'unfollow_review').length;
@@ -208,10 +208,7 @@ function Today({ state, active, doneToday, onOpen, onTab }: {
       </div>
     </section>
 
-    {first && <section className="section-block">
-      <div className="section-title"><div><span className="eyebrow">NEXT BEST ACTION</span><h2>まず、この人から</h2></div></div>
-      <CandidateCard candidate={first} onOpen={onOpen} featured />
-    </section>}
+    <DailyQueue state={state} onOpenCandidate={onOpen} onOpenMe={() => onTab('me')} />
 
     <section className="coach-card">
       <div className="coach-icon">✦</div>
