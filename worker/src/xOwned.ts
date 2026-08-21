@@ -57,6 +57,13 @@ interface BudgetSnapshot {
   available: boolean;
 }
 
+interface PagingState {
+  followersCursor: string | null;
+  followingCursor: string | null;
+  followersCycle: number;
+  followingCycle: number;
+}
+
 const CACHE_TTL_MS = 20 * 60 * 60 * 1000;
 
 export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
@@ -81,9 +88,11 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
   const requestedFollowers = clampInt(body.maxFollowers, 100, 0, 500);
   const requestedFollowing = clampInt(body.maxFollowing, 100, 0, 500);
   const requestedPosts = clampInt(body.maxPosts, 20, 0, 50);
-  const maxOwnedResourcesByBudget = Math.max(0, Math.floor((budget.remainingUsd - userReadRate) / ownedReadRate));
+  const pacedCapUsd = Math.min(budget.remainingUsd, Math.max(userReadRate, budget.remainingUsd / daysRemainingInUtcMonth()));
+  const maxOwnedResourcesByBudget = Math.max(0, Math.floor(((pacedCapUsd - userReadRate) + 1e-9) / ownedReadRate));
   const allocation = allocateResources(maxOwnedResourcesByBudget, requestedFollowers, requestedFollowing, requestedPosts);
   const worstCaseCost = userReadRate + (allocation.followers + allocation.following + allocation.posts) * ownedReadRate;
+  const paging = await loadPaging(env, userId);
 
   const reservationId = await reserveBudget(env, userId, worstCaseCost, budget.effectiveLimit);
   if (!reservationId) return disabled('HARD LIMIT changed before the X sync budget could be reserved.');
@@ -94,8 +103,8 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
     if (!profile) throw new Error('X /2/users/me returned no user');
 
     const [followersResult, followingResult, postsResult] = await Promise.all([
-      allocation.followers > 0 ? fetchUsersPage(accessToken, profile.id, 'followers', allocation.followers) : emptyList<XUser>(),
-      allocation.following > 0 ? fetchUsersPage(accessToken, profile.id, 'following', allocation.following) : emptyList<XUser>(),
+      allocation.followers > 0 ? fetchUsersPage(accessToken, profile.id, 'followers', allocation.followers, paging.followersCursor) : emptyList<XUser>(),
+      allocation.following > 0 ? fetchUsersPage(accessToken, profile.id, 'following', allocation.following, paging.followingCursor) : emptyList<XUser>(),
       allocation.posts >= 5 ? fetchPostsPage(accessToken, profile.id, allocation.posts) : emptyList<XPost>(),
     ]);
 
@@ -104,6 +113,9 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
     const postCount = postsResult.data.length;
     const actualCost = userReadRate + (followerCount + followingCount + postCount) * ownedReadRate;
     await finalizeReservation(env, reservationId, actualCost, 1 + followerCount + followingCount + postCount);
+
+    const nextPaging = advancePaging(paging, allocation, followersResult.nextToken, followingResult.nextToken);
+    await savePaging(env, userId, nextPaging);
 
     const syncedAt = new Date().toISOString();
     const result = {
@@ -126,11 +138,26 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
         },
       })),
       coverage: {
-        followers: { fetched: followerCount, complete: !followersResult.nextToken },
-        following: { fetched: followingCount, complete: !followingResult.nextToken },
+        followers: {
+          fetched: followerCount,
+          complete: allocation.followers > 0 && paging.followersCursor === null && !followersResult.nextToken,
+          cycle: nextPaging.followersCycle,
+          rotated: paging.followersCursor !== null,
+        },
+        following: {
+          fetched: followingCount,
+          complete: allocation.following > 0 && paging.followingCursor === null && !followingResult.nextToken,
+          cycle: nextPaging.followingCycle,
+          rotated: paging.followingCursor !== null,
+        },
         posts: { fetched: postCount, complete: !postsResult.nextToken },
       },
       requested: allocation,
+      pacing: {
+        daysRemaining: daysRemainingInUtcMonth(),
+        pacedCapUsd,
+        globalRemainingUsd: budget.remainingUsd,
+      },
     };
     await saveCache(env, userId, result);
     return result;
@@ -154,11 +181,12 @@ async function fetchMe(accessToken: string) {
   return response.data || null;
 }
 
-async function fetchUsersPage(accessToken: string, userId: string, kind: 'followers' | 'following', maxResults: number) {
+async function fetchUsersPage(accessToken: string, userId: string, kind: 'followers' | 'following', maxResults: number, cursor: string | null) {
   const params = new URLSearchParams({
     max_results: String(Math.max(1, Math.min(500, maxResults))),
     'user.fields': 'description,profile_image_url,public_metrics,verified',
   });
+  if (cursor) params.set('pagination_token', cursor);
   const response = await xFetch<ListResponse<XUser>>(`https://api.x.com/2/users/${encodeURIComponent(userId)}/${kind}?${params.toString()}`, accessToken);
   return { data: response.data || [], nextToken: response.meta?.next_token || null };
 }
@@ -201,13 +229,81 @@ function emptyList<T>() {
 }
 
 function allocateResources(total: number, followers: number, following: number, posts: number) {
+  if (total <= 0) return { followers: 0, following: 0, posts: 0 };
   let remaining = total;
-  const allocatedPosts = posts >= 5 && remaining >= 5 ? Math.min(posts, remaining) : 0;
+  const postTarget = posts >= 5 && remaining >= 5 ? Math.min(posts, Math.max(5, Math.floor(total * 0.15))) : 0;
+  const allocatedPosts = Math.min(postTarget, remaining);
   remaining -= allocatedPosts;
-  const allocatedFollowers = Math.min(followers, remaining);
-  remaining -= allocatedFollowers;
-  const allocatedFollowing = Math.min(following, remaining);
+
+  let allocatedFollowers = Math.min(followers, Math.ceil(remaining / 2));
+  let allocatedFollowing = Math.min(following, remaining - allocatedFollowers);
+  let leftover = remaining - allocatedFollowers - allocatedFollowing;
+  if (leftover > 0) {
+    const followerRoom = Math.max(0, followers - allocatedFollowers);
+    const extraFollowers = Math.min(leftover, followerRoom);
+    allocatedFollowers += extraFollowers;
+    leftover -= extraFollowers;
+  }
+  if (leftover > 0) {
+    allocatedFollowing += Math.min(leftover, Math.max(0, following - allocatedFollowing));
+  }
   return { followers: allocatedFollowers, following: allocatedFollowing, posts: allocatedPosts };
+}
+
+function advancePaging(paging: PagingState, allocation: { followers: number; following: number }, followersNext: string | null, followingNext: string | null): PagingState {
+  const followersRequested = allocation.followers > 0;
+  const followingRequested = allocation.following > 0;
+  return {
+    followersCursor: followersRequested ? followersNext : paging.followersCursor,
+    followingCursor: followingRequested ? followingNext : paging.followingCursor,
+    followersCycle: paging.followersCycle + (followersRequested && !followersNext ? 1 : 0),
+    followingCycle: paging.followingCycle + (followingRequested && !followingNext ? 1 : 0),
+  };
+}
+
+async function loadPaging(env: XOwnedEnv, userId: string): Promise<PagingState> {
+  try {
+    const row = await env.DB.prepare(
+      'SELECT followers_cursor, following_cursor, followers_cycle, following_cycle FROM x_owned_paging WHERE user_id = ?'
+    ).bind(userId).first<{
+      followers_cursor: string | null;
+      following_cursor: string | null;
+      followers_cycle: number;
+      following_cycle: number;
+    }>();
+    return {
+      followersCursor: row?.followers_cursor || null,
+      followingCursor: row?.following_cursor || null,
+      followersCycle: Number(row?.followers_cycle || 0),
+      followingCycle: Number(row?.following_cycle || 0),
+    };
+  } catch {
+    return { followersCursor: null, followingCursor: null, followersCycle: 0, followingCycle: 0 };
+  }
+}
+
+async function savePaging(env: XOwnedEnv, userId: string, paging: PagingState) {
+  try {
+    await env.DB.prepare(
+      `INSERT INTO x_owned_paging (user_id, followers_cursor, following_cursor, followers_cycle, following_cycle, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET
+         followers_cursor = excluded.followers_cursor,
+         following_cursor = excluded.following_cursor,
+         followers_cycle = excluded.followers_cycle,
+         following_cycle = excluded.following_cycle,
+         updated_at = excluded.updated_at`
+    ).bind(
+      userId,
+      paging.followersCursor,
+      paging.followingCursor,
+      paging.followersCycle,
+      paging.followingCycle,
+      new Date().toISOString(),
+    ).run();
+  } catch {
+    // Paging persistence failure safely falls back to the first page next time.
+  }
 }
 
 async function loadFreshCache(env: XOwnedEnv, userId: string, force: boolean) {
@@ -290,6 +386,12 @@ async function finalizeReservation(env: XOwnedEnv, reservationId: string, actual
 function configuredLimit(env: XOwnedEnv) {
   const parsed = Number(env.DEFAULT_MONTHLY_BUDGET_USD || '3');
   return Number.isFinite(parsed) ? Math.max(0, parsed) : 3;
+}
+
+function daysRemainingInUtcMonth() {
+  const now = new Date();
+  const lastDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).getUTCDate();
+  return Math.max(1, lastDay - now.getUTCDate() + 1);
 }
 
 function parsePositiveNumber(value?: string) {
