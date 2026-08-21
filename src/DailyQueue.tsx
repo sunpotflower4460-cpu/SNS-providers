@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { buildDailyQueue, queueSummary } from './daily';
 import type { AppState, Candidate } from './types';
+import { useLocalDayKey } from './useLocalDay';
 import './daily.css';
 
 interface Props {
@@ -20,7 +21,8 @@ const actionIcon: Record<string, string> = {
 };
 
 export default function DailyQueue({ state, onOpenCandidate, onOpenMe }: Props) {
-  const items = useMemo(() => buildDailyQueue(state), [state]);
+  const localDay = useLocalDayKey();
+  const items = useMemo(() => buildDailyQueue(state), [state, localDay]);
   const summary = useMemo(() => queueSummary(items), [items]);
   const candidateById = useMemo(() => new Map(state.candidates.map((candidate) => [candidate.id, candidate])), [state.candidates]);
 
