@@ -17,17 +17,24 @@ Mission-driven, mobile-first PWA for growing meaningful social relationships wit
 - iPhone-friendly candidate import by profile URL / handle / clipboard
 - free-first Tavily discovery for public X/Instagram profile candidates when explicitly configured in free mode
 - official X public-profile enrichment in batches of up to 100 usernames when explicitly enabled
-- 24-hour client-side X profile refresh guard to reduce redundant reads
+- read-only X OAuth 2.0 PKCE using only `tweet.read`, `users.read`, `follows.read`, `offline.access`
+- AES-GCM encrypted X access/refresh token storage in D1 with server-side refresh
+- budget-guarded owned X sync for the user's profile, recent posts, followers and following when explicitly eligible/configured
+- 20-hour D1 cache for owned X sync to avoid needless repeated reads
+- inbound X followers can be reused as candidate seeds without another X request
+- conservative automatic follow-back reconciliation; partial follower pages never create false negatives
 - local relationship history and relationship stages
 - configurable follow-back review window with Mission-aware keep/cleanup advice
 - AI self-analysis from profile + recent post text, including Mission Score, diagnosis, strategy and profile rewrite suggestion
+- X self-profile/recent-post sync automatically feeds the same Me analysis inputs
 - JSON backup/restore for local-first Mission, candidate and relationship state
 - optional token-gated D1 snapshot sync for moving state between personal devices
+- personal control key also protects X OAuth start/disconnect and owned X reads
 - configurable monthly API/LLM budget with a $3 default and always-on HARD LIMIT
 - free-first AI provider routing with local fallback
-- fail-closed paid usage when the D1 budget ledger or explicit current provider rates are unavailable
+- fail-closed paid usage when the D1 budget ledger, provider rates, or Owned Read eligibility cannot be trusted
 - pre-request budget reservations for paid calls to reduce concurrent overspend risk
-- D1 schema for candidates, interactions, Daily Queue, insights, budget ledger and personal state snapshots
+- D1 schema for candidates, interactions, Daily Queue, insights, budget ledger, OAuth tokens and personal state/X snapshots
 - GitHub Pages PWA deployment workflow plus subpath-safe manifest / Service Worker
 - CI for web, Worker and GitHub Pages base-path builds
 
@@ -43,7 +50,7 @@ npm install
 npm run dev
 ```
 
-`VITE_API_BASE_URL` is optional. Leave it empty for local-only mode. Point it at the deployed Worker to enable free discovery, live budget sync, AI ranking, self-analysis, optional personal D1 state sync and optionally budget-guarded X profile enrichment.
+`VITE_API_BASE_URL` is optional. Leave it empty for local-only mode. Point it at the deployed Worker to enable free discovery, live budget sync, AI ranking, self-analysis, personal D1 state sync and the optional X integrations.
 
 Production validation:
 
@@ -55,7 +62,7 @@ npm run preview
 
 ## Worker
 
-The Worker lives in `worker/` and keeps provider keys out of the browser.
+The Worker lives in `worker/` and keeps provider keys and X OAuth tokens out of the browser.
 
 ```bash
 cd worker
@@ -63,23 +70,25 @@ npm install
 npm run typecheck
 ```
 
-See `worker/README.md` for D1, sync-token hashing, secrets, free provider configuration, provider-rate configuration and deployment.
+See `worker/README.md` for D1, personal-control-key hashing, X OAuth, Owned Read eligibility, secrets, provider-rate configuration and deployment.
 
-Paid usage is fail-closed. If D1 budget accounting is unavailable, paid provider rates are missing, or a reservation would exceed the HARD LIMIT, paid LLM/X requests are blocked. Free Tavily discovery, free Groq or local scoring can continue when their relevant free-mode configuration is available.
+Paid usage is fail-closed. If D1 budget accounting is unavailable, paid provider rates are missing, Owned Read eligibility is not explicitly confirmed, or a reservation would exceed the HARD LIMIT, paid LLM/X requests are blocked. Free Tavily discovery, free Groq or local scoring can continue when configured.
 
 ## Mobile flow
 
-1. Open Discover and tap `Missionから無料で候補を探す` when Tavily free discovery is configured, or add a profile URL/handle manually.
-2. Free discovery searches the public web for X/Instagram profile-shaped results and adds only new candidates to the local pool.
-3. For X, optionally run `X公式情報を補完` if an X bearer token and current User Read rate are explicitly configured.
-4. Run `AIで候補を再評価` to score up to 50 active candidates against the Mission and generate strategy/drafts where justified.
-5. Today automatically builds a Daily Queue from current Mission Match, relationship state, recommended action, self-improvement items and cleanup reviews.
-6. Open the recommended person in the official social experience.
-7. Return to the PWA and record the result; completed candidates drop out of today's queue and the next actions move up.
-8. In Relations, mark follow-back status as `相互 / フォロバなし / 未確認`.
-9. After the configured waiting period, weak/no-follow-back relationships can appear as cleanup review candidates; high-Mission or meaningful relationships are preserved.
-10. In Me, paste the current profile and several recent posts to get Mission-based account improvement guidance.
-11. Settings can export/import a JSON backup. If personal D1 sync is configured, the same Settings screen can manually push/pull the state snapshot between devices.
+1. In Settings, define the Mission, Communication DNA and monthly budget.
+2. Save the personal control key if using D1 sync or read-only X account connection.
+3. Optionally connect X in read-only mode. The PWA never requests follow/post/DM write scopes.
+4. Tap `Xデータを同期` to import the connected account's profile/recent posts and budget-permitted follower/following samples. Repeated taps within the cache window reuse D1 data at `$0` application-tracked cost.
+5. Existing tracked candidates are reconciled with follower data; inbound followers can become new candidate seeds for later Mission ranking.
+6. Open Discover and tap `Missionから無料で候補を探す` when Tavily free discovery is configured, or add a profile URL/handle manually.
+7. For arbitrary X candidates, optionally run `X公式情報を補完` if an X bearer token and current User Read rate are explicitly configured.
+8. Run `AIで候補を再評価` to score up to 50 active candidates against the Mission and generate strategy/drafts where justified.
+9. Today automatically builds a Daily Queue from Mission Match, relationship state, recommended action, self-improvement items and cleanup reviews.
+10. Open the recommended person in the official social experience; the user performs the actual social action there.
+11. Return to the PWA and record the result; completed candidates drop out of today's queue and the next actions move up.
+12. In Relations, review mutual/no-follow-back/unknown state. Cleanup advice never auto-unfollows.
+13. In Me, run AI analysis on the synced or manually pasted profile/recent posts to get Mission-based account improvement guidance.
 
 ## Low-cost strategy
 
@@ -87,16 +96,17 @@ The initial product is designed to remain useful at $0-$3/month:
 
 1. reuse locally stored candidates instead of re-reading them
 2. use free public-web discovery before paid social reads when configured
-3. refresh X profile metadata no more than needed
-4. batch X user lookup and AI candidate ranking
-5. consume configured free model capacity before paid providers
-6. combine ranking, recommended action, strategic rationale and limited message drafting into one AI pass
-7. build the Daily Queue locally from stored state instead of paying an LLM every morning
-8. reserve budget before any paid provider call
-9. block paid calls if budget accounting cannot be trusted
-10. keep the product useful when every paid integration is disabled
+3. use X Owned Reads only when the connected account is explicitly confirmed eligible
+4. cache owned X snapshots and reduce requested resource counts to the remaining HARD LIMIT
+5. refresh arbitrary X profile metadata no more than needed
+6. batch X user lookup and AI candidate ranking
+7. consume configured free model capacity before paid providers
+8. combine ranking, recommended action, strategic rationale and limited message drafting into one AI pass
+9. build the Daily Queue locally from stored state instead of paying an LLM every morning
+10. reserve budget before any paid provider call and fail closed when accounting cannot be trusted
+11. keep the product useful when every paid integration is disabled
 
-Provider prices and free tiers change, so paid rates and free/paid billing-mode flags are server configuration rather than hard-coded product assumptions.
+Provider prices, eligibility rules and free tiers change, so paid rates and billing-mode flags are server configuration rather than hard-coded product assumptions.
 
 ## GitHub Pages PWA
 
@@ -104,26 +114,26 @@ Provider prices and free tiers change, so paid rates and free/paid billing-mode 
 
 GitHub requires custom Pages workflows to be enabled for the repository before the first deployment. Once enabled, merging to `main` triggers the deployment. If the Worker has been deployed, add a repository Actions variable named `VITE_API_BASE_URL` containing the Worker origin; otherwise the deployed PWA runs in local-only mode.
 
-## Personal D1 sync
+## Personal control key / D1 sync
 
-The PWA can store one state snapshot in D1 when `SYNC_TOKEN_SHA256` is configured on the Worker. The original secret is entered only on the user's device and is never included in the repository or JSON backup.
+`SYNC_TOKEN_SHA256` stores only a SHA-256 comparison value on the Worker. The original secret stays on the user's device and protects personal D1 state sync plus X OAuth start/disconnect and owned X data reads.
 
-This is access control, not application-level encryption of the D1 snapshot. Manual JSON backup remains available for users who do not want state persisted on the server.
+The state snapshot is access-controlled but is not application-level encrypted at rest. X OAuth access/refresh tokens are different: they are AES-GCM encrypted before D1 storage and are never included in AppState or JSON backups.
 
 ## Architecture
 
-The browser-first v0.1 stores interaction state locally so the PWA is immediately usable. Cloudflare Workers + D1 provide the server boundary for provider keys, budget accounting and optional personal state snapshots.
+The browser-first v0.1 remains local-first so the PWA is useful before backend setup. Cloudflare Workers + D1 provide the server boundary for provider keys, encrypted OAuth tokens, budget accounting, public discovery and optional personal state/X snapshots.
 
-- `src/` — PWA UI, local store, Daily Queue, backup/restore, optional D1 sync, API client, social handoff, discovery, ranking and self-analysis integration
+- `src/` — PWA UI, local store, Daily Queue, backup/restore, D1 sync, X account controls, social handoff, discovery, ranking and self-analysis integration
 - `public/` — portable manifest, icon and Service Worker
-- `worker/` — Worker API, free-first discovery/provider routing, state-sync gate, budget ledger safeguards and X profile enrichment
+- `worker/` — Worker API, free-first provider routing, personal control gate, X OAuth/owned sync, budget safeguards and caching
 - `db/schema.sql` — D1 data model
 - `docs/ARCHITECTURE.md` — product/technical architecture and invariants
 
 ## Next implementation milestones
 
+- paginated/rotating owned-follower coverage that spends a controlled monthly X budget over time
 - conflict-aware automatic/offline-first D1 sync instead of manual snapshots
-- owned-account X OAuth adapter for followers/following/self-post analysis without browser secrets
 - Instagram permitted-source ingestion beyond public-web candidate discovery
 - scheduled Daily Queue refresh plus push notification delivery
 - stronger local embedding/filter stage before LLM ranking
