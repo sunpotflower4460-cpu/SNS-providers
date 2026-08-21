@@ -21,6 +21,7 @@ X_USER_READ_USD=
 # Optional read-only X OAuth 2.0 PKCE connection.
 # Configure the X App as a confidential Web App and set the exact Worker callback URL.
 # Requested scopes are fixed in code to: tweet.read users.read follows.read offline.access
+# The Worker also rejects the token response if X grants an unexpected scope or omits one.
 X_CLIENT_ID=
 X_CLIENT_SECRET=
 X_OAUTH_CALLBACK_URL=http://localhost:8787/api/x/oauth/callback
@@ -43,8 +44,10 @@ INSTAGRAM_USER_ID=
 # Set explicitly to the currently supported Meta Graph API version, e.g. v24.0 after verifying.
 INSTAGRAM_API_VERSION=
 
-# Personal control token. It gates D1 state sync, X OAuth start/disconnect, owned X reads,
-# and Instagram Professional engager sync.
+# Personal control token.
+# It protects D1 state sync, budget status, AI ranking/self-analysis, Tavily discovery,
+# optional X public enrichment, X OAuth start/disconnect + owned reads, and Instagram
+# Professional engager sync. X OAuth status itself is a minimal setup/status read.
 # Store only the SHA-256 hex on the Worker; the raw value stays on the user's device.
 # Example on macOS/Linux: printf '%s' 'your-long-secret' | shasum -a 256
 SYNC_TOKEN_SHA256=
