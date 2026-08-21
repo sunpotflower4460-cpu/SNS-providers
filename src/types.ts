@@ -92,6 +92,20 @@ export interface SelfProfileState {
   analyzedAt?: string;
 }
 
+export interface XOwnedAccountState {
+  username?: string;
+  displayName?: string;
+  verified?: boolean;
+  publicMetrics?: PublicMetrics;
+  lastSyncedAt?: string;
+  followerSampleCount?: number;
+  followingSampleCount?: number;
+  recentPostCount?: number;
+  followersComplete?: boolean;
+  followingComplete?: boolean;
+  postsComplete?: boolean;
+}
+
 export interface AppState {
   mission: Mission;
   candidates: Candidate[];
@@ -100,4 +114,5 @@ export interface AppState {
   relationshipPolicy: RelationshipPolicy;
   insights: SelfInsight[];
   selfProfile: SelfProfileState;
+  xAccount: XOwnedAccountState;
 }
