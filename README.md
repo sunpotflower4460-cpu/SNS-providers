@@ -21,8 +21,10 @@ Mission-driven, mobile-first PWA for growing meaningful social relationships wit
 - AES-GCM encrypted X access/refresh token storage in D1 with server-side refresh
 - budget-guarded owned X sync for the user's profile, recent posts, followers and following when explicitly eligible/configured
 - 20-hour D1 cache for owned X sync to avoid needless repeated reads
+- monthly X sync pacing based on remaining budget / remaining billing-month days
+- rotating followers/following pagination so later syncs progress beyond the first page
 - inbound X followers can be reused as candidate seeds without another X request
-- conservative automatic follow-back reconciliation; partial follower pages never create false negatives
+- conservative automatic follow-back reconciliation; partial/rotated follower pages never create false negatives
 - local relationship history and relationship stages
 - configurable follow-back review window with Mission-aware keep/cleanup advice
 - AI self-analysis from profile + recent post text, including Mission Score, diagnosis, strategy and profile rewrite suggestion
@@ -34,7 +36,7 @@ Mission-driven, mobile-first PWA for growing meaningful social relationships wit
 - free-first AI provider routing with local fallback
 - fail-closed paid usage when the D1 budget ledger, provider rates, or Owned Read eligibility cannot be trusted
 - pre-request budget reservations for paid calls to reduce concurrent overspend risk
-- D1 schema for candidates, interactions, Daily Queue, insights, budget ledger, OAuth tokens and personal state/X snapshots
+- D1 schema for candidates, interactions, Daily Queue, insights, budget ledger, OAuth tokens, pagination and personal state/X snapshots
 - GitHub Pages PWA deployment workflow plus subpath-safe manifest / Service Worker
 - CI for web, Worker and GitHub Pages base-path builds
 
@@ -80,15 +82,16 @@ Paid usage is fail-closed. If D1 budget accounting is unavailable, paid provider
 2. Save the personal control key if using D1 sync or read-only X account connection.
 3. Optionally connect X in read-only mode. The PWA never requests follow/post/DM write scopes.
 4. Tap `Xデータを同期` to import the connected account's profile/recent posts and budget-permitted follower/following samples. Repeated taps within the cache window reuse D1 data at `$0` application-tracked cost.
-5. Existing tracked candidates are reconciled with follower data; inbound followers can become new candidate seeds for later Mission ranking.
-6. Open Discover and tap `Missionから無料で候補を探す` when Tavily free discovery is configured, or add a profile URL/handle manually.
-7. For arbitrary X candidates, optionally run `X公式情報を補完` if an X bearer token and current User Read rate are explicitly configured.
-8. Run `AIで候補を再評価` to score up to 50 active candidates against the Mission and generate strategy/drafts where justified.
-9. Today automatically builds a Daily Queue from Mission Match, relationship state, recommended action, self-improvement items and cleanup reviews.
-10. Open the recommended person in the official social experience; the user performs the actual social action there.
-11. Return to the PWA and record the result; completed candidates drop out of today's queue and the next actions move up.
-12. In Relations, review mutual/no-follow-back/unknown state. Cleanup advice never auto-unfollows.
-13. In Me, run AI analysis on the synced or manually pasted profile/recent posts to get Mission-based account improvement guidance.
+5. Each non-cached sync is paced from remaining monthly budget and continues followers/following from stored pagination cursors, gradually widening coverage instead of repeatedly buying the first page.
+6. Existing tracked candidates are reconciled with follower data; inbound followers can become new candidate seeds for later Mission ranking.
+7. Open Discover and tap `Missionから無料で候補を探す` when Tavily free discovery is configured, or add a profile URL/handle manually.
+8. For arbitrary X candidates, optionally run `X公式情報を補完` if an X bearer token and current User Read rate are explicitly configured.
+9. Run `AIで候補を再評価` to score up to 50 active candidates against the Mission and generate strategy/drafts where justified.
+10. Today automatically builds a Daily Queue from Mission Match, relationship state, recommended action, self-improvement items and cleanup reviews.
+11. Open the recommended person in the official social experience; the user performs the actual social action there.
+12. Return to the PWA and record the result; completed candidates drop out of today's queue and the next actions move up.
+13. In Relations, review mutual/no-follow-back/unknown state. Cleanup advice never auto-unfollows.
+14. In Me, run AI analysis on the synced or manually pasted profile/recent posts to get Mission-based account improvement guidance.
 
 ## Low-cost strategy
 
@@ -97,14 +100,16 @@ The initial product is designed to remain useful at $0-$3/month:
 1. reuse locally stored candidates instead of re-reading them
 2. use free public-web discovery before paid social reads when configured
 3. use X Owned Reads only when the connected account is explicitly confirmed eligible
-4. cache owned X snapshots and reduce requested resource counts to the remaining HARD LIMIT
-5. refresh arbitrary X profile metadata no more than needed
-6. batch X user lookup and AI candidate ranking
-7. consume configured free model capacity before paid providers
-8. combine ranking, recommended action, strategic rationale and limited message drafting into one AI pass
-9. build the Daily Queue locally from stored state instead of paying an LLM every morning
-10. reserve budget before any paid provider call and fail closed when accounting cannot be trusted
-11. keep the product useful when every paid integration is disabled
+4. cache owned X snapshots for 20 hours
+5. pace each non-cached owned-X sync from the actual remaining monthly budget divided by the remaining billing-month days
+6. rotate follower/following pages instead of repeatedly purchasing the same first-page coverage
+7. refresh arbitrary X profile metadata no more than needed
+8. batch X user lookup and AI candidate ranking
+9. consume configured free model capacity before paid providers
+10. combine ranking, recommended action, strategic rationale and limited message drafting into one AI pass
+11. build the Daily Queue locally from stored state instead of paying an LLM every morning
+12. reserve budget before any paid provider call and fail closed when accounting cannot be trusted
+13. keep the product useful when every paid integration is disabled
 
 Provider prices, eligibility rules and free tiers change, so paid rates and billing-mode flags are server configuration rather than hard-coded product assumptions.
 
@@ -126,13 +131,13 @@ The browser-first v0.1 remains local-first so the PWA is useful before backend s
 
 - `src/` — PWA UI, local store, Daily Queue, backup/restore, D1 sync, X account controls, social handoff, discovery, ranking and self-analysis integration
 - `public/` — portable manifest, icon and Service Worker
-- `worker/` — Worker API, free-first provider routing, personal control gate, X OAuth/owned sync, budget safeguards and caching
+- `worker/` — Worker API, free-first provider routing, personal control gate, X OAuth/owned sync, pagination/pacing, budget safeguards and caching
 - `db/schema.sql` — D1 data model
 - `docs/ARCHITECTURE.md` — product/technical architecture and invariants
 
 ## Next implementation milestones
 
-- paginated/rotating owned-follower coverage that spends a controlled monthly X budget over time
+- safe accumulated full-cycle follow-graph evidence for stronger no-follow-back reconciliation across multiple rotated pages
 - conflict-aware automatic/offline-first D1 sync instead of manual snapshots
 - Instagram permitted-source ingestion beyond public-web candidate discovery
 - scheduled Daily Queue refresh plus push notification delivery
