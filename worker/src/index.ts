@@ -135,7 +135,9 @@ export default {
           await finalizeReservation(env, reservationId, 'user_read', costUsd, { prompt_tokens: profiles.length });
           return json({ enabled: true, costUsd, profiles }, 200, cors);
         } catch (error) {
-          await cancelReservation(env, reservationId);
+          // The request may already have reached X and become billable before a network,
+          // response, or parsing failure surfaced. Keep the conservative reservation.
+          await markReservationUncertain(env, reservationId, 'user_read_uncertain');
           throw error;
         }
       }
@@ -309,11 +311,11 @@ async function finalizeReservation(env: Env, reservationId: string, operation: s
   ).bind(operation, actualCostUsd, usage?.prompt_tokens || 0, usage?.completion_tokens || 0, reservationId).run();
 }
 
-async function cancelReservation(env: Env, reservationId: string) {
+async function markReservationUncertain(env: Env, reservationId: string, operation: string) {
   try {
-    await env.DB.prepare('DELETE FROM budget_ledger WHERE id = ?').bind(reservationId).run();
+    await env.DB.prepare('UPDATE budget_ledger SET operation = ? WHERE id = ?').bind(operation, reservationId).run();
   } catch {
-    // Keeping an unfinalized reservation over-counts spend, which is safer than under-counting it.
+    // The original reservation and its conservative amount remain in D1 when possible.
   }
 }
 
@@ -371,7 +373,9 @@ async function runPaidRankingWithReservation(
     await finalizeReservation(env, reservationId, 'rank', costUsd, result.usage);
     return { ...result, costUsd };
   } catch {
-    await cancelReservation(env, reservationId);
+    // Once the request has been attempted, the provider may have billed it even if
+    // transport/JSON handling failed locally. Retain the conservative preflight amount.
+    await markReservationUncertain(env, reservationId, 'rank_uncertain');
     return null;
   }
 }
