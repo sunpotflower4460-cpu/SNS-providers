@@ -10,6 +10,8 @@ interface Env {
   DEEPSEEK_MODEL?: string;
   DEEPSEEK_INPUT_PER_MILLION?: string;
   DEEPSEEK_OUTPUT_PER_MILLION?: string;
+  X_BEARER_TOKEN?: string;
+  X_USER_READ_USD?: string;
   DEFAULT_MONTHLY_BUDGET_USD?: string;
   ALLOWED_ORIGIN?: string;
 }
@@ -30,6 +32,12 @@ interface RankRequest {
   monthlyLimitUsd?: number;
 }
 
+interface XEnrichRequest {
+  userId?: string;
+  usernames: string[];
+  monthlyLimitUsd?: number;
+}
+
 interface Usage {
   prompt_tokens?: number;
   completion_tokens?: number;
@@ -38,6 +46,21 @@ interface Usage {
 interface RatePair {
   input: number;
   output: number;
+}
+
+interface XUser {
+  id: string;
+  name: string;
+  username: string;
+  description?: string;
+  verified?: boolean;
+  created_at?: string;
+  public_metrics?: {
+    followers_count?: number;
+    following_count?: number;
+    tweet_count?: number;
+    listed_count?: number;
+  };
 }
 
 const jsonHeaders = { 'content-type': 'application/json; charset=utf-8' };
@@ -61,15 +84,36 @@ export default {
         return json({ usedUsd, limitUsd, remainingUsd: Math.max(0, limitUsd - usedUsd) }, 200, cors);
       }
 
+      if (request.method === 'POST' && url.pathname === '/api/x/enrich') {
+        const body = await request.json<XEnrichRequest>();
+        const usernames = validateXEnrichRequest(body);
+        const userId = body.userId || 'local-user';
+        const { remainingUsd } = await budgetForRequest(env, userId, body.monthlyLimitUsd);
+        const unitCost = parsePositiveNumber(env.X_USER_READ_USD);
+
+        if (!env.X_BEARER_TOKEN) {
+          return json({ enabled: false, costUsd: 0, profiles: [], reason: 'X_BEARER_TOKEN is not configured.' }, 200, cors);
+        }
+        if (!unitCost) {
+          return json({ enabled: false, costUsd: 0, profiles: [], reason: 'X_USER_READ_USD is not configured; paid X reads fail closed.' }, 200, cors);
+        }
+
+        const worstCaseCost = usernames.length * unitCost;
+        if (worstCaseCost > remainingUsd) {
+          return json({ enabled: false, costUsd: 0, profiles: [], reason: `HARD LIMIT protected the budget. Need up to $${worstCaseCost.toFixed(4)}, remaining $${remainingUsd.toFixed(4)}.` }, 200, cors);
+        }
+
+        const profiles = await fetchXProfiles(usernames, env.X_BEARER_TOKEN);
+        const costUsd = profiles.length * unitCost;
+        await recordUsage(env, userId, 'x', 'user_read', costUsd, { prompt_tokens: profiles.length });
+        return json({ enabled: true, costUsd, profiles }, 200, cors);
+      }
+
       if (request.method === 'POST' && url.pathname === '/api/ai/rank') {
         const body = await request.json<RankRequest>();
         validateRankRequest(body);
         const userId = body.userId || 'local-user';
-        const serverLimit = configuredLimit(env);
-        const requestedLimit = Number.isFinite(body.monthlyLimitUsd) ? Math.max(0, body.monthlyLimitUsd!) : serverLimit;
-        const effectiveLimit = Math.min(serverLimit, requestedLimit);
-        const usedUsd = await monthUsage(env, userId);
-        const remainingUsd = Math.max(0, effectiveLimit - usedUsd);
+        const { remainingUsd } = await budgetForRequest(env, userId, body.monthlyLimitUsd);
 
         if (env.GROQ_API_KEY) {
           const paid = env.GROQ_BILLING_MODE === 'paid';
@@ -128,6 +172,14 @@ function configuredLimit(env: Env) {
   return Number.isFinite(parsed) ? Math.max(0, parsed) : 3;
 }
 
+async function budgetForRequest(env: Env, userId: string, requestedLimitUsd?: number) {
+  const serverLimit = configuredLimit(env);
+  const requestedLimit = Number.isFinite(requestedLimitUsd) ? Math.max(0, requestedLimitUsd!) : serverLimit;
+  const effectiveLimit = Math.min(serverLimit, requestedLimit);
+  const usedUsd = await monthUsage(env, userId);
+  return { usedUsd, effectiveLimit, remainingUsd: Math.max(0, effectiveLimit - usedUsd) };
+}
+
 function validateRankRequest(body: RankRequest) {
   if (!body || typeof body.mission !== 'string' || !body.mission.trim()) throw new Error('mission is required');
   if (body.mission.length > 4000) throw new Error('mission is too long');
@@ -135,6 +187,44 @@ function validateRankRequest(body: RankRequest) {
   if (!Array.isArray(body.candidates) || body.candidates.length === 0) throw new Error('candidates are required');
   if (body.candidates.length > 50) throw new Error('rank accepts at most 50 candidates per batch');
   if (JSON.stringify(body).length > 60_000) throw new Error('rank request is too large');
+}
+
+function validateXEnrichRequest(body: XEnrichRequest) {
+  if (!body || !Array.isArray(body.usernames) || body.usernames.length === 0) throw new Error('usernames are required');
+  if (body.usernames.length > 100) throw new Error('X enrichment accepts at most 100 usernames per batch');
+  const usernames = [...new Set(body.usernames.map(sanitizeXUsername).filter(Boolean))];
+  if (!usernames.length) throw new Error('no valid usernames');
+  return usernames;
+}
+
+function sanitizeXUsername(value: string) {
+  return value.trim().replace(/^@/, '').replace(/[^a-zA-Z0-9_]/g, '').slice(0, 15);
+}
+
+async function fetchXProfiles(usernames: string[], bearerToken: string) {
+  const params = new URLSearchParams({
+    usernames: usernames.join(','),
+    'user.fields': 'created_at,description,public_metrics,verified',
+  });
+  const response = await fetch(`https://api.x.com/2/users/by?${params.toString()}`, {
+    headers: { authorization: `Bearer ${bearerToken}` },
+  });
+  if (!response.ok) throw new Error(`X API returned ${response.status}`);
+  const data = await response.json<{ data?: XUser[]; errors?: unknown[] }>();
+  return (data.data || []).map((profile) => ({
+    id: profile.id,
+    name: profile.name,
+    username: profile.username,
+    description: profile.description || '',
+    verified: Boolean(profile.verified),
+    createdAt: profile.created_at || null,
+    publicMetrics: {
+      followers: profile.public_metrics?.followers_count || 0,
+      following: profile.public_metrics?.following_count || 0,
+      posts: profile.public_metrics?.tweet_count || 0,
+      listed: profile.public_metrics?.listed_count || 0,
+    },
+  }));
 }
 
 async function monthUsage(env: Env, userId: string) {
@@ -162,6 +252,11 @@ async function recordUsage(env: Env, userId: string, provider: string, operation
   } catch {
     // Local-first mode remains usable before migrations; deployment diagnostics should surface missing D1 separately.
   }
+}
+
+function parsePositiveNumber(value?: string) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 function parseRates(inputRate?: string, outputRate?: string): RatePair | null {
