@@ -18,6 +18,13 @@ export interface Mission {
   communicationDNA: string;
 }
 
+export interface PublicMetrics {
+  followers: number;
+  following: number;
+  posts: number;
+  listed?: number;
+}
+
 export interface Candidate {
   id: string;
   platform: Platform;
@@ -25,6 +32,10 @@ export interface Candidate {
   displayName: string;
   bio: string;
   profileUrl: string;
+  platformUserId?: string;
+  verified?: boolean;
+  publicMetrics?: PublicMetrics;
+  profileSyncedAt?: string;
   kind: CandidateKind;
   match: number;
   relationshipScore: number;
