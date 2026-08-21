@@ -15,6 +15,11 @@ export function openCandidate(candidate: Candidate) {
     return;
   }
 
+  if (candidate.platform === 'instagram' && candidate.recommendedAction === 'reply' && candidate.engagementUrl) {
+    window.open(candidate.engagementUrl, '_blank', 'noopener,noreferrer');
+    return;
+  }
+
   window.open(candidate.profileUrl, '_blank', 'noopener,noreferrer');
 }
 
