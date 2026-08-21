@@ -42,7 +42,7 @@ export default function WorkloadControls({ state, onChange }: Props) {
 
     <div className="workload-advisor">
       <div><span>AI目安</span><strong>{suggestion.total} actions</strong></div>
-      <p>Mission Match 75+ が {highMatch}人 · 月予算残り ${remainingBudget.toFixed(2)}。候補数と予算余力から作業量を提案しています。</p>
+      <p>Mission Match 75+ が {highMatch}人 · 月予算残り ${remainingBudget.toFixed(2)}。現在実際に処理できる候補数と予算余力から作業量を提案しています。</p>
       <button className="secondary-button" onClick={() => apply(suggestion)}>おすすめ値を適用</button>
     </div>
 
@@ -93,15 +93,17 @@ function suggestWorkload(state: AppState): WorkloadValues {
   const limit = state.budget.monthlyLimitUsd;
   const usedRatio = limit > 0 ? Math.min(1, state.budget.usedUsd / limit) : 0;
   const budgetFactor = limit === 0 ? 0.82 : usedRatio >= 0.9 ? 0.72 : usedRatio >= 0.7 ? 0.86 : 1;
+  const self = state.insights.length > 0 ? Math.min(2, state.insights.length) : 0;
+  const availableActions = strongFollow + conversations + light + cleanup + self;
   const qualityBase = 18 + Math.min(52, Math.round(highMatch.length * 0.7));
-  const total = clamp(Math.round(qualityBase * budgetFactor), 15, 70);
+  const desiredTotal = Math.round(qualityBase * budgetFactor);
+  const total = Math.max(1, Math.min(70, availableActions || 1, desiredTotal));
 
-  const self = state.insights.length > 0 ? Math.min(2, state.insights.length) : 1;
-  const conversation = clamp(Math.max(3, conversations), 0, Math.min(15, total));
-  const cleanupLimit = clamp(Math.min(cleanup, 6), 0, 6);
-  const lightLimit = clamp(Math.max(3, Math.min(light, Math.round(total * 0.2))), 0, 15);
-  const reserved = conversation + cleanupLimit + lightLimit + self;
-  const connect = clamp(Math.max(5, Math.min(strongFollow || highMatch.length, total - Math.min(total - 1, reserved))), 0, 60);
+  const conversation = Math.min(conversations, 15, total);
+  const cleanupLimit = Math.min(cleanup, 6, Math.max(0, total - conversation));
+  const lightLimit = Math.min(light, 15, Math.max(0, total - conversation - cleanupLimit));
+  const selfLimit = Math.min(self, Math.max(0, total - conversation - cleanupLimit - lightLimit));
+  const connect = Math.min(strongFollow, 60, Math.max(0, total - conversation - cleanupLimit - lightLimit - selfLimit));
 
   return {
     total,
@@ -109,7 +111,7 @@ function suggestWorkload(state: AppState): WorkloadValues {
     conversation,
     light: lightLimit,
     cleanup: cleanupLimit,
-    self,
+    self: selfLimit,
   };
 }
 
