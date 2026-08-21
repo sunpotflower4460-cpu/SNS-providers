@@ -13,6 +13,7 @@ Mission-driven, mobile-first PWA for growing meaningful social relationships wit
 - local workload advisor that proposes a practical daily action volume from candidate quality and remaining budget; this is not a platform safety limit
 - Today progress and summary cards are derived from the actual current Daily Queue instead of the raw candidate pool
 - queue items automatically roll forward as today's interactions are recorded
+- `明日へ` snooze temporarily removes a candidate from Today/Discover until the next local day without deleting relationship history
 - zero-cost local candidate prefilter before LLM ranking, reducing the normal ranking batch from up to 50 candidates to the strongest 30
 - natural reply/DM draft suggestions when context is sufficient
 - X Web Intent / official profile handoff
@@ -38,13 +39,14 @@ Mission-driven, mobile-first PWA for growing meaningful social relationships wit
 - X self-profile/recent-post sync automatically feeds the same Me analysis inputs
 - JSON backup/restore for local-first Mission, candidate and relationship state
 - optional token-gated D1 snapshot sync for moving state between personal devices
+- optimistic D1 concurrency protection prevents a stale/unknown device from silently overwriting a newer remote snapshot
 - personal control key protects D1 state sync, X OAuth management/owned reads, Instagram Professional engager sync, budget reads, AI ranking, Tavily discovery and optional X enrichment
 - configurable monthly API/LLM budget with a $3 default and always-on HARD LIMIT
 - free-first AI provider routing with local fallback
 - fail-closed paid usage when the D1 budget ledger, provider rates, or Owned Read eligibility cannot be trusted
 - pre-request budget reservations for paid calls to reduce concurrent overspend risk
 - production CSP restricts PWA API traffic to the configured Worker origin; CI verifies the generated binding
-- CI security invariant check fails if cost-bearing provider routes lose the personal-control gate or if X OAuth gains a write scope
+- CI security invariant check fails if cost-bearing provider routes lose the personal-control gate, X OAuth gains a write scope, or optimistic D1 sync protection disappears
 - D1 schema for candidates, interactions, Daily Queue, insights, budget ledger, OAuth tokens, pagination, full-cycle follow evidence and personal X/Instagram snapshots
 - GitHub Pages PWA deployment workflow plus subpath-safe manifest / Service Worker
 - CI for web, Worker, security invariants and GitHub Pages/CSP builds
@@ -101,10 +103,11 @@ Paid usage is fail-closed. If D1 budget accounting is unavailable, paid provider
 11. For arbitrary X candidates, optionally run `X公式情報を補完` if an X bearer token and current User Read rate are explicitly configured.
 12. Run `AIで候補を再評価`. A zero-cost local filter chooses the strongest subset first, then the AI pass generates Mission Match, strategy and drafts where justified.
 13. Today automatically builds a Daily Queue from Mission Match, relationship state, recommended action, workload caps, self-improvement items and cleanup reviews. Its progress target and summary are based on that actual queue.
-14. Open the recommended person/post in the official social experience; the user performs the actual social action there.
-15. Return to the PWA and record the result; completed candidates drop out of today's queue and the next actions move up.
-16. In Relations, review mutual/no-follow-back/unknown state. Cleanup advice never auto-unfollows.
-17. In Me, run AI analysis on the synced or manually pasted profile/recent posts to get Mission-based account improvement guidance.
+14. Use `明日へ` when a candidate is relevant but not worth handling now; the relationship record stays intact and the candidate returns the next local day.
+15. Open the recommended person/post in the official social experience; the user performs the actual social action there.
+16. Return to the PWA and record the result; completed candidates drop out of today's queue and the next actions move up.
+17. In Relations, review mutual/no-follow-back/unknown state. Cleanup advice never auto-unfollows.
+18. In Me, run AI analysis on the synced or manually pasted profile/recent posts to get Mission-based account improvement guidance.
 
 ## Low-cost strategy
 
@@ -142,23 +145,25 @@ GitHub requires custom Pages workflows to be enabled for the repository before t
 
 The same key gates budget status, AI ranking/self-analysis, Tavily discovery, optional X public enrichment, X OAuth management/owned reads and Instagram Professional engager sync. This protects both personal data and the app's small provider/free-tier budget when the Worker URL is public.
 
-The state snapshot is access-controlled but is not application-level encrypted at rest. X OAuth access/refresh tokens are different: they are AES-GCM encrypted before D1 storage and are never included in AppState or JSON backups. Instagram access tokens are Worker-side secrets and are also never placed in AppState or the browser bundle.
+D1 snapshot uploads carry the last remote `updatedAt` observed by that device. If another device changed the snapshot first, the Worker rejects the stale upload instead of silently overwriting newer data. A device that has never observed the remote version can create a snapshot only when none exists; otherwise it must pull first.
+
+This is conflict-safe manual synchronization, not yet a field-level automatic merge engine. The state snapshot is access-controlled but is not application-level encrypted at rest. X OAuth access/refresh tokens are different: they are AES-GCM encrypted before D1 storage and are never included in AppState or JSON backups. Instagram access tokens are Worker-side secrets and are also never placed in AppState or the browser bundle.
 
 ## Architecture
 
 The browser-first v0.1 remains local-first so the PWA is useful before backend setup. Cloudflare Workers + D1 provide the server boundary for provider keys, encrypted X OAuth tokens, Instagram server-side credentials, budget accounting, public discovery and optional personal state/social snapshots.
 
-- `src/` — PWA UI, local store, workload advisor, zero-cost prefilter, Daily Queue, backup/restore, D1 sync, X/Instagram account controls, social handoff, discovery, ranking and self-analysis integration
+- `src/` — PWA UI, local store, workload advisor, zero-cost prefilter, Daily Queue, backup/restore, conflict-safe D1 sync, X/Instagram account controls, social handoff, discovery, ranking and self-analysis integration
 - `public/` — portable manifest, icon and Service Worker
 - `worker/` — Worker API, free-first provider routing, personal control gate, X OAuth/owned sync, full-cycle follow evidence, Instagram Professional comment-engager sync, pagination/pacing, budget safeguards and caching
 - `db/schema.sql` — D1 data model
 - `docs/ARCHITECTURE.md` — product/technical architecture and invariants
-- `scripts/verify-security-invariants.mjs` — CI guard for provider-route authentication and read-only X OAuth scopes
+- `scripts/verify-security-invariants.mjs` — CI guard for provider-route authentication, optimistic state-sync protection and read-only X OAuth scopes
 
 ## Next implementation milestones
 
-- conflict-aware automatic/offline-first D1 sync instead of manual snapshots
+- optional automatic/field-level merge sync beyond the current conflict-safe manual D1 push/pull
 - Instagram webhook ingestion for new comments plus other explicitly permitted first-party signals such as mentions where useful
 - scheduled Daily Queue refresh plus push notification delivery
 - optional local embedding/WebGPU stage beyond the current zero-cost lexical prefilter
-- accessibility, install-flow and empty/error-state polish
+- accessibility, install-flow and richer empty/error-state polish
