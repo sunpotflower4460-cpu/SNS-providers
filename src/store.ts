@@ -1,4 +1,4 @@
-import type { RankResult } from './api';
+import type { RankResult, XProfileResult } from './api';
 import type { AppState, Candidate, Interaction, Mission, Platform, RecommendedAction } from './types';
 
 const KEY = 'sns-providers:v1';
@@ -104,6 +104,34 @@ export function addCandidateFromReference(state: AppState, platform: Platform, r
   return { ...state, candidates: [candidate, ...state.candidates] };
 }
 
+export function applyXProfiles(state: AppState, profiles: XProfileResult[], costUsd = 0): AppState {
+  const byUsername = new Map(profiles.map((profile) => [profile.username.toLowerCase(), profile]));
+  const syncedAt = new Date().toISOString();
+  const candidates = state.candidates.map((candidate) => {
+    if (candidate.platform !== 'x') return candidate;
+    const profile = byUsername.get(candidate.username.toLowerCase());
+    if (!profile) return candidate;
+    return {
+      ...candidate,
+      platformUserId: profile.id,
+      displayName: profile.name || candidate.displayName,
+      bio: profile.description || candidate.bio,
+      verified: profile.verified,
+      publicMetrics: profile.publicMetrics,
+      profileSyncedAt: syncedAt,
+    };
+  });
+  return {
+    ...state,
+    candidates,
+    budget: {
+      ...state.budget,
+      usedUsd: Math.max(0, state.budget.usedUsd + Math.max(0, costUsd)),
+      xUsd: Math.max(0, state.budget.xUsd + Math.max(0, costUsd)),
+    },
+  };
+}
+
 export function applyRankResults(state: AppState, results: RankResult[], costUsd = 0): AppState {
   const byId = new Map(results.map((result) => [result.id, result]));
   const candidates = state.candidates.map((candidate) => {
@@ -120,7 +148,11 @@ export function applyRankResults(state: AppState, results: RankResult[], costUsd
   return {
     ...state,
     candidates,
-    budget: { ...state.budget, usedUsd: Math.max(0, state.budget.usedUsd + Math.max(0, costUsd)) },
+    budget: {
+      ...state.budget,
+      usedUsd: Math.max(0, state.budget.usedUsd + Math.max(0, costUsd)),
+      llmUsd: Math.max(0, state.budget.llmUsd + Math.max(0, costUsd)),
+    },
   };
 }
 
