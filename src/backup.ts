@@ -32,8 +32,16 @@ export async function readBackup(file: File): Promise<AppState> {
   if (parsed.format !== 'social-mission-backup' || parsed.version !== 1 || !parsed.state) {
     throw new Error('Social Missionのバックアップ形式ではありません');
   }
-  validateAppState(parsed.state);
-  return parsed.state;
+  const state = normalizeAppState(parsed.state);
+  validateAppState(state);
+  return state;
+}
+
+export function normalizeAppState(state: AppState): AppState {
+  return {
+    ...state,
+    xAccount: state.xAccount && typeof state.xAccount === 'object' ? state.xAccount : {},
+  };
 }
 
 export function validateAppState(state: AppState) {
@@ -42,4 +50,5 @@ export function validateAppState(state: AppState) {
   if (!state.budget || typeof state.budget.monthlyLimitUsd !== 'number') throw new Error('予算データが不正です');
   if (!state.relationshipPolicy || typeof state.relationshipPolicy.followBackReviewAfterDays !== 'number') throw new Error('関係性ポリシーが不正です');
   if (!state.selfProfile || typeof state.selfProfile.profileText !== 'string') throw new Error('自己分析データが不正です');
+  if (!state.xAccount || typeof state.xAccount !== 'object') throw new Error('Xアカウント同期データが不正です');
 }
