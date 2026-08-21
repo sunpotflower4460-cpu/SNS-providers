@@ -24,6 +24,8 @@ interface TargetRow {
   seen: number;
 }
 
+type NormalizedTarget = Required<Pick<TrackedXAccount, 'key' | 'username'>> & { platformUserId?: string | null };
+
 const MAX_TARGETS = 500;
 const INSERT_CHUNK = 80;
 
@@ -116,9 +118,9 @@ export async function updateFollowCycleEvidence(
   }
 }
 
-function normalizeTargets(input: TrackedXAccount[]) {
+function normalizeTargets(input: TrackedXAccount[]): NormalizedTarget[] {
   const seen = new Set<string>();
-  const result: Required<Pick<TrackedXAccount, 'key' | 'username'>> & { platformUserId?: string | null }[] = [];
+  const result: NormalizedTarget[] = [];
   for (const raw of input) {
     const key = sanitizeKey(raw?.key || '');
     const username = sanitizeUsername(raw?.username || '');
