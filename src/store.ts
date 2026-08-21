@@ -1,4 +1,5 @@
-import type { AppState, Candidate, Interaction, Mission } from './types';
+import type { RankResult } from './api';
+import type { AppState, Candidate, Interaction, Mission, Platform, RecommendedAction } from './types';
 
 const KEY = 'sns-providers:v1';
 
@@ -39,9 +40,9 @@ const defaultState: AppState = {
   budget: {
     monthlyLimitUsd: 3,
     hardLimit: true,
-    usedUsd: 0.23,
-    xUsd: 0.18,
-    llmUsd: 0.05,
+    usedUsd: 0,
+    xUsd: 0,
+    llmUsd: 0,
     searchUsd: 0,
     mode: 'balanced'
   },
@@ -69,6 +70,60 @@ export function updateMission(state: AppState, mission: Mission): AppState {
   return { ...state, mission };
 }
 
+export function syncBudget(state: AppState, usedUsd: number, serverLimitUsd: number): AppState {
+  return {
+    ...state,
+    budget: {
+      ...state.budget,
+      usedUsd: Math.max(0, usedUsd),
+      monthlyLimitUsd: Math.min(state.budget.monthlyLimitUsd, Math.max(0, serverLimitUsd)),
+    },
+  };
+}
+
+export function addCandidateFromReference(state: AppState, platform: Platform, rawReference: string): AppState {
+  const username = parseUsername(platform, rawReference);
+  if (!username) return state;
+  if (state.candidates.some((candidate) => candidate.platform === platform && candidate.username.toLowerCase() === username.toLowerCase())) return state;
+
+  const candidate: Candidate = {
+    id: `${platform}-${crypto.randomUUID()}`,
+    platform,
+    username,
+    displayName: username,
+    bio: '',
+    profileUrl: platform === 'x' ? `https://x.com/${username}` : `https://www.instagram.com/${username}/`,
+    kind: 'other',
+    match: 50,
+    relationshipScore: 0,
+    stage: 'discovered',
+    reason: '候補プールへ追加しました。プロフィール情報を補足するか、AI再評価でMissionとの相性を判定できます。',
+    tags: [],
+    recommendedAction: 'review',
+  };
+  return { ...state, candidates: [candidate, ...state.candidates] };
+}
+
+export function applyRankResults(state: AppState, results: RankResult[], costUsd = 0): AppState {
+  const byId = new Map(results.map((result) => [result.id, result]));
+  const candidates = state.candidates.map((candidate) => {
+    const result = byId.get(candidate.id);
+    if (!result) return candidate;
+    return {
+      ...candidate,
+      match: clampScore(result.match),
+      kind: isCandidateKind(result.kind) ? result.kind : candidate.kind,
+      recommendedAction: isRecommendedAction(result.recommendedAction) ? result.recommendedAction : candidate.recommendedAction,
+      reason: result.reason?.trim() || candidate.reason,
+    };
+  });
+  return {
+    ...state,
+    candidates,
+    budget: { ...state.budget, usedUsd: Math.max(0, state.budget.usedUsd + Math.max(0, costUsd)) },
+  };
+}
+
 export function recordInteraction(state: AppState, candidateId: string, action: Interaction['action']): AppState {
   const now = new Date().toISOString();
   const interactions = [{ id: crypto.randomUUID(), candidateId, action, at: now }, ...state.interactions];
@@ -80,4 +135,35 @@ export function recordInteraction(state: AppState, candidateId: string, action: 
     return { ...candidate, lastInteractionAt: now };
   });
   return { ...state, interactions, candidates };
+}
+
+function parseUsername(platform: Platform, value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  const withoutAt = trimmed.replace(/^@/, '');
+  try {
+    const url = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+    const host = url.hostname.replace(/^www\./, '').toLowerCase();
+    const accepted = platform === 'x' ? ['x.com', 'twitter.com'] : ['instagram.com'];
+    if (accepted.includes(host)) return sanitizeUsername(url.pathname.split('/').filter(Boolean)[0] || '');
+  } catch {
+    // Plain handles are supported below.
+  }
+  return sanitizeUsername(withoutAt);
+}
+
+function sanitizeUsername(value: string) {
+  return value.split(/[/?#]/)[0].replace(/[^a-zA-Z0-9._]/g, '').slice(0, 64);
+}
+
+function clampScore(value: number) {
+  return Math.max(0, Math.min(100, Number.isFinite(value) ? Math.round(value) : 0));
+}
+
+function isCandidateKind(value?: string): value is Candidate['kind'] {
+  return ['fan', 'artist', 'creator', 'media', 'venue', 'other'].includes(value || '');
+}
+
+function isRecommendedAction(value?: string): value is RecommendedAction {
+  return ['follow', 'like', 'reply', 'dm', 'review', 'unfollow_review'].includes(value || '');
 }
