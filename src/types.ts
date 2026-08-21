@@ -69,6 +69,11 @@ export interface BudgetState {
   mode: 'free' | 'eco' | 'balanced' | 'growth';
 }
 
+export interface RelationshipPolicy {
+  followBackReviewAfterDays: number;
+  preserveHighMatch: boolean;
+}
+
 export interface SelfInsight {
   id: string;
   title: string;
@@ -92,6 +97,7 @@ export interface AppState {
   candidates: Candidate[];
   interactions: Interaction[];
   budget: BudgetState;
+  relationshipPolicy: RelationshipPolicy;
   insights: SelfInsight[];
   selfProfile: SelfProfileState;
 }
