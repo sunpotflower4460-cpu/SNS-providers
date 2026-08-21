@@ -195,7 +195,7 @@ function App() {
       </header>
 
       <main className="page">
-        {tab === 'today' && <Today state={state} active={active} doneToday={doneToday} onOpen={onOpen} onTab={setTab} />}
+        {tab === 'today' && <Today state={state} doneToday={doneToday} onOpen={onOpen} onTab={setTab} />}
         {tab === 'discover' && <Discover state={state} candidates={active} onOpen={onOpen} onChange={setState} onDiscover={discoverCandidates} onRerank={rerankCandidates} onEnrichX={enrichXCandidates} discovering={discovering} ranking={ranking} enrichingX={enrichingX} apiNote={apiNote} />}
         {tab === 'relations' && <Relations state={state} onOpen={onOpen} onChange={setState} />}
         {tab === 'me' && <Me state={state} onAnalyze={analyzeMe} analyzing={analyzingSelf} />}
@@ -220,8 +220,8 @@ function BudgetPill({ state }: { state: AppState }) {
   return <div className="budget-pill"><span>{state.budget.monthlyLimitUsd === 0 ? 'FREE' : `${pct}%`}</span><strong>${state.budget.usedUsd.toFixed(2)}</strong></div>;
 }
 
-function Today({ state, active, doneToday, onOpen, onTab }: {
-  state: AppState; active: Candidate[]; doneToday: number; onOpen: (c: Candidate) => void; onTab: (tab: Tab) => void;
+function Today({ state, doneToday, onOpen, onTab }: {
+  state: AppState; doneToday: number; onOpen: (c: Candidate) => void; onTab: (tab: Tab) => void;
 }) {
   const queue = buildDailyQueue(state);
   const summary = queueSummary(queue);
@@ -250,11 +250,11 @@ function Today({ state, active, doneToday, onOpen, onTab }: {
 
     <DailyQueue state={state} onOpenCandidate={onOpen} onOpenMe={() => onTab('me')} />
 
-    <section className="coach-card">
+    {state.insights[0] && <section className="coach-card">
       <div className="coach-icon">✦</div>
-      <div><span className="eyebrow">AI COACH</span><h3>{state.insights[0]?.title}</h3><p>{state.insights[0]?.body}</p></div>
+      <div><span className="eyebrow">AI COACH</span><h3>{state.insights[0].title}</h3><p>{state.insights[0].body}</p></div>
       <button onClick={() => onTab('me')}>見る</button>
-    </section>
+    </section>}
   </>;
 }
 
@@ -279,6 +279,14 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
   const [platform, setPlatform] = useState<Platform>('instagram');
   const [reference, setReference] = useState('');
   const visible = candidates.filter((candidate) => filter === 'all' || candidate.platform === filter);
+  const now = Date.now();
+  const matchesFilter = (candidate: Candidate) => filter === 'all' || candidate.platform === filter;
+  const snoozedCount = state.candidates.filter((candidate) => {
+    if (candidate.skipped || !matchesFilter(candidate) || !candidate.snoozedUntil) return false;
+    const until = new Date(candidate.snoozedUntil).getTime();
+    return Number.isFinite(until) && until > now;
+  }).length;
+  const storedCount = state.candidates.filter((candidate) => !candidate.skipped && matchesFilter(candidate)).length;
 
   function addReference(value = reference) {
     if (!value.trim()) return;
@@ -325,8 +333,19 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
     <div className="segmented">
       {(['all', 'x', 'instagram'] as const).map((item) => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}>{item === 'all' ? 'All' : item === 'x' ? 'X' : 'Instagram'}</button>)}
     </div>
-    <div className="card-stack">{visible.map((candidate) => <CandidateCard key={candidate.id} candidate={candidate} onOpen={onOpen} onLater={snoozeCandidate} />)}</div>
+    {visible.length > 0 ? <div className="card-stack">{visible.map((candidate) => <CandidateCard key={candidate.id} candidate={candidate} onOpen={onOpen} onLater={snoozeCandidate} />)}</div> : <DiscoverEmptyState filter={filter} storedCount={storedCount} snoozedCount={snoozedCount} />}
   </>;
+}
+
+function DiscoverEmptyState({ filter, storedCount, snoozedCount }: { filter: 'all' | 'x' | 'instagram'; storedCount: number; snoozedCount: number }) {
+  const platform = filter === 'all' ? '候補' : filter === 'x' ? 'X候補' : 'Instagram候補';
+  if (snoozedCount > 0 && storedCount === snoozedCount) {
+    return <section className="form-card"><div className="field-title"><div><strong>今日はここまで</strong><span>{snoozedCount}件の{platform}を「明日へ」移動済みです。明日になると自動で候補へ戻ります。</span></div><b>✓</b></div></section>;
+  }
+  if (storedCount === 0) {
+    return <section className="form-card"><div className="field-title"><div><strong>{platform}はまだありません</strong><span>上のMission探索、プロフィールURL、@usernameのどれかから追加できます。</span></div><b>＋</b></div></section>;
+  }
+  return <section className="form-card"><div className="field-title"><div><strong>今日表示する{platform}はありません</strong><span>見送った候補や明日送りの候補は今日の一覧から外れています。</span></div><b>○</b></div></section>;
 }
 
 function CandidateCard({ candidate, onOpen, onLater, featured = false }: { candidate: Candidate; onOpen: (c: Candidate) => void; onLater: (c: Candidate) => void; featured?: boolean }) {
@@ -380,7 +399,7 @@ function Relations({ state, onOpen, onChange }: { state: AppState; onOpen: (c: C
 function Me({ state, onAnalyze, analyzing }: { state: AppState; onAnalyze: (profile: string, posts: string) => void; analyzing: boolean }) {
   const [profile, setProfile] = useState(state.selfProfile.profileText);
   const [posts, setPosts] = useState(state.selfProfile.recentPostsText);
-  const score = state.selfProfile.score ?? Math.min(100, 48 + state.insights.length * 8);
+  const score = state.selfProfile.score;
 
   useEffect(() => {
     setProfile(state.selfProfile.profileText);
@@ -389,7 +408,7 @@ function Me({ state, onAnalyze, analyzing }: { state: AppState; onAnalyze: (prof
 
   return <>
     <PageHeading eyebrow="ME" title="自分もMissionに近づける" text="相手探しだけでなく、自分のプロフィールと投稿の状態もAIが見ます。" />
-    <section className="score-card"><div><span>MISSION SCORE</span><strong>{score}</strong><small>/100</small></div><p>{state.selfProfile.summary || '現在地をMissionから逆算し、次に直すべきポイントを提案します。'}</p></section>
+    <section className="score-card"><div><span>MISSION SCORE</span><strong>{score == null ? '—' : score}</strong>{score != null && <small>/100</small>}</div><p>{state.selfProfile.summary || 'まだ未測定です。プロフィールや最近の投稿を入れると、Missionから現在地と次の改善点を評価します。'}</p></section>
     <section className="form-card self-analysis-card">
       <label>現在のプロフィール<textarea value={profile} onChange={(event) => setProfile(event.target.value)} placeholder="X / Instagramのプロフィール文を貼り付け" /></label>
       <label>最近の投稿<textarea value={posts} onChange={(event) => setPosts(event.target.value)} placeholder="最近の投稿を数件まとめて貼り付け" /></label>
@@ -435,7 +454,8 @@ function PageHeading({ eyebrow, title, text }: { eyebrow: string; title: string;
 }
 
 function ResultSheet({ candidate, onResolve }: { candidate: Candidate; onResolve: (action: 'followed' | 'skipped' | 'later' | 'kept') => void }) {
-  return <div className="sheet-backdrop"><section className="result-sheet"><div className="sheet-handle" /><span className="eyebrow">WELCOME BACK</span><h2>@{candidate.username} はどうしました？</h2><p>最終操作は公式SNS側で行います。ここでは関係性履歴だけ記録します。</p><div className="sheet-actions"><button onClick={() => onResolve('followed')}>フォローした</button><button onClick={() => onResolve('kept')}>交流した / 継続</button><button onClick={() => onResolve('skipped')}>今回は見送る</button><button className="muted" onClick={() => onResolve('later')}>後で</button></div></section></div>;
+  const cleanup = candidate.recommendedAction === 'unfollow_review';
+  return <div className="sheet-backdrop"><section className="result-sheet"><div className="sheet-handle" /><span className="eyebrow">WELCOME BACK</span><h2>@{candidate.username} はどうしました？</h2><p>{cleanup ? 'フォロー整理の最終操作は公式SNS側で行います。ここでは継続・解除の判断だけ記録します。' : '最終操作は公式SNS側で行います。ここでは関係性履歴だけ記録します。'}</p><div className="sheet-actions">{cleanup ? <><button onClick={() => onResolve('kept')}>フォローを継続する</button><button onClick={() => onResolve('skipped')}>フォロー解除した</button><button className="muted" onClick={() => onResolve('later')}>後で</button></> : <><button onClick={() => onResolve('followed')}>フォローした</button><button onClick={() => onResolve('kept')}>交流した / 継続</button><button onClick={() => onResolve('skipped')}>今回は見送る</button><button className="muted" onClick={() => onResolve('later')}>後で</button></>}</div></section></div>;
 }
 
 function compactNumber(value?: number) {
