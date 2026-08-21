@@ -1,3 +1,4 @@
+import { prepareFollowCycleTargets, updateFollowCycleEvidence, type TrackedXAccount } from './xFollowEvidence';
 import { getValidXAccessToken, type XOAuthEnv } from './xOAuth';
 
 export interface XOwnedEnv extends XOAuthEnv {
@@ -13,6 +14,7 @@ export interface XOwnedSyncRequest {
   maxFollowers?: number;
   maxFollowing?: number;
   maxPosts?: number;
+  trackedAccounts?: TrackedXAccount[];
   force?: boolean;
 }
 
@@ -102,6 +104,16 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
     const profile = await fetchMe(accessToken);
     if (!profile) throw new Error('X /2/users/me returned no user');
 
+    if (allocation.followers > 0) {
+      await prepareFollowCycleTargets(
+        env.DB,
+        userId,
+        paging.followersCycle,
+        paging.followersCursor,
+        body.trackedAccounts,
+      );
+    }
+
     const [followersResult, followingResult, postsResult] = await Promise.all([
       allocation.followers > 0 ? fetchUsersPage(accessToken, profile.id, 'followers', allocation.followers, paging.followersCursor) : emptyList<XUser>(),
       allocation.following > 0 ? fetchUsersPage(accessToken, profile.id, 'following', allocation.following, paging.followingCursor) : emptyList<XUser>(),
@@ -113,6 +125,16 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
     const postCount = postsResult.data.length;
     const actualCost = userReadRate + (followerCount + followingCount + postCount) * ownedReadRate;
     await finalizeReservation(env, reservationId, actualCost, 1 + followerCount + followingCount + postCount);
+
+    const followEvidence = allocation.followers > 0
+      ? await updateFollowCycleEvidence(
+        env.DB,
+        userId,
+        paging.followersCycle,
+        followersResult.data.map((user) => ({ id: user.id, username: user.username })),
+        followersResult.nextToken,
+      )
+      : null;
 
     const nextPaging = advancePaging(paging, allocation, followersResult.nextToken, followingResult.nextToken);
     await savePaging(env, userId, nextPaging);
@@ -152,6 +174,7 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
         },
         posts: { fetched: postCount, complete: !postsResult.nextToken },
       },
+      followEvidence,
       requested: allocation,
       pacing: {
         daysRemaining: daysRemainingInUtcMonth(),
