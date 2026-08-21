@@ -1,6 +1,6 @@
 import { apiBaseUrl, apiConfigured } from './api';
 import { getSyncToken } from './sync';
-import type { PublicMetrics } from './types';
+import type { Candidate, PublicMetrics } from './types';
 
 export interface XOAuthStatus {
   configured: boolean;
@@ -40,6 +40,14 @@ interface XCoverageSlice {
   rotated?: boolean;
 }
 
+export interface XFollowEvidence {
+  complete: boolean;
+  cycle: number;
+  targetCount: number;
+  seenKeys: string[];
+  unseenKeys: string[];
+}
+
 export interface XOwnedSyncResponse {
   enabled: boolean;
   source: 'x' | 'cache' | 'disabled';
@@ -55,6 +63,7 @@ export interface XOwnedSyncResponse {
     following: XCoverageSlice;
     posts: { fetched: number; complete: boolean };
   };
+  followEvidence?: XFollowEvidence | null;
   requested?: { followers: number; following: number; posts: number };
   pacing?: {
     daysRemaining: number;
@@ -82,9 +91,17 @@ export async function disconnectXOAuth(userId = 'local-user') {
   return request<{ ok: boolean }>(`/api/x/oauth/disconnect?userId=${encodeURIComponent(userId)}`, { method: 'DELETE' }, token);
 }
 
-export async function syncOwnedXData(monthlyLimitUsd: number, userId = 'local-user') {
+export async function syncOwnedXData(monthlyLimitUsd: number, candidates: Candidate[] = [], userId = 'local-user') {
   if (!apiConfigured) throw new Error('Worker URLが設定されていません');
   const token = requiredControlToken();
+  const trackedAccounts = candidates
+    .filter((candidate) => candidate.platform === 'x' && Boolean(candidate.followedAt) && !candidate.skipped)
+    .slice(0, 500)
+    .map((candidate) => ({
+      key: candidate.id,
+      username: candidate.username,
+      platformUserId: candidate.platformUserId || null,
+    }));
   return request<XOwnedSyncResponse>('/api/x/owned/sync', {
     method: 'POST',
     body: JSON.stringify({
@@ -93,6 +110,7 @@ export async function syncOwnedXData(monthlyLimitUsd: number, userId = 'local-us
       maxFollowers: 100,
       maxFollowing: 100,
       maxPosts: 20,
+      trackedAccounts,
     }),
   }, token);
 }
