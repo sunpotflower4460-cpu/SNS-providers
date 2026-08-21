@@ -1,5 +1,6 @@
 import api from './index';
 import { discoverSocialProfiles } from './discovery';
+import { syncInstagramEngagers, type InstagramOwnedSyncRequest } from './instagramOwned';
 import { completeXOAuth, disconnectXOAuth, startXOAuth, xOAuthStatus } from './xOAuth';
 import { syncOwnedXData, type XOwnedSyncRequest } from './xOwned';
 
@@ -16,6 +17,9 @@ interface Env {
   X_USER_READ_USD?: string;
   X_OWNED_READ_USD?: string;
   X_OWNED_READ_ELIGIBLE?: string;
+  INSTAGRAM_ACCESS_TOKEN?: string;
+  INSTAGRAM_USER_ID?: string;
+  INSTAGRAM_API_VERSION?: string;
   DEFAULT_MONTHLY_BUDGET_USD?: string;
   ALLOWED_ORIGIN?: string;
   [key: string]: unknown;
@@ -42,6 +46,7 @@ export default {
       '/api/x/oauth/status',
       '/api/x/oauth/disconnect',
       '/api/x/owned/sync',
+      '/api/instagram/engagers/sync',
     ].includes(url.pathname)) {
       return new Response(null, { status: 204, headers: corsHeaders(request, env) });
     }
@@ -99,6 +104,19 @@ export default {
         return json(result, 200, request, env);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Owned X sync failed';
+        return json({ error: message }, 400, request, env);
+      }
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/instagram/engagers/sync') {
+      const authorized = await authorizeSync(request, env);
+      if (!authorized.ok) return json({ error: authorized.reason }, authorized.status, request, env);
+      try {
+        const body = await request.json<InstagramOwnedSyncRequest>();
+        const result = await syncInstagramEngagers(env, body || {});
+        return json(result, 200, request, env);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Instagram engager sync failed';
         return json({ error: message }, 400, request, env);
       }
     }
