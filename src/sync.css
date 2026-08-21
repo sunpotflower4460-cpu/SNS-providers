@@ -1,0 +1,32 @@
+.sync-card input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 13px;
+  padding: 10px 12px;
+  color: #edf3fc;
+  background: rgba(255,255,255,.035);
+  outline: 0;
+}
+.sync-card input:focus { border-color: rgba(121,231,197,.32); }
+.sync-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0,1fr));
+  gap: 8px;
+}
+.sync-actions .primary-button { grid-column: 1 / -1; }
+.sync-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255,255,255,.06);
+}
+.sync-footer small { color: #8494a9; font-size: 8px; }
+.sync-footer button { border: 0; background: transparent; color: #718197; font-size: 8px; }
+.sync-note { color: #65758c !important; font-size: 8px !important; line-height: 1.55; }
+@media (max-width: 380px) {
+  .sync-actions { grid-template-columns: 1fr; }
+  .sync-actions .primary-button { grid-column: auto; }
+}
