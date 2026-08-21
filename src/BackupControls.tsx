@@ -22,7 +22,7 @@ export default function BackupControls({ state, onRestore }: { state: AppState; 
   }
 
   return <>
-    <XAccountControls />
+    <XAccountControls state={state} onChange={onRestore} />
     <section className="form-card backup-card">
       <div className="field-title"><div><strong>ローカルデータ</strong><span>Mission・候補・関係性・設定を持ち運ぶ</span></div><b>JSON</b></div>
       <div className="backup-actions">
