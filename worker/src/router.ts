@@ -1,6 +1,7 @@
 import api from './index';
 import { discoverSocialProfiles } from './discovery';
 import { completeXOAuth, disconnectXOAuth, startXOAuth, xOAuthStatus } from './xOAuth';
+import { syncOwnedXData, type XOwnedSyncRequest } from './xOwned';
 
 interface Env {
   DB: D1Database;
@@ -12,6 +13,10 @@ interface Env {
   X_OAUTH_CALLBACK_URL?: string;
   PWA_RETURN_URL?: string;
   OAUTH_TOKEN_ENCRYPTION_KEY_B64?: string;
+  X_USER_READ_USD?: string;
+  X_OWNED_READ_USD?: string;
+  X_OWNED_READ_ELIGIBLE?: string;
+  DEFAULT_MONTHLY_BUDGET_USD?: string;
   ALLOWED_ORIGIN?: string;
   [key: string]: unknown;
 }
@@ -30,14 +35,23 @@ interface StateSyncRequest {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    if (request.method === 'OPTIONS' && ['/api/discover/social', '/api/sync/state', '/api/x/oauth/status', '/api/x/oauth/disconnect'].includes(url.pathname)) {
+    if (request.method === 'OPTIONS' && [
+      '/api/discover/social',
+      '/api/sync/state',
+      '/api/x/oauth/start',
+      '/api/x/oauth/status',
+      '/api/x/oauth/disconnect',
+      '/api/x/owned/sync',
+    ].includes(url.pathname)) {
       return new Response(null, { status: 204, headers: corsHeaders(request, env) });
     }
 
-    if (request.method === 'GET' && url.pathname === '/api/x/oauth/start') {
+    if (request.method === 'POST' && url.pathname === '/api/x/oauth/start') {
+      const authorized = await authorizeSync(request, env);
+      if (!authorized.ok) return json({ error: authorized.reason }, authorized.status, request, env);
       try {
         const authorizeUrl = await startXOAuth(env);
-        return Response.redirect(authorizeUrl, 302);
+        return json({ authorizeUrl }, 200, request, env);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'X OAuth start failed';
         return json({ error: message }, 503, request, env);
@@ -65,11 +79,26 @@ export default {
     }
 
     if (request.method === 'DELETE' && url.pathname === '/api/x/oauth/disconnect') {
+      const authorized = await authorizeSync(request, env);
+      if (!authorized.ok) return json({ error: authorized.reason }, authorized.status, request, env);
       try {
         const userId = sanitizeUserId(url.searchParams.get('userId') || 'local-user');
         return json(await disconnectXOAuth(env, userId), 200, request, env);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'X OAuth disconnect failed';
+        return json({ error: message }, 400, request, env);
+      }
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/x/owned/sync') {
+      const authorized = await authorizeSync(request, env);
+      if (!authorized.ok) return json({ error: authorized.reason }, authorized.status, request, env);
+      try {
+        const body = await request.json<XOwnedSyncRequest>();
+        const result = await syncOwnedXData(env, body || {});
+        return json(result, 200, request, env);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Owned X sync failed';
         return json({ error: message }, 400, request, env);
       }
     }
@@ -139,12 +168,12 @@ export default {
 
 async function authorizeSync(request: Request, env: Env) {
   const expected = (env.SYNC_TOKEN_SHA256 || '').trim().toLowerCase();
-  if (!/^[a-f0-9]{64}$/.test(expected)) return { ok: false as const, status: 503, reason: 'State sync is not configured.' };
+  if (!/^[a-f0-9]{64}$/.test(expected)) return { ok: false as const, status: 503, reason: 'Personal control token is not configured.' };
   const authorization = request.headers.get('authorization') || '';
   const token = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
-  if (!token || token.length > 512) return { ok: false as const, status: 401, reason: 'Sync authorization required.' };
+  if (!token || token.length > 512) return { ok: false as const, status: 401, reason: 'Personal control authorization required.' };
   const actual = await sha256Hex(token);
-  if (!constantTimeEqual(actual, expected)) return { ok: false as const, status: 401, reason: 'Invalid sync authorization.' };
+  if (!constantTimeEqual(actual, expected)) return { ok: false as const, status: 401, reason: 'Invalid personal control authorization.' };
   return { ok: true as const, status: 200, reason: '' };
 }
 
