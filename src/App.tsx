@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { analyzeSelfProfile, apiConfigured, enrichXProfiles, fetchBudget, rankCandidates } from './api';
-import { addCandidateFromReference, applyRankResults, applySelfAnalysis, applyXProfiles, loadState, recordInteraction, saveState, syncBudget, updateMission, updateSelfProfileInputs } from './store';
+import { addCandidateFromReference, applyRankResults, applySelfAnalysis, applyXProfiles, loadState, recordInteraction, saveState, setFollowBackStatus, syncBudget, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
 import { copyDraft, openCandidate, platformLabel } from './social';
 import type { AppState, Candidate, Mission, Platform } from './types';
 
@@ -155,7 +155,7 @@ function App() {
       <main className="page">
         {tab === 'today' && <Today state={state} active={active} doneToday={doneToday} onOpen={onOpen} onTab={setTab} />}
         {tab === 'discover' && <Discover state={state} candidates={active} onOpen={onOpen} onChange={setState} onRerank={rerankCandidates} onEnrichX={enrichXCandidates} ranking={ranking} enrichingX={enrichingX} apiNote={apiNote} />}
-        {tab === 'relations' && <Relations state={state} onOpen={onOpen} />}
+        {tab === 'relations' && <Relations state={state} onOpen={onOpen} onChange={setState} />}
         {tab === 'me' && <Me state={state} onAnalyze={analyzeMe} analyzing={analyzingSelf} />}
         {tab === 'settings' && <Settings state={state} onChange={setState} />}
       </main>
@@ -280,7 +280,7 @@ function Discover({ state, candidates, onOpen, onChange, onRerank, onEnrichX, ra
 }
 
 function CandidateCard({ candidate, onOpen, featured = false }: { candidate: Candidate; onOpen: (c: Candidate) => void; featured?: boolean }) {
-  const buttonLabel = candidate.recommendedAction === 'reply' ? `${platformLabel(candidate.platform)}で返信` : `${platformLabel(candidate.platform)}で見る`;
+  const buttonLabel = candidate.recommendedAction === 'reply' ? `${platformLabel(candidate.platform)}で返信` : candidate.recommendedAction === 'unfollow_review' ? `${platformLabel(candidate.platform)}で整理確認` : `${platformLabel(candidate.platform)}で見る`;
   return <article className={featured ? 'candidate-card featured' : 'candidate-card'}>
     <div className="candidate-head">
       <div className={`platform-avatar ${candidate.platform}`}>{candidate.platform === 'x' ? 'X' : '◎'}</div>
@@ -300,20 +300,30 @@ function CandidateCard({ candidate, onOpen, featured = false }: { candidate: Can
   </article>;
 }
 
-function Relations({ state, onOpen }: { state: AppState; onOpen: (c: Candidate) => void }) {
+function Relations({ state, onOpen, onChange }: { state: AppState; onOpen: (c: Candidate) => void; onChange: (state: AppState) => void }) {
   const following = state.candidates.filter((candidate) => candidate.stage !== 'discovered');
+  const cleanup = following.filter((candidate) => candidate.recommendedAction === 'unfollow_review');
   return <>
-    <PageHeading eyebrow="RELATIONS" title="関係を育てる" text="フォロー数ではなく、関係の深まりを覚えておきます。" />
+    <PageHeading eyebrow="RELATIONS" title="関係を育てる" text="フォロー数ではなく、関係の深まりと整理タイミングを覚えておきます。" />
     <div className="relation-summary">
       <div><strong>{following.length}</strong><span>tracked</span></div>
-      <div><strong>{following.filter((c) => c.followBack).length}</strong><span>mutual</span></div>
-      <div><strong>{following.filter((c) => c.stage === 'engaged' || c.stage === 'conversation').length}</strong><span>engaged</span></div>
+      <div><strong>{following.filter((c) => c.followBack === true).length}</strong><span>mutual</span></div>
+      <div><strong>{cleanup.length}</strong><span>review</span></div>
     </div>
-    <div className="relation-list">{following.map((candidate) => <button className="relation-row" key={candidate.id} onClick={() => onOpen(candidate)}>
-      <div className={`mini-avatar ${candidate.platform}`}>{candidate.platform === 'x' ? 'X' : '◎'}</div>
-      <div><strong>{candidate.displayName}</strong><span>@{candidate.username} · {candidate.stage}</span></div>
-      <div className="relation-score">{candidate.relationshipScore}<small>REL</small></div>
-    </button>)}</div>
+    {cleanup.length > 0 && <section className="cleanup-banner"><span className="eyebrow">FOLLOW REVIEW</span><strong>{cleanup.length}人を整理候補として確認</strong><p>自動解除はしません。Mission一致度と交流履歴を見て、公式アプリで最終判断します。</p></section>}
+    <div className="relation-list">{following.map((candidate) => <article className={candidate.recommendedAction === 'unfollow_review' ? 'relation-card review' : 'relation-card'} key={candidate.id}>
+      <button className="relation-main" onClick={() => onOpen(candidate)}>
+        <div className={`mini-avatar ${candidate.platform}`}>{candidate.platform === 'x' ? 'X' : '◎'}</div>
+        <div><strong>{candidate.displayName}</strong><span>@{candidate.username} · {candidate.stage}</span></div>
+        <div className="relation-score">{candidate.relationshipScore}<small>REL</small></div>
+      </button>
+      {candidate.strategy && <p className="relation-advice">{candidate.strategy}</p>}
+      <div className="followback-controls" role="group" aria-label={`${candidate.username} follow back status`}>
+        <button className={candidate.followBack === true ? 'active' : ''} onClick={() => onChange(setFollowBackStatus(state, candidate.id, true))}>相互</button>
+        <button className={candidate.followBack === false ? 'active warn' : ''} onClick={() => onChange(setFollowBackStatus(state, candidate.id, false))}>フォロバなし</button>
+        <button className={candidate.followBack == null ? 'active' : ''} onClick={() => onChange(setFollowBackStatus(state, candidate.id, null))}>未確認</button>
+      </div>
+    </article>)}</div>
   </>;
 }
 
@@ -347,13 +357,22 @@ function Me({ state, onAnalyze, analyzing }: { state: AppState; onAnalyze: (prof
 function Settings({ state, onChange }: { state: AppState; onChange: (state: AppState) => void }) {
   const [mission, setMission] = useState<Mission>(state.mission);
   const [limit, setLimit] = useState(state.budget.monthlyLimitUsd);
+  const [reviewDays, setReviewDays] = useState(state.relationshipPolicy.followBackReviewAfterDays);
+  const [preserveHighMatch, setPreserveHighMatch] = useState(state.relationshipPolicy.preserveHighMatch);
   function save() {
     const next = updateMission(state, mission);
-    onChange({ ...next, budget: { ...next.budget, hardLimit: true, monthlyLimitUsd: limit, mode: limit === 0 ? 'free' : limit <= 1 ? 'eco' : limit <= 3 ? 'balanced' : 'growth' } });
+    const withPolicy = updateRelationshipPolicy(next, { followBackReviewAfterDays: reviewDays, preserveHighMatch });
+    onChange({ ...withPolicy, budget: { ...withPolicy.budget, hardLimit: true, monthlyLimitUsd: limit, mode: limit === 0 ? 'free' : limit <= 1 ? 'eco' : limit <= 3 ? 'balanced' : 'growth' } });
   }
   return <>
     <PageHeading eyebrow="SETTINGS" title="AIに目的地を教える" text="ここが推薦・文章・自己分析すべての判断軸になります。" />
     <section className="form-card"><label>Mission<textarea value={mission.text} rows={5} onChange={(e) => setMission({ ...mission, text: e.target.value })} /></label><label>一番大事なゴール<input value={mission.primaryGoal} onChange={(e) => setMission({ ...mission, primaryGoal: e.target.value })} /></label><label>Communication DNA<textarea value={mission.communicationDNA} rows={4} onChange={(e) => setMission({ ...mission, communicationDNA: e.target.value })} /></label></section>
+    <section className="form-card relationship-settings">
+      <div className="field-title"><div><strong>フォロー整理ポリシー</strong><span>フォロバだけで機械的に解除しない</span></div><b>{reviewDays}日</b></div>
+      <input className="range" type="range" min="7" max="90" step="1" value={reviewDays} onChange={(e) => setReviewDays(Number(e.target.value))} />
+      <div className="range-labels"><span>7日</span><span>30日</span><span>90日</span></div>
+      <button className="policy-toggle" onClick={() => setPreserveHighMatch((value) => !value)}><span><strong>高Mission Matchは残す</strong><small>フォロバなしでも相性80以上や交流中の人は継続候補</small></span><i className={preserveHighMatch ? 'toggle on' : 'toggle'} /></button>
+    </section>
     <section className="form-card budget-settings"><div className="field-title"><div><strong>月間AI/API予算</strong><span>機能を削らず、外部取得量を自動調整</span></div><b>${limit}</b></div><input className="range" type="range" min="0" max="10" step="1" value={limit} onChange={(e) => setLimit(Number(e.target.value))} /><div className="range-labels"><span>$0</span><span>$3 recommended</span><span>$10</span></div><div className="hard-limit"><span><strong>HARD LIMIT</strong><small>常時ON。設定額を超える有料リクエストを拒否</small></span><i className="toggle on" /></div><div className="budget-breakdown"><span>X <b>${state.budget.xUsd.toFixed(2)}</b></span><span>LLM <b>${state.budget.llmUsd.toFixed(2)}</b></span><span>Search <b>${state.budget.searchUsd.toFixed(2)}</b></span></div></section>
     <button className="save-button" onClick={save}>設定を保存</button>
   </>;
