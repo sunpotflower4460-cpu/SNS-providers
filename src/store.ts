@@ -99,7 +99,10 @@ export function updateMission(state: AppState, mission: Mission): AppState {
 }
 
 export function updateRelationshipPolicy(state: AppState, policy: RelationshipPolicy): AppState {
-  return refreshRelationshipAdvice({ ...state, relationshipPolicy: policy });
+  return refreshRelationshipAdvice({
+    ...state,
+    relationshipPolicy: { ...state.relationshipPolicy, ...policy },
+  });
 }
 
 export function setFollowBackStatus(state: AppState, candidateId: string, followBack: boolean | null): AppState {
