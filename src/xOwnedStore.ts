@@ -9,17 +9,25 @@ export function applyOwnedXSyncWithDiscovery(state: AppState, result: XOwnedSync
   synced = applyFullCycleFollowEvidence(synced, result);
   if (!result.enabled || !result.followers?.length) return synced;
 
-  const existing = new Set(synced.candidates.map((candidate) => `${candidate.platform}:${candidate.username.toLowerCase()}`));
+  const existingByUsername = new Map(
+    synced.candidates
+      .filter((candidate) => candidate.platform === 'x')
+      .map((candidate) => [candidate.username.toLowerCase(), candidate]),
+  );
   const followingSet = new Set((result.following || []).map((user) => user.username.toLowerCase()));
   const additions: Candidate[] = [];
+  const reactivated = new Set<string>();
 
   for (const follower of result.followers) {
-    if (additions.length >= MAX_NEW_INBOUND_CANDIDATES) break;
-    const key = `x:${follower.username.toLowerCase()}`;
-    if (existing.has(key)) continue;
-    existing.add(key);
-    const mutual = followingSet.has(follower.username.toLowerCase());
-    additions.push({
+    const username = follower.username.toLowerCase();
+    const existing = existingByUsername.get(username);
+    if (existing) {
+      if (existing.skipped) reactivated.add(existing.id);
+      continue;
+    }
+    if (additions.length >= MAX_NEW_INBOUND_CANDIDATES) continue;
+    const mutual = followingSet.has(username);
+    const candidate: Candidate = {
       id: `x-${crypto.randomUUID()}`,
       platform: 'x',
       username: follower.username,
@@ -39,10 +47,30 @@ export function applyOwnedXSyncWithDiscovery(state: AppState, result: XOwnedSync
       tags: ['inbound-follower', 'x-owned-sync'],
       recommendedAction: 'review',
       followBack: mutual ? true : null,
-    });
+    };
+    additions.push(candidate);
+    existingByUsername.set(username, candidate);
   }
 
-  return additions.length ? { ...synced, candidates: [...additions, ...synced.candidates] } : synced;
+  const existingCandidates = reactivated.size
+    ? synced.candidates.map((candidate) => {
+      if (!reactivated.has(candidate.id)) return candidate;
+      return {
+        ...candidate,
+        skipped: false,
+        stage: candidate.stage === 'discovered' || candidate.stage === 'interested' ? 'recognized' as const : candidate.stage,
+        followBack: true,
+        recommendedAction: 'review' as const,
+        draft: undefined,
+        reason: '過去に候補から外していましたが、X公式同期で新しいフォロー接点を確認したため再確認候補へ戻しました。',
+        strategy: '新しい実接点を優先し、プロフィールと最近の発信を確認してから今後の交流を判断します。',
+      };
+    })
+    : synced.candidates;
+
+  return additions.length || reactivated.size
+    ? { ...synced, candidates: [...additions, ...existingCandidates] }
+    : synced;
 }
 
 function applyFullCycleFollowEvidence(state: AppState, result: XOwnedSyncResponse): AppState {
