@@ -95,6 +95,12 @@ CREATE TABLE IF NOT EXISTS budget_ledger (
   occurred_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS state_snapshots (
+  user_id TEXT PRIMARY KEY,
+  state_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_candidates_user_match ON candidates(user_id, mission_match DESC);
 CREATE INDEX IF NOT EXISTS idx_candidates_stage ON candidates(user_id, stage);
 CREATE INDEX IF NOT EXISTS idx_interactions_candidate ON interactions(candidate_id, occurred_at DESC);
