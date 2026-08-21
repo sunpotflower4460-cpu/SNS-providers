@@ -1,0 +1,30 @@
+.workload-card { gap: 14px; }
+.workload-advisor {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(121,231,197,.12);
+  border-radius: 14px;
+  background: rgba(121,231,197,.045);
+}
+.workload-advisor > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.workload-advisor span { color: #7f91a8; font-size: 8px; letter-spacing: .08em; text-transform: uppercase; }
+.workload-advisor strong { color: #bdeede; font-size: 14px; }
+.workload-advisor p { margin: 0; color: #8293a9; font-size: 9px; line-height: 1.55; }
+.workload-slider { display: grid; gap: 7px; }
+.workload-slider > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.workload-slider > div > span { display: grid; gap: 2px; }
+.workload-slider strong { color: #d4deeb; font-size: 10px; }
+.workload-slider small { color: #65758c; font-size: 8px; }
+.workload-slider b { min-width: 32px; text-align: right; color: #79e7c5; font-size: 12px; }
+.workload-warning { color: #6e7e93 !important; font-size: 8px !important; line-height: 1.6; }
