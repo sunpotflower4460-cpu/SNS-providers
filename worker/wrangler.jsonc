@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "social-mission-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-21",
+  "vars": {
+    "DEFAULT_MONTHLY_BUDGET_USD": "3",
+    "GROQ_MODEL": "openai/gpt-oss-20b",
+    "GROQ_BILLING_MODE": "free",
+    "DEEPSEEK_BASE_URL": "https://api.deepseek.com",
+    "DEEPSEEK_MODEL": "deepseek-chat"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "social-mission",
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID"
+    }
+  ]
+}
