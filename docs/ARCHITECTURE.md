@@ -7,15 +7,17 @@ The product is a mobile-first PWA that helps a user grow meaningful social relat
 ## Core loop
 
 1. Mission and Communication DNA define the goal and conversational style.
-2. Candidate sources add public profiles to a reusable pool.
-3. Duplicate filtering and cached state prevent needless provider reads.
-4. The AI router ranks candidates against Mission and returns recommended action, rationale, strategy and limited drafts when context is sufficient.
+2. Candidate sources add reusable relationship signals and public profiles to the candidate pool.
+3. Duplicate filtering, local prefiltering and cached state prevent needless provider/model reads.
+4. The AI router ranks the strongest candidate subset against Mission and returns recommended action, rationale, strategy and limited drafts when context is sufficient.
 5. A local-first Daily Queue mixes new connections, conversations, light engagement, self-improvement and follow cleanup so the day is not dominated by raw following volume.
-6. The PWA hands off to the official social surface.
-7. On return, the user records the result in one tap.
-8. Completed candidates roll out of the current Daily Queue and relationship state feeds future advice.
-9. The Me surface analyzes the user's own profile/recent posts against the same Mission.
-10. Optional read-only X sync can refresh the user's own profile/posts/follow graph and seed inbound followers into the same candidate loop.
+6. User-configured workload caps and a local workload advisor control how much work appears without treating any number as a platform safety threshold.
+7. The PWA hands off to the official social surface.
+8. On return, the user records the result in one tap.
+9. Completed candidates roll out of the current Daily Queue and relationship state feeds future advice.
+10. The Me surface analyzes the user's own profile/recent posts against the same Mission.
+11. Optional read-only X sync can refresh the user's own profile/posts/follow graph and seed inbound followers into the same candidate loop.
+12. Optional Instagram Professional sync can turn people who already commented on the user's own media into higher-signal relationship candidates.
 
 ## Client
 
@@ -24,14 +26,20 @@ The product is a mobile-first PWA that helps a user grow meaningful social relat
 - local-first AppState for the initial single-user phase
 - Service Worker for app-shell resilience
 - GitHub Pages subpath-safe deployment
+- production CSP restricts network connections to the configured Worker origin; CI verifies the built binding
 - X/Instagram official-surface handoff for final social actions
+- Instagram reply candidates may retain the original engagement-post permalink so the user returns to the real context
 - clipboard/profile-URL candidate import for iPhone-friendly operation
 - local Daily Queue generation without a mandatory daily LLM call
+- user-configurable daily workload caps by action family
+- deterministic local workload suggestion from candidate quality and budget state
+- zero-cost lexical/relationship prefilter before LLM ranking
 - JSON backup/restore
 - optional manually triggered D1 snapshot push/pull
 - read-only X connection/sync controls
+- Instagram Professional engager-sync controls
 
-Provider secrets and X OAuth tokens are never shipped in the browser bundle. The personal control key is entered by the user at runtime and stored separately from AppState, so it is not included in JSON backups.
+Provider secrets, Instagram access tokens and X OAuth tokens are never shipped in the browser bundle. The personal control key is entered by the user at runtime and stored separately from AppState, so it is not included in JSON backups.
 
 ## Server
 
@@ -39,7 +47,7 @@ Cloudflare Workers + D1 is the low-cost backend boundary.
 
 Implemented server responsibilities:
 
-- provider API keys
+- provider API keys and Instagram server-side credentials
 - free-first Tavily public-web profile discovery
 - Mission ranking through free Groq when configured, optional paid Groq/DeepSeek fallback, and local fallback
 - official X public-profile enrichment when explicitly enabled
@@ -49,16 +57,19 @@ Implemented server responsibilities:
 - 20-hour owned-X response cache
 - rotating follower/following pagination cursors across syncs
 - monthly-budget pacing for owned-X resource allocation
+- official Instagram Professional owned-media/comment engager reads
+- 12-hour Instagram engager response cache
 - budget ledger and HARD LIMIT enforcement
 - pre-request budget reservations for paid calls
 - token-gated state snapshots for personal multi-device transfer
 
 Future server responsibilities:
 
-- Instagram permitted-source adapters beyond public-web discovery
+- Instagram comment webhooks to replace most manual polling in a larger deployment
+- other explicitly permitted first-party Instagram signals (for example mentions) where they improve relationship relevance
 - scheduled notification delivery
 - conflict-aware/offline-first state synchronization
-- more sophisticated accumulated full-cycle follow-graph reconciliation
+- more sophisticated accumulated full-cycle X follow-graph reconciliation
 
 ## Candidate discovery
 
@@ -69,11 +80,14 @@ Discovery is adapter-based. Current sources are:
 - Tavily public-web search when `TAVILY_BILLING_MODE=free`
 - official X User Lookup for known usernames when a bearer token and explicit current read rate are configured
 - read-only owned-X followers already returned by the user's connected account sync
+- Instagram Professional commenters on media owned by the configured account
 - previously stored candidates and relationship history
 
 The Tavily adapter searches only the public web, canonicalizes profile-shaped X/Instagram URLs, rejects obvious non-profile paths, and sends discovered profiles into the candidate pool for later Mission ranking. It is not a social-platform DOM crawler.
 
 Owned-X inbound followers are candidate **seeds**, not automatic follow targets. They enter with a preliminary review state and should still be ranked against Mission before strategic outreach.
+
+Instagram commenters are different from cold discovery: they have already chosen to interact with the user's content. They may enter at an `engaged` relationship stage with higher preliminary relationship value. The PWA preserves the related post URL when available so the recommended next action can return the user to the real conversation rather than inventing context.
 
 ## Read-only X account boundary
 
@@ -103,18 +117,49 @@ Owned-X sync is designed to spread useful reads across the month rather than exh
 
 A missing user in a partial follower page is **never** treated as proof of no follow-back. Automatic `followBack=false` is allowed only when a single first page proves complete coverage. Broader full-cycle negative reconciliation remains future work because a rotating partial page is not sufficient evidence by itself.
 
-## AI router
+## Instagram Professional boundary
+
+The Instagram owned-engager adapter is intentionally narrow.
+
+- It requires a configured Instagram Professional account (Creator or Business), server-side access token, account ID and explicit current Graph API version.
+- It reads a bounded set of media owned by that account and a bounded set of comments on those media through the official API.
+- It extracts commenter identity/username, comment text and the related media permalink for relationship context.
+- It does not crawl arbitrary Instagram profiles or enumerate consumer accounts.
+- It does not request or perform follow/like/DM automation.
+- The personal control key protects the sync route.
+- The access token stays Worker-side and is never returned to the PWA or backup JSON.
+- A 12-hour D1 cache is checked before another Meta read.
+
+The Meta app/token must hold the permissions required by the selected current Instagram Login setup. Permission names and review requirements can change, so the implementation keeps token/version configuration outside source code and the deployment checklist must verify Meta's current requirements before enabling production use.
+
+## AI router and zero-cost prefilter
 
 Current order of preference for ranking/self-analysis:
 
-1. configured free Groq route
-2. budget-reserved paid Groq when explicitly configured with rates
-3. budget-reserved DeepSeek fallback when explicitly configured with rates
-4. deterministic local heuristic scoring
+1. zero-cost client prefilter chooses the strongest candidate subset from the current batch
+2. configured free Groq route
+3. budget-reserved paid Groq when explicitly configured with rates
+4. budget-reserved DeepSeek fallback when explicitly configured with rates
+5. deterministic local heuristic scoring
 
-The app combines candidate score, recommended action, strategic rationale and a limited number of individualized reply/DM drafts in one pass to reduce token use. The Daily Queue itself is generated locally from stored state.
+The client prefilter uses Mission lexical overlap, existing Mission Match, available candidate context, relationship stage and action value. It is not a replacement for semantic model ranking; it reduces obvious low-value token spend before the model is called.
+
+The app combines candidate score, recommended action, strategic rationale and a limited number of individualized reply/DM drafts in one AI pass to reduce token use. The Daily Queue and workload suggestion are generated locally from stored state.
 
 Provider availability, prices and free tiers change. Free/paid mode and paid rates are server configuration rather than hard-coded product truth.
+
+## Workload invariant
+
+The user may set local caps for:
+
+- total Daily Queue actions
+- new-connection candidates
+- conversation candidates
+- light-engagement candidates
+- follow-cleanup reviews
+- self-improvement tasks
+
+These values are **productivity and quality controls only**. They are not presented as X/Instagram safe-action thresholds, they do not automate the action, and they are not used to evade platform enforcement. The local advisor can propose a smaller/larger workload from candidate quality and remaining app budget, but the final action still happens manually in the official platform.
 
 ## Budget invariant
 
@@ -125,7 +170,8 @@ Provider availability, prices and free tiers change. Free/paid mode and paid rat
 - Every paid call reserves a conservative estimated amount before the network request and reconciles it afterward.
 - If a network failure happens after paid X work may already have occurred, the conservative reservation may be retained rather than risk under-counting spend.
 - Free-provider usage may be logged with cost `$0`.
-- Core UI, local candidates, Daily Queue, relationship management and manual handoff continue to work with all paid providers disabled.
+- Instagram owned-comment sync is tracked as `$0` application cost but remains bounded/cached for rate-limit discipline.
+- Core UI, local candidates, workload advisor, Daily Queue, relationship management and manual handoff continue to work with all paid providers disabled.
 
 The product should degrade acquisition volume, refresh frequency and model depth before degrading core features.
 
@@ -158,10 +204,10 @@ Primary state remains local-first so the PWA works before any backend setup.
 
 Two portability options exist:
 
-1. **JSON backup** — manual export/import; no provider keys, social passwords, OAuth tokens or personal control key are included.
+1. **JSON backup** — manual export/import; no provider keys, social passwords, OAuth tokens, Instagram access token or personal control key are included.
 2. **D1 snapshot sync** — optional manual push/pull gated by a user-chosen token whose SHA-256 hash is configured on the Worker.
 
-D1 state snapshot sync provides access control but **does not application-encrypt the state JSON at rest**. This is separate from X OAuth token storage, which is application-encrypted with AES-GCM.
+D1 state snapshot sync provides access control but **does not application-encrypt the state JSON at rest**. This is separate from X OAuth token storage, which is application-encrypted with AES-GCM. Instagram access tokens remain Worker secrets rather than state fields.
 
 ## Social safety invariant
 
@@ -171,5 +217,6 @@ D1 state snapshot sync provides access control but **does not application-encryp
 - No automatic bulk follow/unfollow behavior.
 - No follower-churn recommendation logic.
 - No write scope in the X OAuth connection used for account analysis.
+- Instagram integration reads only explicitly configured, permitted first-party Professional-account surfaces.
 - Final follow/like/reply/DM/unfollow action is user-initiated in the official social experience.
 - Discovery/ranking may optimize relevance and relationship value, not evasion of platform enforcement.
