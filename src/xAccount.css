@@ -1,0 +1,23 @@
+.x-account-card .field-title > b { color: #9ca8ba; }
+.x-account-card .field-title > b.connected { color: #79e7c5; }
+.x-scope-note {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid rgba(121,231,197,.12);
+  border-radius: 14px;
+  background: rgba(121,231,197,.045);
+}
+.x-scope-note strong { color: #bdeede; font-size: 10px; }
+.x-scope-note span { color: #8393a9; font-size: 8px; line-height: 1.55; }
+.x-connection-details {
+  display: grid;
+  gap: 6px;
+  padding: 10px 0;
+  border-top: 1px solid rgba(255,255,255,.06);
+  border-bottom: 1px solid rgba(255,255,255,.06);
+}
+.x-connection-details span { color: #8494a9; font-size: 9px; line-height: 1.5; }
+.x-connection-details b { color: #c8d3e2; margin-right: 5px; }
+.x-account-actions { display: grid; }
+.x-account-warning { color: #65758c !important; font-size: 8px !important; line-height: 1.55; }
