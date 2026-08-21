@@ -30,13 +30,16 @@ export function buildDailyQueue(state: AppState): DailyQueueItem[] {
       .filter((interaction) => localDateKey(new Date(interaction.at)) === today)
       .map((interaction) => interaction.candidateId),
   );
+  const selfAnalyzedToday = state.selfProfile.analyzedAt
+    ? localDateKey(new Date(state.selfProfile.analyzedAt)) === today
+    : false;
 
   const relationshipItems = state.candidates
     .filter((candidate) => !candidate.skipped && !isSnoozed(candidate, now) && !completedCandidateIds.has(candidate.id))
     .map(candidateToQueueItem)
     .sort((a, b) => b.priority - a.priority);
 
-  const selfItems = state.insights
+  const selfItems = selfAnalyzedToday ? [] : state.insights
     .slice()
     .sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority))
     .slice(0, limits.self)
