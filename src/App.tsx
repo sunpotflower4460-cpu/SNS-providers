@@ -82,12 +82,9 @@ function App() {
         setApiNote(result.reason || '無料候補探索は現在無効です');
         return;
       }
-      let added = 0;
-      setState((current) => {
-        const next = mergeDiscoveredProfiles(current, result.profiles);
-        added = next.candidates.length - current.candidates.length;
-        return next;
-      });
+      const next = mergeDiscoveredProfiles(state, result.profiles);
+      const added = next.candidates.length - state.candidates.length;
+      setState(next);
       setApiNote(`無料探索で${added}件追加 · ${result.credits || 0} credits · $0`);
     } catch (error) {
       setApiNote(error instanceof Error ? `候補探索失敗: ${error.message}` : '候補探索に失敗しました');
