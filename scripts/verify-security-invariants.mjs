@@ -81,5 +81,8 @@ const writeScopes = scopes.filter((scope) => scope.includes('.write') || scope =
 if (writeScopes.length) {
   throw new Error(`Write-capable X OAuth scope detected: ${writeScopes.join(', ')}`);
 }
+if (!xOAuth.includes('validateGrantedScopes(token.scope)') || !xOAuth.includes('X OAuth returned unexpected scope(s)') || !xOAuth.includes('X OAuth response is missing required scope(s)')) {
+  throw new Error('X OAuth no longer fail-closes on unexpected or missing granted scopes.');
+}
 
-console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, fully normalized JSON/D1 restores, no demo candidates, conservative CRM progression, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, X scopes=${scopes.join(', ')}`);
+console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, fully normalized JSON/D1 restores, no demo candidates, conservative CRM progression, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, requested+granted X scopes=${scopes.join(', ')}`);
