@@ -80,11 +80,37 @@
 }
 .import-actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
+.import-actions .primary-button:last-child { grid-column: 1 / -1; }
 .import-actions button { min-height: 43px; }
 button:disabled { opacity: .55; cursor: not-allowed; }
+.candidate-bio {
+  margin: 13px 0 0;
+  color: #9faec2;
+  font-size: 10px;
+  line-height: 1.55;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.profile-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.profile-metrics span {
+  padding: 5px 8px;
+  border: 1px solid rgba(255,255,255,.07);
+  border-radius: 999px;
+  color: #8796aa;
+  background: rgba(255,255,255,.025);
+  font-size: 8px;
+}
+.profile-metrics b { color: #cbd5e2; font-size: 9px; }
 .hard-limit {
   width: 100%;
   appearance: none;
@@ -92,9 +118,9 @@ button:disabled { opacity: .55; cursor: not-allowed; }
   color: inherit;
   background: transparent;
   text-align: left;
-  cursor: pointer;
 }
 @media (max-width: 380px) {
   .import-actions { grid-template-columns: 1fr; }
+  .import-actions .primary-button:last-child { grid-column: auto; }
   .status-chip { display: none; }
 }
