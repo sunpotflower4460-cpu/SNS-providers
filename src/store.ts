@@ -289,21 +289,53 @@ export function applyRankResults(state: AppState, results: RankResult[], costUsd
 
 export function recordInteraction(state: AppState, candidateId: string, action: Interaction['action']): AppState {
   const now = new Date().toISOString();
+  const priorEngagements = state.interactions.filter((interaction) => interaction.candidateId === candidateId && interaction.action === 'kept').length;
   const interactions = [{ id: crypto.randomUUID(), candidateId, action, at: now }, ...state.interactions];
   const candidates = state.candidates.map((candidate) => {
     if (candidate.id !== candidateId) return candidate;
-    if (action === 'followed') return { ...candidate, stage: 'following' as const, followedAt: candidate.followedAt ?? now, followBack: candidate.followBack ?? null, lastInteractionAt: now };
+    if (action === 'followed') {
+      const stage = candidate.stage === 'discovered' || candidate.stage === 'interested' ? 'following' as const : candidate.stage;
+      return {
+        ...candidate,
+        stage,
+        followedAt: candidate.followedAt ?? now,
+        followBack: candidate.followBack ?? null,
+        relationshipScore: addRelationshipScore(candidate.relationshipScore, 6),
+        lastInteractionAt: now,
+      };
+    }
     if (action === 'skipped') return { ...candidate, skipped: true };
-    if (action === 'kept') return { ...candidate, lastInteractionAt: now };
+    if (action === 'kept') {
+      return {
+        ...candidate,
+        stage: advanceRelationshipStage(candidate.stage, priorEngagements),
+        relationshipScore: addRelationshipScore(candidate.relationshipScore, 12),
+        lastInteractionAt: now,
+      };
+    }
     return { ...candidate, lastInteractionAt: now };
   });
   return refreshRelationshipAdvice({ ...state, interactions, candidates });
 }
 
+function advanceRelationshipStage(stage: Candidate['stage'], priorEngagements: number): Candidate['stage'] {
+  if (stage === 'discovered' || stage === 'interested' || stage === 'following') return 'engaged';
+  if (stage === 'engaged' && priorEngagements >= 1) return 'recognized';
+  if (stage === 'recognized' && priorEngagements >= 2) return 'conversation';
+  if (stage === 'conversation' && priorEngagements >= 4) return 'relationship';
+  return stage;
+}
+
+function addRelationshipScore(score: number, increment: number) {
+  const current = Number.isFinite(score) ? score : 0;
+  return Math.max(0, Math.min(100, Math.round(current + increment)));
+}
+
 function refreshRelationshipAdvice(state: AppState): AppState {
   const now = Date.now();
   const waitDays = Math.max(1, Math.min(180, state.relationshipPolicy.followBackReviewAfterDays));
-  const candidates = state.candidates.map((candidate) => {
+  const candidates = state.candidates.map((rawCandidate) => {
+    const candidate = normalizeLocalRelationshipAction(rawCandidate);
     if (!candidate.followedAt || candidate.followBack !== false) {
       if (candidate.followBack === true && candidate.recommendedAction === 'unfollow_review') {
         return { ...candidate, recommendedAction: 'review' as const, strategy: '相互フォローを確認済み。関係性の質を見ながら継続交流します。' };
@@ -317,7 +349,7 @@ function refreshRelationshipAdvice(state: AppState): AppState {
     if (days < waitDays) return candidate;
 
     const highMatch = candidate.match >= 80;
-    const meaningfulRelationship = candidate.relationshipScore >= 35 || candidate.stage === 'engaged' || candidate.stage === 'conversation' || candidate.stage === 'relationship';
+    const meaningfulRelationship = candidate.relationshipScore >= 35 || candidate.stage === 'engaged' || candidate.stage === 'recognized' || candidate.stage === 'conversation' || candidate.stage === 'relationship';
     if ((state.relationshipPolicy.preserveHighMatch && highMatch) || meaningfulRelationship) {
       return {
         ...candidate,
@@ -329,10 +361,33 @@ function refreshRelationshipAdvice(state: AppState): AppState {
     return {
       ...candidate,
       recommendedAction: 'unfollow_review' as const,
+      draft: undefined,
       strategy: `フォローから${days}日、フォローバックなし。Mission一致度と交流履歴も弱いため、公式アプリで確認して整理する候補です。`,
     };
   });
   return { ...state, candidates };
+}
+
+function normalizeLocalRelationshipAction(candidate: Candidate): Candidate {
+  const replyReady = Boolean(candidate.engagementUrl) || ['engaged', 'recognized', 'conversation', 'relationship'].includes(candidate.stage);
+  const dmReady = ['recognized', 'conversation', 'relationship'].includes(candidate.stage);
+  if (candidate.recommendedAction === 'reply' && !replyReady) {
+    return {
+      ...candidate,
+      recommendedAction: 'review',
+      draft: undefined,
+      strategy: '返信できる具体的な接点がまだ確認できないため、まずプロフィールや実際の投稿を確認します。',
+    };
+  }
+  if (candidate.recommendedAction === 'dm' && !dmReady) {
+    return {
+      ...candidate,
+      recommendedAction: 'review',
+      draft: undefined,
+      strategy: 'DMへ進むにはまだ関係が浅いため、まず公開の交流を積み重ねます。',
+    };
+  }
+  return candidate;
 }
 
 function parseUsername(platform: Platform, value: string) {
