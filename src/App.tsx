@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { analyzeSelfProfile, apiConfigured, enrichXProfiles, fetchBudget, rankCandidates } from './api';
+import { analyzeSelfProfile, apiConfigured, discoverSocialCandidates, enrichXProfiles, fetchBudget, rankCandidates } from './api';
 import BackupControls from './BackupControls';
 import DailyQueue from './DailyQueue';
+import { mergeDiscoveredProfiles } from './discoveryStore';
 import { addCandidateFromReference, applyRankResults, applySelfAnalysis, applyXProfiles, loadState, recordInteraction, saveState, setFollowBackStatus, syncBudget, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
 import { copyDraft, openCandidate, platformLabel } from './social';
 import type { AppState, Candidate, Mission, Platform } from './types';
@@ -25,6 +26,7 @@ function App() {
   const [tab, setTab] = useState<Tab>('today');
   const [pending, setPending] = useState<Candidate | null>(null);
   const [ranking, setRanking] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
   const [enrichingX, setEnrichingX] = useState(false);
   const [analyzingSelf, setAnalyzingSelf] = useState(false);
   const [apiNote, setApiNote] = useState(apiConfigured ? 'API接続待機' : 'ローカルモード');
@@ -65,6 +67,33 @@ function App() {
     if (!pending) return;
     setState((current) => recordInteraction(current, pending.id, action));
     setPending(null);
+  }
+
+  async function discoverCandidates() {
+    if (!apiConfigured) {
+      setApiNote('Worker URLを設定すると無料Web探索が使えます');
+      return;
+    }
+    setDiscovering(true);
+    setApiNote('Missionに合う公開プロフィール候補を無料探索中…');
+    try {
+      const result = await discoverSocialCandidates(state.mission);
+      if (!result.enabled) {
+        setApiNote(result.reason || '無料候補探索は現在無効です');
+        return;
+      }
+      let added = 0;
+      setState((current) => {
+        const next = mergeDiscoveredProfiles(current, result.profiles);
+        added = next.candidates.length - current.candidates.length;
+        return next;
+      });
+      setApiNote(`無料探索で${added}件追加 · ${result.credits || 0} credits · $0`);
+    } catch (error) {
+      setApiNote(error instanceof Error ? `候補探索失敗: ${error.message}` : '候補探索に失敗しました');
+    } finally {
+      setDiscovering(false);
+    }
   }
 
   async function rerankCandidates() {
@@ -156,7 +185,7 @@ function App() {
 
       <main className="page">
         {tab === 'today' && <Today state={state} active={active} doneToday={doneToday} onOpen={onOpen} onTab={setTab} />}
-        {tab === 'discover' && <Discover state={state} candidates={active} onOpen={onOpen} onChange={setState} onRerank={rerankCandidates} onEnrichX={enrichXCandidates} ranking={ranking} enrichingX={enrichingX} apiNote={apiNote} />}
+        {tab === 'discover' && <Discover state={state} candidates={active} onOpen={onOpen} onChange={setState} onDiscover={discoverCandidates} onRerank={rerankCandidates} onEnrichX={enrichXCandidates} discovering={discovering} ranking={ranking} enrichingX={enrichingX} apiNote={apiNote} />}
         {tab === 'relations' && <Relations state={state} onOpen={onOpen} onChange={setState} />}
         {tab === 'me' && <Me state={state} onAnalyze={analyzeMe} analyzing={analyzingSelf} />}
         {tab === 'settings' && <Settings state={state} onChange={setState} />}
@@ -222,13 +251,15 @@ function Metric({ icon, value, label }: { icon: string; value: number; label: st
   return <div className="metric-card"><span className="metric-icon">{icon}</span><strong>{value}</strong><small>{label}</small></div>;
 }
 
-function Discover({ state, candidates, onOpen, onChange, onRerank, onEnrichX, ranking, enrichingX, apiNote }: {
+function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, onEnrichX, discovering, ranking, enrichingX, apiNote }: {
   state: AppState;
   candidates: Candidate[];
   onOpen: (c: Candidate) => void;
   onChange: (state: AppState) => void;
+  onDiscover: () => void;
   onRerank: () => void;
   onEnrichX: () => void;
+  discovering: boolean;
   ranking: boolean;
   enrichingX: boolean;
   apiNote: string;
@@ -257,7 +288,8 @@ function Discover({ state, candidates, onOpen, onChange, onRerank, onEnrichX, ra
     <PageHeading eyebrow="DISCOVER" title="今日会うべき人" text="数ではなく、Missionへの近さで並べています。" />
 
     <section className="import-card">
-      <div className="import-head"><div><span className="eyebrow">ADD CANDIDATE</span><strong>見つけた人を1タップで候補へ</strong></div><span className="status-chip">{apiNote}</span></div>
+      <div className="import-head"><div><span className="eyebrow">ADD CANDIDATE</span><strong>AIに探させるか、見つけた人を1タップで追加</strong></div><span className="status-chip">{apiNote}</span></div>
+      <button className="discovery-button" disabled={discovering} onClick={onDiscover}><span>✦</span><strong>{discovering ? '無料探索中…' : 'Missionから無料で候補を探す'}</strong><small>Tavily無料モード · X/Instagram公開プロフィール候補</small></button>
       <div className="mini-segmented">
         <button className={platform === 'instagram' ? 'active' : ''} onClick={() => setPlatform('instagram')}>Instagram</button>
         <button className={platform === 'x' ? 'active' : ''} onClick={() => setPlatform('x')}>X</button>
