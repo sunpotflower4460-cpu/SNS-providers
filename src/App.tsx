@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { apiConfigured, fetchBudget, rankCandidates } from './api';
-import { addCandidateFromReference, applyRankResults, loadState, recordInteraction, saveState, syncBudget, updateMission } from './store';
+import { apiConfigured, enrichXProfiles, fetchBudget, rankCandidates } from './api';
+import { addCandidateFromReference, applyRankResults, applyXProfiles, loadState, recordInteraction, saveState, syncBudget, updateMission } from './store';
 import { copyDraft, openCandidate, platformLabel } from './social';
 import type { AppState, Candidate, Mission, Platform } from './types';
 
@@ -23,6 +23,7 @@ function App() {
   const [tab, setTab] = useState<Tab>('today');
   const [pending, setPending] = useState<Candidate | null>(null);
   const [ranking, setRanking] = useState(false);
+  const [enrichingX, setEnrichingX] = useState(false);
   const [apiNote, setApiNote] = useState(apiConfigured ? 'API接続待機' : 'ローカルモード');
 
   useEffect(() => saveState(state), [state]);
@@ -83,6 +84,39 @@ function App() {
     }
   }
 
+  async function enrichXCandidates() {
+    if (!apiConfigured) {
+      setApiNote('Worker URLを設定するとX公式情報の補完が使えます');
+      return;
+    }
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    const targets = state.candidates.filter((candidate) => {
+      if (candidate.platform !== 'x' || candidate.skipped) return false;
+      if (!candidate.profileSyncedAt) return true;
+      return new Date(candidate.profileSyncedAt).getTime() < cutoff;
+    }).slice(0, 100);
+    if (!targets.length) {
+      setApiNote('X候補は24時間以内に同期済みです');
+      return;
+    }
+
+    setEnrichingX(true);
+    setApiNote(`X公式情報を${targets.length}件まとめて確認中…`);
+    try {
+      const result = await enrichXProfiles(targets, state.budget.monthlyLimitUsd);
+      if (!result.enabled) {
+        setApiNote(result.reason || 'Xプロフィール補完は現在無効です');
+        return;
+      }
+      setState((current) => applyXProfiles(current, result.profiles, result.costUsd));
+      setApiNote(`X公式情報 ${result.profiles.length}件補完 · $${result.costUsd.toFixed(4)}`);
+    } catch (error) {
+      setApiNote(error instanceof Error ? `X補完失敗: ${error.message}` : 'Xプロフィール補完に失敗しました');
+    } finally {
+      setEnrichingX(false);
+    }
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -96,7 +130,7 @@ function App() {
 
       <main className="page">
         {tab === 'today' && <Today state={state} active={active} doneToday={doneToday} onOpen={onOpen} onTab={setTab} />}
-        {tab === 'discover' && <Discover state={state} candidates={active} onOpen={onOpen} onChange={setState} onRerank={rerankCandidates} ranking={ranking} apiNote={apiNote} />}
+        {tab === 'discover' && <Discover state={state} candidates={active} onOpen={onOpen} onChange={setState} onRerank={rerankCandidates} onEnrichX={enrichXCandidates} ranking={ranking} enrichingX={enrichingX} apiNote={apiNote} />}
         {tab === 'relations' && <Relations state={state} onOpen={onOpen} />}
         {tab === 'me' && <Me state={state} />}
         {tab === 'settings' && <Settings state={state} onChange={setState} />}
@@ -166,13 +200,15 @@ function Metric({ icon, value, label }: { icon: string; value: number; label: st
   return <div className="metric-card"><span className="metric-icon">{icon}</span><strong>{value}</strong><small>{label}</small></div>;
 }
 
-function Discover({ state, candidates, onOpen, onChange, onRerank, ranking, apiNote }: {
+function Discover({ state, candidates, onOpen, onChange, onRerank, onEnrichX, ranking, enrichingX, apiNote }: {
   state: AppState;
   candidates: Candidate[];
   onOpen: (c: Candidate) => void;
   onChange: (state: AppState) => void;
   onRerank: () => void;
+  onEnrichX: () => void;
   ranking: boolean;
+  enrichingX: boolean;
   apiNote: string;
 }) {
   const [filter, setFilter] = useState<'all' | 'x' | 'instagram'>('all');
@@ -205,7 +241,11 @@ function Discover({ state, candidates, onOpen, onChange, onRerank, ranking, apiN
         <button className={platform === 'x' ? 'active' : ''} onClick={() => setPlatform('x')}>X</button>
       </div>
       <div className="import-row"><input value={reference} onChange={(event) => setReference(event.target.value)} placeholder="プロフィールURL または @username" /><button onClick={() => addReference()}>追加</button></div>
-      <div className="import-actions"><button className="secondary-button" onClick={addFromClipboard}>クリップボードから追加</button><button className="primary-button" disabled={ranking} onClick={onRerank}>{ranking ? 'AI評価中…' : 'AIで候補を再評価'}</button></div>
+      <div className="import-actions">
+        <button className="secondary-button" onClick={addFromClipboard}>クリップボードから追加</button>
+        <button className="secondary-button" disabled={enrichingX} onClick={onEnrichX}>{enrichingX ? 'X同期中…' : 'X公式情報を補完'}</button>
+        <button className="primary-button" disabled={ranking} onClick={onRerank}>{ranking ? 'AI評価中…' : 'AIで候補を再評価'}</button>
+      </div>
     </section>
 
     <div className="segmented">
@@ -220,9 +260,11 @@ function CandidateCard({ candidate, onOpen, featured = false }: { candidate: Can
   return <article className={featured ? 'candidate-card featured' : 'candidate-card'}>
     <div className="candidate-head">
       <div className={`platform-avatar ${candidate.platform}`}>{candidate.platform === 'x' ? 'X' : '◎'}</div>
-      <div className="candidate-identity"><strong>{candidate.displayName}</strong><span>@{candidate.username} · {kindLabel[candidate.kind]}</span></div>
+      <div className="candidate-identity"><strong>{candidate.displayName}{candidate.verified ? ' ✓' : ''}</strong><span>@{candidate.username} · {kindLabel[candidate.kind]}</span></div>
       <div className="match-score"><strong>{candidate.match}</strong><small>MATCH</small></div>
     </div>
+    {candidate.bio && <p className="candidate-bio">{candidate.bio}</p>}
+    {candidate.publicMetrics && <div className="profile-metrics"><span><b>{compactNumber(candidate.publicMetrics.followers)}</b> followers</span><span><b>{compactNumber(candidate.publicMetrics.posts)}</b> posts</span></div>}
     <p className="reason">{candidate.reason}</p>
     <div className="tags">{candidate.tags.map((tag) => <span key={tag}>#{tag}</span>)}</div>
     {candidate.draft && <div className="draft-box"><span>AI返信案</span><p>{candidate.draft}</p><button onClick={() => copyDraft(candidate.draft!)}>コピー</button></div>}
@@ -262,15 +304,14 @@ function Me({ state }: { state: AppState }) {
 function Settings({ state, onChange }: { state: AppState; onChange: (state: AppState) => void }) {
   const [mission, setMission] = useState<Mission>(state.mission);
   const [limit, setLimit] = useState(state.budget.monthlyLimitUsd);
-  const [hardLimit, setHardLimit] = useState(state.budget.hardLimit);
   function save() {
     const next = updateMission(state, mission);
-    onChange({ ...next, budget: { ...next.budget, hardLimit, monthlyLimitUsd: limit, mode: limit === 0 ? 'free' : limit <= 1 ? 'eco' : limit <= 3 ? 'balanced' : 'growth' } });
+    onChange({ ...next, budget: { ...next.budget, hardLimit: true, monthlyLimitUsd: limit, mode: limit === 0 ? 'free' : limit <= 1 ? 'eco' : limit <= 3 ? 'balanced' : 'growth' } });
   }
   return <>
     <PageHeading eyebrow="SETTINGS" title="AIに目的地を教える" text="ここが推薦・文章・自己分析すべての判断軸になります。" />
     <section className="form-card"><label>Mission<textarea value={mission.text} rows={5} onChange={(e) => setMission({ ...mission, text: e.target.value })} /></label><label>一番大事なゴール<input value={mission.primaryGoal} onChange={(e) => setMission({ ...mission, primaryGoal: e.target.value })} /></label><label>Communication DNA<textarea value={mission.communicationDNA} rows={4} onChange={(e) => setMission({ ...mission, communicationDNA: e.target.value })} /></label></section>
-    <section className="form-card budget-settings"><div className="field-title"><div><strong>月間AI/API予算</strong><span>機能を削らず、外部取得量を自動調整</span></div><b>${limit}</b></div><input className="range" type="range" min="0" max="10" step="1" value={limit} onChange={(e) => setLimit(Number(e.target.value))} /><div className="range-labels"><span>$0</span><span>$3 recommended</span><span>$10</span></div><button className="hard-limit" onClick={() => setHardLimit((value) => !value)}><span><strong>HARD LIMIT</strong><small>設定額を超える有料リクエストを拒否</small></span><i className={hardLimit ? 'toggle on' : 'toggle'} /></button></section>
+    <section className="form-card budget-settings"><div className="field-title"><div><strong>月間AI/API予算</strong><span>機能を削らず、外部取得量を自動調整</span></div><b>${limit}</b></div><input className="range" type="range" min="0" max="10" step="1" value={limit} onChange={(e) => setLimit(Number(e.target.value))} /><div className="range-labels"><span>$0</span><span>$3 recommended</span><span>$10</span></div><div className="hard-limit"><span><strong>HARD LIMIT</strong><small>常時ON。設定額を超える有料リクエストを拒否</small></span><i className="toggle on" /></div></section>
     <button className="save-button" onClick={save}>設定を保存</button>
   </>;
 }
@@ -281,6 +322,10 @@ function PageHeading({ eyebrow, title, text }: { eyebrow: string; title: string;
 
 function ResultSheet({ candidate, onResolve }: { candidate: Candidate; onResolve: (action: 'followed' | 'skipped' | 'kept') => void }) {
   return <div className="sheet-backdrop"><section className="result-sheet"><div className="sheet-handle" /><span className="eyebrow">WELCOME BACK</span><h2>@{candidate.username} はどうしました？</h2><p>結果だけ教えてください。次の推薦と関係性スコアに反映します。</p><button className="primary-button full" onClick={() => onResolve('followed')}>フォロー / 交流した</button><button className="secondary-button full" onClick={() => onResolve('kept')}>今回は見るだけ</button><button className="ghost-button full" onClick={() => onResolve('skipped')}>この候補は違う</button></section></div>;
+}
+
+function compactNumber(value: number) {
+  return new Intl.NumberFormat('ja-JP', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
 }
 
 export default App;
