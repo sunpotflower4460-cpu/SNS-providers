@@ -5,6 +5,7 @@ interface Env {
   DB: D1Database;
   TAVILY_API_KEY?: string;
   TAVILY_BILLING_MODE?: 'free' | 'paid';
+  SYNC_TOKEN_SHA256?: string;
   ALLOWED_ORIGIN?: string;
   [key: string]: unknown;
 }
@@ -15,11 +16,56 @@ interface DiscoverRequest {
   maxPerPlatform?: number;
 }
 
+interface StateSyncRequest {
+  userId?: string;
+  state: unknown;
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    if (request.method === 'OPTIONS' && url.pathname === '/api/discover/social') {
+    if (request.method === 'OPTIONS' && (url.pathname === '/api/discover/social' || url.pathname === '/api/sync/state')) {
       return new Response(null, { status: 204, headers: corsHeaders(request, env) });
+    }
+
+    if (url.pathname === '/api/sync/state') {
+      const authorized = await authorizeSync(request, env);
+      if (!authorized.ok) return json({ error: authorized.reason }, authorized.status, request, env);
+
+      if (request.method === 'GET') {
+        try {
+          const userId = sanitizeUserId(url.searchParams.get('userId') || 'local-user');
+          const row = await env.DB.prepare('SELECT state_json, updated_at FROM state_snapshots WHERE user_id = ?')
+            .bind(userId)
+            .first<{ state_json: string; updated_at: string }>();
+          if (!row) return json({ found: false, state: null, updatedAt: null }, 200, request, env);
+          return json({ found: true, state: JSON.parse(row.state_json), updatedAt: row.updated_at }, 200, request, env);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'State download failed';
+          return json({ error: message }, 400, request, env);
+        }
+      }
+
+      if (request.method === 'PUT') {
+        try {
+          const body = await request.json<StateSyncRequest>();
+          const userId = sanitizeUserId(body.userId || 'local-user');
+          if (!body || !body.state || typeof body.state !== 'object') return json({ error: 'state is required' }, 400, request, env);
+          const stateJson = JSON.stringify(body.state);
+          if (stateJson.length > 2_000_000) return json({ error: 'state snapshot is too large' }, 413, request, env);
+          const updatedAt = new Date().toISOString();
+          await env.DB.prepare(
+            `INSERT INTO state_snapshots (user_id, state_json, updated_at) VALUES (?, ?, ?)
+             ON CONFLICT(user_id) DO UPDATE SET state_json = excluded.state_json, updated_at = excluded.updated_at`
+          ).bind(userId, stateJson, updatedAt).run();
+          return json({ ok: true, updatedAt }, 200, request, env);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'State upload failed';
+          return json({ error: message }, 400, request, env);
+        }
+      }
+
+      return json({ error: 'Method not allowed' }, 405, request, env);
     }
 
     if (request.method === 'POST' && url.pathname === '/api/discover/social') {
@@ -45,6 +91,36 @@ export default {
   },
 };
 
+async function authorizeSync(request: Request, env: Env) {
+  const expected = (env.SYNC_TOKEN_SHA256 || '').trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(expected)) return { ok: false as const, status: 503, reason: 'State sync is not configured.' };
+  const authorization = request.headers.get('authorization') || '';
+  const token = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
+  if (!token || token.length > 512) return { ok: false as const, status: 401, reason: 'Sync authorization required.' };
+  const actual = await sha256Hex(token);
+  if (!constantTimeEqual(actual, expected)) return { ok: false as const, status: 401, reason: 'Invalid sync authorization.' };
+  return { ok: true as const, status: 200, reason: '' };
+}
+
+async function sha256Hex(value: string) {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function constantTimeEqual(a: string, b: string) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let index = 0; index < a.length; index += 1) diff |= a.charCodeAt(index) ^ b.charCodeAt(index);
+  return diff === 0;
+}
+
+function sanitizeUserId(value: string) {
+  const userId = value.trim();
+  if (!/^[A-Za-z0-9._-]{1,80}$/.test(userId)) throw new Error('invalid userId');
+  return userId;
+}
+
 async function recordFreeSearchUsage(env: Env, userId: string, credits: number) {
   try {
     await env.DB.prepare(
@@ -67,7 +143,7 @@ function corsHeaders(request: Request, env: Env) {
   const allowed = env.ALLOWED_ORIGIN || '*';
   return {
     'access-control-allow-origin': allowed === '*' ? '*' : allowed === origin ? origin : allowed,
-    'access-control-allow-methods': 'GET,POST,OPTIONS',
+    'access-control-allow-methods': 'GET,POST,PUT,OPTIONS',
     'access-control-allow-headers': 'content-type,authorization',
     vary: 'Origin',
   };
