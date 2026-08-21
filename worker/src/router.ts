@@ -55,7 +55,6 @@ const PROVIDER_COST_PATHS = new Set([
   '/api/ai/rank',
   '/api/x/enrich',
   '/api/discover/social',
-  '/api/x/oauth/status',
 ]);
 
 export default {
