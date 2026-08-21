@@ -3,6 +3,9 @@ import { readFile } from 'node:fs/promises';
 const router = await readFile(new URL('../worker/src/router.ts', import.meta.url), 'utf8');
 const providerApi = await readFile(new URL('../worker/src/index.ts', import.meta.url), 'utf8');
 const xOAuth = await readFile(new URL('../worker/src/xOAuth.ts', import.meta.url), 'utf8');
+const backup = await readFile(new URL('../src/backup.ts', import.meta.url), 'utf8');
+const store = await readFile(new URL('../src/store.ts', import.meta.url), 'utf8');
+const social = await readFile(new URL('../src/social.ts', import.meta.url), 'utf8');
 
 const protectedProviderPaths = [
   '/api/budget',
@@ -45,6 +48,19 @@ if (!providerApi.includes("recommendedAction === 'reply' && !hasEngagementContex
   throw new Error('AI relationship-stage reply/DM guards are missing.');
 }
 
+if (!backup.includes('safeSocialUrl(raw.platform, raw.engagementUrl)') || !backup.includes("profileUrl: raw.platform === 'x' ? `https://x.com/${username}`")) {
+  throw new Error('Restored state no longer canonicalizes social URLs.');
+}
+if (!backup.includes('legacyDemoCandidates') || !store.includes('LEGACY_DEMO_CANDIDATES') || !store.includes('candidates: []')) {
+  throw new Error('Legacy demo candidates can leak back into a real user queue.');
+}
+if (!store.includes("interaction.action === 'kept'") || !store.includes('advanceRelationshipStage') || !store.includes("target?.recommendedAction === 'unfollow_review'")) {
+  throw new Error('Manual relationship outcomes no longer feed the conservative CRM progression/cleanup distinction.');
+}
+if (social.includes('intent/tweet') || social.includes('intent/follow')) {
+  throw new Error('Legacy X intent handoff can bypass the official profile/conversation review flow.');
+}
+
 const scopeMatch = xOAuth.match(/const READ_ONLY_SCOPES\s*=\s*\[([^\]]+)\]/s);
 if (!scopeMatch) throw new Error('READ_ONLY_SCOPES definition was not found.');
 
@@ -59,4 +75,4 @@ if (writeScopes.length) {
   throw new Error(`Write-capable X OAuth scope detected: ${writeScopes.join(', ')}`);
 }
 
-console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, X scopes=${scopes.join(', ')}`);
+console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, sanitized restored state, no demo candidates, conservative CRM progression, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, X scopes=${scopes.join(', ')}`);
