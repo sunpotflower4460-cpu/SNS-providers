@@ -70,6 +70,11 @@ interface XUser {
   };
 }
 
+interface BudgetSnapshot {
+  usedUsd: number;
+  available: boolean;
+}
+
 const jsonHeaders = { 'content-type': 'application/json; charset=utf-8' };
 const MAX_OUTPUT_TOKENS = 1800;
 
@@ -81,21 +86,27 @@ export default {
 
     try {
       if (request.method === 'GET' && url.pathname === '/api/health') {
-        return json({ ok: true, service: 'social-mission-api', time: new Date().toISOString() }, 200, cors);
+        const ledger = await monthUsage(env, 'health-check');
+        return json({ ok: true, service: 'social-mission-api', ledgerAvailable: ledger.available, time: new Date().toISOString() }, 200, cors);
       }
 
       if (request.method === 'GET' && url.pathname === '/api/budget') {
         const userId = url.searchParams.get('userId') || 'local-user';
-        const usedUsd = await monthUsage(env, userId);
+        const ledger = await monthUsage(env, userId);
         const limitUsd = configuredLimit(env);
-        return json({ usedUsd, limitUsd, remainingUsd: Math.max(0, limitUsd - usedUsd) }, 200, cors);
+        return json({
+          usedUsd: ledger.usedUsd,
+          limitUsd,
+          remainingUsd: ledger.available ? Math.max(0, limitUsd - ledger.usedUsd) : 0,
+          ledgerAvailable: ledger.available,
+        }, 200, cors);
       }
 
       if (request.method === 'POST' && url.pathname === '/api/x/enrich') {
         const body = await request.json<XEnrichRequest>();
         const usernames = validateXEnrichRequest(body);
         const userId = body.userId || 'local-user';
-        const { remainingUsd } = await budgetForRequest(env, userId, body.monthlyLimitUsd);
+        const budget = await budgetForRequest(env, userId, body.monthlyLimitUsd);
         const unitCost = parsePositiveNumber(env.X_USER_READ_USD);
 
         if (!env.X_BEARER_TOKEN) {
@@ -104,51 +115,71 @@ export default {
         if (!unitCost) {
           return json({ enabled: false, costUsd: 0, profiles: [], reason: 'X_USER_READ_USD is not configured; paid X reads fail closed.' }, 200, cors);
         }
-
-        const worstCaseCost = usernames.length * unitCost;
-        if (worstCaseCost > remainingUsd) {
-          return json({ enabled: false, costUsd: 0, profiles: [], reason: `HARD LIMIT protected the budget. Need up to $${worstCaseCost.toFixed(4)}, remaining $${remainingUsd.toFixed(4)}.` }, 200, cors);
+        if (!budget.ledgerAvailable) {
+          return json({ enabled: false, costUsd: 0, profiles: [], reason: 'Budget ledger is unavailable; paid X reads are disabled.' }, 200, cors);
         }
 
-        const profiles = await fetchXProfiles(usernames, env.X_BEARER_TOKEN);
-        const costUsd = profiles.length * unitCost;
-        await recordUsage(env, userId, 'x', 'user_read', costUsd, { prompt_tokens: profiles.length });
-        return json({ enabled: true, costUsd, profiles }, 200, cors);
+        const worstCaseCost = usernames.length * unitCost;
+        if (worstCaseCost > budget.remainingUsd) {
+          return json({ enabled: false, costUsd: 0, profiles: [], reason: `HARD LIMIT protected the budget. Need up to $${worstCaseCost.toFixed(4)}, remaining $${budget.remainingUsd.toFixed(4)}.` }, 200, cors);
+        }
+
+        const reservationId = await reserveBudget(env, userId, 'x', 'user_read_reservation', worstCaseCost, budget.effectiveLimit);
+        if (!reservationId) {
+          return json({ enabled: false, costUsd: 0, profiles: [], reason: 'HARD LIMIT changed before the X request could be reserved.' }, 200, cors);
+        }
+
+        try {
+          const profiles = await fetchXProfiles(usernames, env.X_BEARER_TOKEN);
+          const costUsd = profiles.length * unitCost;
+          await finalizeReservation(env, reservationId, 'user_read', costUsd, { prompt_tokens: profiles.length });
+          return json({ enabled: true, costUsd, profiles }, 200, cors);
+        } catch (error) {
+          await cancelReservation(env, reservationId);
+          throw error;
+        }
       }
 
       if (request.method === 'POST' && url.pathname === '/api/ai/rank') {
         const body = await request.json<RankRequest>();
         validateRankRequest(body);
         const userId = body.userId || 'local-user';
-        const { remainingUsd } = await budgetForRequest(env, userId, body.monthlyLimitUsd);
+        const budget = await budgetForRequest(env, userId, body.monthlyLimitUsd);
 
         if (env.GROQ_API_KEY) {
           const paid = env.GROQ_BILLING_MODE === 'paid';
-          const rates = paid ? parseRates(env.GROQ_INPUT_PER_MILLION, env.GROQ_OUTPUT_PER_MILLION) : null;
-          const preflight = paid ? (rates ? estimateMaxCost(body, rates) : Number.POSITIVE_INFINITY) : 0;
-
-          if (preflight <= remainingUsd) {
-            const result = await rankWithProvider('groq', body, env);
-            const costUsd = paid && rates ? calculateCost(result.usage, rates) : 0;
-            await recordUsage(env, userId, 'groq', 'rank', costUsd, result.usage);
-            return json({ provider: 'groq', paid, costUsd, results: result.results }, 200, cors);
+          if (!paid) {
+            try {
+              const result = await rankWithProvider('groq', body, env);
+              await recordFreeUsage(env, userId, 'groq', 'rank_free', result.usage);
+              return json({ provider: 'groq', paid: false, costUsd: 0, results: result.results }, 200, cors);
+            } catch {
+              // Continue to the next provider or local scoring.
+            }
+          } else if (budget.ledgerAvailable) {
+            const rates = parseRates(env.GROQ_INPUT_PER_MILLION, env.GROQ_OUTPUT_PER_MILLION);
+            const preflight = rates ? estimateMaxCost(body, rates) : Number.POSITIVE_INFINITY;
+            if (rates && preflight <= budget.remainingUsd) {
+              const result = await runPaidRankingWithReservation('groq', body, env, userId, rates, preflight, budget.effectiveLimit);
+              if (result) return json({ provider: 'groq', paid: true, costUsd: result.costUsd, results: result.results }, 200, cors);
+            }
           }
         }
 
-        if (env.DEEPSEEK_API_KEY && remainingUsd > 0) {
+        if (env.DEEPSEEK_API_KEY && budget.ledgerAvailable && budget.remainingUsd > 0) {
           const rates = parseRates(env.DEEPSEEK_INPUT_PER_MILLION, env.DEEPSEEK_OUTPUT_PER_MILLION);
           const preflight = rates ? estimateMaxCost(body, rates) : Number.POSITIVE_INFINITY;
-
-          if (rates && preflight <= remainingUsd) {
-            const result = await rankWithProvider('deepseek', body, env);
-            const costUsd = calculateCost(result.usage, rates);
-            await recordUsage(env, userId, 'deepseek', 'rank', costUsd, result.usage);
-            return json({ provider: 'deepseek', paid: true, costUsd, results: result.results }, 200, cors);
+          if (rates && preflight <= budget.remainingUsd) {
+            const result = await runPaidRankingWithReservation('deepseek', body, env, userId, rates, preflight, budget.effectiveLimit);
+            if (result) return json({ provider: 'deepseek', paid: true, costUsd: result.costUsd, results: result.results }, 200, cors);
           }
         }
 
         const results = localRank(body.mission, body.candidates);
-        return json({ provider: 'local', paid: false, costUsd: 0, reason: 'Free providers unavailable, paid rates are not configured, or HARD LIMIT protected the budget.', results }, 200, cors);
+        const reason = budget.ledgerAvailable
+          ? 'Free providers unavailable, paid rates are not configured, or HARD LIMIT protected the budget.'
+          : 'Free providers unavailable and the budget ledger is unavailable, so all paid providers were blocked.';
+        return json({ provider: 'local', paid: false, costUsd: 0, reason, results }, 200, cors);
       }
 
       return json({ error: 'Not found' }, 404, cors);
@@ -183,8 +214,13 @@ async function budgetForRequest(env: Env, userId: string, requestedLimitUsd?: nu
   const serverLimit = configuredLimit(env);
   const requestedLimit = Number.isFinite(requestedLimitUsd) ? Math.max(0, requestedLimitUsd!) : serverLimit;
   const effectiveLimit = Math.min(serverLimit, requestedLimit);
-  const usedUsd = await monthUsage(env, userId);
-  return { usedUsd, effectiveLimit, remainingUsd: Math.max(0, effectiveLimit - usedUsd) };
+  const ledger = await monthUsage(env, userId);
+  return {
+    usedUsd: ledger.usedUsd,
+    effectiveLimit,
+    ledgerAvailable: ledger.available,
+    remainingUsd: ledger.available ? Math.max(0, effectiveLimit - ledger.usedUsd) : 0,
+  };
 }
 
 function validateRankRequest(body: RankRequest) {
@@ -234,7 +270,7 @@ async function fetchXProfiles(usernames: string[], bearerToken: string) {
   }));
 }
 
-async function monthUsage(env: Env, userId: string) {
+async function monthUsage(env: Env, userId: string): Promise<BudgetSnapshot> {
   try {
     const start = new Date();
     start.setUTCDate(1);
@@ -242,22 +278,52 @@ async function monthUsage(env: Env, userId: string) {
     const row = await env.DB.prepare(
       'SELECT COALESCE(SUM(cost_usd), 0) AS used FROM budget_ledger WHERE user_id = ? AND occurred_at >= ?'
     ).bind(userId, start.toISOString()).first<{ used: number }>();
-    return Number(row?.used || 0);
+    return { usedUsd: Number(row?.used || 0), available: true };
   } catch {
-    return 0;
+    return { usedUsd: 0, available: false };
   }
 }
 
-async function recordUsage(env: Env, userId: string, provider: string, operation: string, costUsd: number, usage?: Usage) {
+async function reserveBudget(env: Env, userId: string, provider: string, operation: string, amountUsd: number, effectiveLimit: number) {
+  if (amountUsd <= 0) return null;
+  const id = crypto.randomUUID();
+  const start = new Date();
+  start.setUTCDate(1);
+  start.setUTCHours(0, 0, 0, 0);
+  const now = new Date().toISOString();
+  try {
+    const result = await env.DB.prepare(
+      `INSERT INTO budget_ledger (id, user_id, provider, operation, cost_usd, input_units, output_units, cache_hit, occurred_at)
+       SELECT ?, ?, ?, ?, ?, 0, 0, 0, ?
+       WHERE COALESCE((SELECT SUM(cost_usd) FROM budget_ledger WHERE user_id = ? AND occurred_at >= ?), 0) + ? <= ?`
+    ).bind(id, userId, provider, operation, amountUsd, now, userId, start.toISOString(), amountUsd, effectiveLimit).run();
+    return result.meta.changes > 0 ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+async function finalizeReservation(env: Env, reservationId: string, operation: string, actualCostUsd: number, usage?: Usage) {
+  await env.DB.prepare(
+    'UPDATE budget_ledger SET operation = ?, cost_usd = ?, input_units = ?, output_units = ? WHERE id = ?'
+  ).bind(operation, actualCostUsd, usage?.prompt_tokens || 0, usage?.completion_tokens || 0, reservationId).run();
+}
+
+async function cancelReservation(env: Env, reservationId: string) {
+  try {
+    await env.DB.prepare('DELETE FROM budget_ledger WHERE id = ?').bind(reservationId).run();
+  } catch {
+    // Keeping an unfinalized reservation over-counts spend, which is safer than under-counting it.
+  }
+}
+
+async function recordFreeUsage(env: Env, userId: string, provider: string, operation: string, usage?: Usage) {
   try {
     await env.DB.prepare(
-      'INSERT INTO budget_ledger (id, user_id, provider, operation, cost_usd, input_units, output_units, cache_hit, occurred_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)'
-    ).bind(
-      crypto.randomUUID(), userId, provider, operation, costUsd,
-      usage?.prompt_tokens || 0, usage?.completion_tokens || 0, new Date().toISOString()
-    ).run();
+      'INSERT INTO budget_ledger (id, user_id, provider, operation, cost_usd, input_units, output_units, cache_hit, occurred_at) VALUES (?, ?, ?, ?, 0, ?, ?, 0, ?)'
+    ).bind(crypto.randomUUID(), userId, provider, operation, usage?.prompt_tokens || 0, usage?.completion_tokens || 0, new Date().toISOString()).run();
   } catch {
-    // Local-first mode remains usable before migrations; deployment diagnostics should surface missing D1 separately.
+    // Free work remains available even before D1 is configured.
   }
 }
 
@@ -288,24 +354,56 @@ function estimateUnknownUsageCost(rates: RatePair) {
   return (5000 / 1_000_000) * rates.input + (MAX_OUTPUT_TOKENS / 1_000_000) * rates.output;
 }
 
+async function runPaidRankingWithReservation(
+  provider: 'groq' | 'deepseek',
+  body: RankRequest,
+  env: Env,
+  userId: string,
+  rates: RatePair,
+  preflightUsd: number,
+  effectiveLimit: number,
+) {
+  const reservationId = await reserveBudget(env, userId, provider, 'rank_reservation', preflightUsd, effectiveLimit);
+  if (!reservationId) return null;
+  try {
+    const result = await rankWithProvider(provider, body, env);
+    const costUsd = calculateCost(result.usage, rates);
+    await finalizeReservation(env, reservationId, 'rank', costUsd, result.usage);
+    return { ...result, costUsd };
+  } catch {
+    await cancelReservation(env, reservationId);
+    return null;
+  }
+}
+
 async function rankWithProvider(provider: 'groq' | 'deepseek', body: RankRequest, env: Env) {
   const isGroq = provider === 'groq';
   const baseUrl = isGroq ? 'https://api.groq.com/openai/v1' : (env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com');
   const apiKey = isGroq ? env.GROQ_API_KEY! : env.DEEPSEEK_API_KEY!;
   const model = isGroq ? (env.GROQ_MODEL || 'openai/gpt-oss-20b') : (env.DEEPSEEK_MODEL || 'deepseek-chat');
+  const hasSelfProfile = body.candidates.some((candidate) => candidate.kind === 'self_profile');
   const prompt = {
     mission: body.mission,
     communication_dna: body.communicationDNA || '',
     candidates: body.candidates,
-    instruction: [
-      'Rank candidates for genuine long-term relationship value, not raw follow-back probability.',
-      'Choose the best current action from follow, like, reply, dm, review, or unfollow_review.',
-      'Explain the strategic reason briefly in Japanese.',
-      'For at most the five highest-value candidates where reply or dm is genuinely appropriate, include a short natural Japanese draft that follows communication_dna.',
-      'Never use generic template praise, never invent facts or post content that is not in the supplied data, and omit draft when context is insufficient.',
-      'strategy should explain what relationship step to take now and why.',
-      'Do not recommend automated final social actions.',
-    ].join(' '),
+    instruction: hasSelfProfile
+      ? [
+          'The candidate with kind self_profile is the user own social account, not a networking target.',
+          'Evaluate how well the supplied profile and recent posts support the Mission. match is a 0-100 Mission alignment score.',
+          'reason is a concise Japanese diagnosis grounded only in supplied text.',
+          'strategy is a practical Japanese improvement plan covering profile, content mix, audience/network, and the highest-leverage next change.',
+          'draft is an improved profile/bio proposal in Japanese. Do not invent achievements, numbers, links, credentials, or facts.',
+          'recommendedAction must be review.',
+        ].join(' ')
+      : [
+          'Rank candidates for genuine long-term relationship value, not raw follow-back probability.',
+          'Choose the best current action from follow, like, reply, dm, review, or unfollow_review.',
+          'Explain the strategic reason briefly in Japanese.',
+          'For at most the five highest-value candidates where reply or dm is genuinely appropriate, include a short natural Japanese draft that follows communication_dna.',
+          'Never use generic template praise, never invent facts or post content that is not in the supplied data, and omit draft when context is insufficient.',
+          'strategy should explain what relationship step to take now and why.',
+          'Do not recommend automated final social actions.',
+        ].join(' '),
   };
 
   const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
@@ -313,13 +411,13 @@ async function rankWithProvider(provider: 'groq' | 'deepseek', body: RankRequest
     headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
     body: JSON.stringify({
       model,
-      temperature: 0.35,
+      temperature: hasSelfProfile ? 0.25 : 0.35,
       max_tokens: MAX_OUTPUT_TOKENS,
       response_format: { type: 'json_object' },
       messages: [
         {
           role: 'system',
-          content: 'You are a social relationship strategist. Output JSON only: {"results":[{"id":string,"match":0-100,"kind":string,"recommendedAction":string,"reason":string,"strategy":string,"draft"?:string}]}. Drafts must sound individualized and human, but only use supplied facts. Never recommend automated social actions or follow-churn tactics.'
+          content: 'You are a social relationship and account-growth strategist. Output JSON only: {"results":[{"id":string,"match":0-100,"kind":string,"recommendedAction":string,"reason":string,"strategy":string,"draft"?:string}]}. Use only supplied facts. Never recommend automated social actions, spam, or follow-churn tactics.'
         },
         { role: 'user', content: JSON.stringify(prompt) },
       ],
@@ -342,13 +440,18 @@ function localRank(mission: string, candidates: CandidateInput[]) {
     const terms = tokenize(text);
     const overlap = terms.filter((term) => missionTerms.includes(term)).length;
     const match = Math.min(82, 42 + overlap * 8 + Math.min((candidate.tags || []).length * 2, 8));
+    const isSelf = candidate.kind === 'self_profile';
     return {
       id: candidate.id,
       match,
       kind: candidate.kind || 'other',
       recommendedAction: 'review',
-      reason: overlap > 0 ? 'Missionと共通する語やテーマがあるため、確認候補として残しました。' : '無料ローカル判定では確信度が低いため、人間の確認を優先します。',
-      strategy: 'プロフィールや投稿内容を本人が確認してから、自然な交流方法を決めます。',
+      reason: isSelf
+        ? '無料ローカル判定ではプロフィール内容の共通語のみを確認しました。深い改善提案には無料LLMの設定が推奨です。'
+        : overlap > 0 ? 'Missionと共通する語やテーマがあるため、確認候補として残しました。' : '無料ローカル判定では確信度が低いため、人間の確認を優先します。',
+      strategy: isSelf
+        ? 'Missionが初見で伝わるか、作品への導線、最近の投稿テーマの偏りを本人が確認してください。'
+        : 'プロフィールや投稿内容を本人が確認してから、自然な交流方法を決めます。',
     };
   }).sort((a, b) => b.match - a.match);
 }
