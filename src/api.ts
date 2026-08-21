@@ -46,6 +46,25 @@ export interface XEnrichResponse {
   reason?: string;
 }
 
+export interface DiscoveredProfileResult {
+  platform: 'x' | 'instagram';
+  username: string;
+  profileUrl: string;
+  title: string;
+  snippet: string;
+  sourceUrl: string;
+  score: number;
+}
+
+export interface DiscoveryResponse {
+  enabled: boolean;
+  provider: string;
+  costUsd: number;
+  credits: number;
+  profiles: DiscoveredProfileResult[];
+  reason?: string;
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   if (!apiConfigured) throw new Error('API endpoint is not configured');
   const response = await fetch(`${apiBaseUrl}${path}`, {
@@ -62,6 +81,13 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function fetchBudget(userId = 'local-user') {
   return apiFetch<BudgetResponse>(`/api/budget?userId=${encodeURIComponent(userId)}`);
+}
+
+export function discoverSocialCandidates(mission: Mission, userId = 'local-user') {
+  return apiFetch<DiscoveryResponse>('/api/discover/social', {
+    method: 'POST',
+    body: JSON.stringify({ userId, mission: missionText(mission), maxPerPlatform: 12 }),
+  });
 }
 
 export function rankCandidates(mission: Mission, candidates: Candidate[], monthlyLimitUsd: number, userId = 'local-user') {
