@@ -19,5 +19,22 @@
 }
 .x-connection-details span { color: #8494a9; font-size: 9px; line-height: 1.5; }
 .x-connection-details b { color: #c8d3e2; margin-right: 5px; }
-.x-account-actions { display: grid; }
+.x-sync-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+.x-sync-summary span {
+  display: grid;
+  gap: 2px;
+  padding: 9px 7px;
+  border: 1px solid rgba(255,255,255,.06);
+  border-radius: 11px;
+  color: #72839a;
+  background: rgba(255,255,255,.025);
+  font-size: 7px;
+  text-align: center;
+}
+.x-sync-summary b { color: #d4deeb; font-size: 12px; }
+.x-account-actions { display: grid; gap: 7px; }
 .x-account-warning { color: #65758c !important; font-size: 8px !important; line-height: 1.55; }
