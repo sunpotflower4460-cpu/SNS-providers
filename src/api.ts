@@ -148,11 +148,11 @@ export async function rankCandidates(
   paidAllowed = true,
 ) {
   // Automatic/free-only ranking must not revisit a candidate that a prior AI pass has
-  // already left at review. Only untouched web-discovery review candidates retain this
-  // marker; manual ranking still evaluates the full candidate pool.
+  // already left at review. Both profile-only and concrete-post discoveries start with
+  // this reason prefix; any completed ranking pass replaces the reason.
   const rankingPool = paidAllowed
     ? candidates
-    : candidates.filter((candidate) => candidate.reason.includes('無料Web検索から候補として発見しました'));
+    : candidates.filter((candidate) => candidate.reason.startsWith('無料Web検索から候補'));
   if (!rankingPool.length) {
     return {
       provider: 'local',
