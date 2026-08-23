@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 
 const api = await readFile(new URL('../src/api.ts', import.meta.url), 'utf8');
+const app = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8');
 const store = await readFile(new URL('../src/store.ts', import.meta.url), 'utf8');
 const discoveryStore = await readFile(new URL('../src/discoveryStore.ts', import.meta.url), 'utf8');
 const requestContext = await readFile(new URL('../src/requestContext.ts', import.meta.url), 'utf8');
@@ -34,8 +35,21 @@ if (!api.includes('validSocialUsername(value.platform, value.username)')
 
 if (!store.includes('result.requestMissionKey && result.requestMissionKey !== currentMissionKey')
   || !store.includes('result.requestCandidateKey && result.requestCandidateKey !== candidateRequestKey(candidate)')
+  || !store.includes('result.requestSelfKey && result.requestSelfKey !== selfRequestKey(state.selfProfile.profileText, state.selfProfile.recentPostsText)')
   || !store.includes('usedUsd: Math.max(0, state.budget.usedUsd + Math.max(0, costUsd))')) {
   throw new Error('Stale AI recommendations can overwrite newer state or lose already-incurred cost accounting.');
+}
+
+if (!app.includes('setState((current) => applySelfAnalysis(current, result.results[0], result.costUsd))')
+  || app.includes('applySelfAnalysis(updateSelfProfileInputs(current, profileText, recentPostsText)')) {
+  throw new Error('Self-analysis completion can restore request-time profile text over newer state.');
+}
+
+if (!app.includes('onChange((current) => addCandidateFromReference(current, platform, value))')
+  || !app.includes('onChange((current) => ({')
+  || !app.includes('setFollowBackStatus(current, candidate.id'))
+  || !app.includes('onChange((current) => {\n      let next = updateMission(current')) {
+  throw new Error('Clipboard/Discover/Relations/Settings UI updates can overwrite newer async state.');
 }
 
 if (!discoveryStore.includes('profile.requestMissionKey && profile.requestMissionKey !== currentMissionKey')) {
@@ -50,4 +64,4 @@ if (!store.includes('bio: profile.description,')
   throw new Error('Official X empty bio/zero-post semantics can regress to stale local profile text.');
 }
 
-console.log('Request-context invariants OK: stale async AI/discovery results are discarded, malformed success payloads fail closed, incurred cost remains accounted, and empty X profile data is authoritative.');
+console.log('Request-context invariants OK: stale async AI/discovery/self-analysis results are discarded, UI writes merge into current state, malformed success payloads fail closed, incurred cost remains accounted, and empty X profile data is authoritative.');
