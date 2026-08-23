@@ -81,6 +81,7 @@ export interface RelationshipPolicy {
   dailyLightEngagementLimit?: number;
   dailyCleanupLimit?: number;
   dailySelfImproveLimit?: number;
+  autoReplenishEnabled?: boolean;
 }
 
 export interface SelfInsight {
