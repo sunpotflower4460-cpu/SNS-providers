@@ -17,6 +17,7 @@ export function applyOwnedXSyncWithDiscovery(state: AppState, result: XOwnedSync
   );
   const followingSet = new Set((result.following || []).map((user) => user.username.toLowerCase()));
   const additions: Candidate[] = [];
+  const observedAt = result.syncedAt || new Date().toISOString();
 
   for (const follower of result.followers) {
     const username = follower.username.toLowerCase();
@@ -37,7 +38,7 @@ export function applyOwnedXSyncWithDiscovery(state: AppState, result: XOwnedSync
       platformUserId: follower.id,
       verified: follower.verified,
       publicMetrics: follower.publicMetrics,
-      profileSyncedAt: result.syncedAt || new Date().toISOString(),
+      profileSyncedAt: observedAt,
       kind: 'other',
       match: 60,
       relationshipScore: mutual ? 32 : 24,
@@ -46,6 +47,10 @@ export function applyOwnedXSyncWithDiscovery(state: AppState, result: XOwnedSync
       strategy: 'まずプロフィールや最近の発信との相性を確認し、営業的なDMではなく自然な交流余地があるか判断します。',
       tags: ['inbound-follower', 'x-owned-sync'],
       recommendedAction: 'review',
+      // We do not know the historical follow date for an account first seen through the
+      // official snapshot. For a mutual, start the conservative review clock at the first
+      // observed sync so it participates in future full-cycle follow evidence.
+      followedAt: mutual ? observedAt : undefined,
       followBack: mutual ? true : null,
     };
     additions.push(candidate);
