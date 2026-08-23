@@ -70,12 +70,16 @@ const CACHE_TTL_MS = 20 * 60 * 60 * 1000;
 
 export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
   const userId = sanitizeUserId(body.userId || 'local-user');
-  const cached = await loadFreshCache(env, userId, Boolean(body.force));
-  if (cached) return { ...cached, source: 'cache', costUsd: 0 };
 
   if ((env.X_OWNED_READ_ELIGIBLE || '').trim().toLowerCase() !== 'true') {
     return disabled('X owned-read sync is disabled until X_OWNED_READ_ELIGIBLE=true is explicitly configured.');
   }
+
+  // Even a cache hit is owned-account data and therefore requires a currently valid
+  // read-only OAuth connection. This prevents stale cached data from outliving disconnect.
+  const accessToken = await getValidXAccessToken(env, userId);
+  const cached = await loadFreshCache(env, userId, Boolean(body.force));
+  if (cached) return { ...cached, source: 'cache', costUsd: 0 };
 
   const userReadRate = parsePositiveNumber(env.X_USER_READ_USD);
   const ownedReadRate = parsePositiveNumber(env.X_OWNED_READ_USD);
@@ -95,10 +99,6 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
   const allocation = allocateResources(maxOwnedResourcesByBudget, requestedFollowers, requestedFollowing, requestedPosts);
   const worstCaseCost = userReadRate + (allocation.followers + allocation.following + allocation.posts) * ownedReadRate;
   const paging = await loadPaging(env, userId);
-
-  // Token lookup/refresh is not a paid owned-data read. Resolve it before reserving
-  // budget so a missing/corrupt OAuth connection cannot consume the monthly cap.
-  const accessToken = await getValidXAccessToken(env, userId);
 
   const reservationId = await reserveBudget(env, userId, worstCaseCost, budget.effectiveLimit);
   if (!reservationId) return disabled('HARD LIMIT changed before the X sync budget could be reserved.');
