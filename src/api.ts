@@ -165,6 +165,7 @@ export async function rankCandidates(
         tags: candidate.tags.slice(0, 20),
         kind: candidate.kind,
         platform: candidate.platform,
+        currentMatch: candidate.match,
         publicMetrics: candidate.publicMetrics,
         relationshipStage: candidate.stage,
         relationshipScore: candidate.relationshipScore,
