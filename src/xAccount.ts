@@ -169,8 +169,11 @@ function validOwnedSyncResponse(value: unknown): value is XOwnedSyncResponse {
   if (value.followers != null && (!Array.isArray(value.followers) || !value.followers.every(validOwnedUser))) return false;
   if (value.following != null && (!Array.isArray(value.following) || !value.following.every(validOwnedUser))) return false;
   if (value.posts != null && (!Array.isArray(value.posts) || !value.posts.every(validOwnedPost))) return false;
+  if (value.coverage != null && !validCoverage(value.coverage)) return false;
   if (value.followEvidence != null && !validFollowEvidence(value.followEvidence)) return false;
-  if (value.syncedAt != null && !validIso(value.syncedAt)) return false;
+  if (value.requested != null && !validRequested(value.requested)) return false;
+  if (value.pacing != null && !validPacing(value.pacing)) return false;
+  if (value.syncedAt != null && (typeof value.syncedAt !== 'string' || !validIso(value.syncedAt))) return false;
   return true;
 }
 
@@ -198,6 +201,23 @@ function validOwnedPost(value: unknown): value is XOwnedPost {
     && nonNegativeFinite(value.publicMetrics.quotes);
 }
 
+function validCoverage(value: unknown) {
+  return isRecord(value)
+    && validCoverageSlice(value.followers)
+    && validCoverageSlice(value.following)
+    && isRecord(value.posts)
+    && nonNegativeFinite(value.posts.fetched)
+    && typeof value.posts.complete === 'boolean';
+}
+
+function validCoverageSlice(value: unknown) {
+  return isRecord(value)
+    && nonNegativeFinite(value.fetched)
+    && typeof value.complete === 'boolean'
+    && (value.cycle == null || nonNegativeFinite(value.cycle))
+    && (value.rotated == null || typeof value.rotated === 'boolean');
+}
+
 function validFollowEvidence(value: unknown): value is XFollowEvidence {
   return isRecord(value)
     && typeof value.complete === 'boolean'
@@ -207,6 +227,20 @@ function validFollowEvidence(value: unknown): value is XFollowEvidence {
     && value.seenKeys.every((key) => typeof key === 'string')
     && Array.isArray(value.unseenKeys)
     && value.unseenKeys.every((key) => typeof key === 'string');
+}
+
+function validRequested(value: unknown) {
+  return isRecord(value)
+    && nonNegativeFinite(value.followers)
+    && nonNegativeFinite(value.following)
+    && nonNegativeFinite(value.posts);
+}
+
+function validPacing(value: unknown) {
+  return isRecord(value)
+    && nonNegativeFinite(value.daysRemaining)
+    && nonNegativeFinite(value.pacedCapUsd)
+    && nonNegativeFinite(value.globalRemainingUsd);
 }
 
 function validMetrics(value: unknown): value is PublicMetrics {
