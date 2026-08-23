@@ -137,3 +137,5 @@ export interface AppState {
   xAccount: XOwnedAccountState;
   instagramAccount?: InstagramOwnedAccountState;
 }
+
+export type AppStateUpdater = (value: AppState | ((current: AppState) => AppState)) => void;
