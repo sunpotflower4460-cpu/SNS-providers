@@ -1,4 +1,5 @@
 import { apiBaseUrl, apiConfigured } from './api';
+import { fetchWithTimeout } from './fetchWithTimeout';
 import { getSyncToken } from './sync';
 
 export interface InstagramEngager {
@@ -28,14 +29,14 @@ export async function syncInstagramEngagers(userId = 'local-user') {
   if (!apiConfigured) throw new Error('Worker URLが設定されていません');
   const token = getSyncToken().trim();
   if (!token) throw new Error('先にSettingsの個人管理キーを保存してください');
-  const response = await fetch(`${apiBaseUrl}/api/instagram/engagers/sync`, {
+  const response = await fetchWithTimeout(`${apiBaseUrl}/api/instagram/engagers/sync`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({ userId, maxMedia: 8, maxCommentsPerMedia: 25 }),
-  });
+  }, 90_000, 'Instagram同期');
   const body = await response.json().catch(() => null) as unknown;
   if (!response.ok) {
     const message = isRecord(body) && typeof body.error === 'string' && body.error ? body.error : `Instagram sync returned ${response.status}`;
