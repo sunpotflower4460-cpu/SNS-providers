@@ -429,6 +429,12 @@ function Settings({ state, onChange }: { state: AppState; onChange: (state: AppS
   const [budget, setBudget] = useState(state.budget.monthlyLimitUsd);
   const [followBackDays, setFollowBackDays] = useState(state.relationshipPolicy.followBackReviewAfterDays);
 
+  useEffect(() => setMissionText(state.mission.text), [state.mission.text]);
+  useEffect(() => setPrimaryGoal(state.mission.primaryGoal), [state.mission.primaryGoal]);
+  useEffect(() => setCommunicationDNA(state.mission.communicationDNA), [state.mission.communicationDNA]);
+  useEffect(() => setBudget(state.budget.monthlyLimitUsd), [state.budget.monthlyLimitUsd]);
+  useEffect(() => setFollowBackDays(state.relationshipPolicy.followBackReviewAfterDays), [state.relationshipPolicy.followBackReviewAfterDays]);
+
   function persist() {
     let next = updateMission(state, { ...state.mission, text: missionText, primaryGoal, communicationDNA });
     next = { ...next, budget: { ...next.budget, monthlyLimitUsd: Math.max(0, budget), hardLimit: true } };
