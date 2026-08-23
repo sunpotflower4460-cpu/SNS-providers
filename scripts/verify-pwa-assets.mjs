@@ -54,7 +54,12 @@ if (!serviceWorker.includes('isApiLikeRequest(event.request, requestUrl)')
   throw new Error('Service Worker can cache personal API/JSON or Cache-Control: no-store responses.');
 }
 
-console.log('PWA assets OK: manifest identity, iOS metadata, icon dimensions, offline shell and API no-store boundaries are consistent.');
+if (!serviceWorker.includes("const CACHE_PREFIX = 'social-mission-'")
+  || !serviceWorker.includes('key.startsWith(CACHE_PREFIX) && key !== CACHE')) {
+  throw new Error('Service Worker cache cleanup can delete Cache Storage owned by another app on the same origin.');
+}
+
+console.log('PWA assets OK: manifest identity, iOS metadata, icon dimensions, offline shell, private-response no-store and app-scoped cache eviction are consistent.');
 
 async function assertNonEmpty(url) {
   const info = await stat(url);
