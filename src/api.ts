@@ -88,22 +88,40 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-export function fetchBudget(userId = 'local-user') {
-  return apiFetch<BudgetResponse>(`/api/budget?userId=${encodeURIComponent(userId)}`);
+export async function fetchBudget(userId = 'local-user') {
+  const result = await apiFetch<unknown>(`/api/budget?userId=${encodeURIComponent(userId)}`);
+  if (!isRecord(result)
+    || !nonNegativeFinite(result.usedUsd)
+    || !nonNegativeFinite(result.limitUsd)
+    || !nonNegativeFinite(result.remainingUsd)
+    || (result.ledgerAvailable != null && typeof result.ledgerAvailable !== 'boolean')) {
+    throw new Error('Budget API returned an invalid success response');
+  }
+  return result as unknown as BudgetResponse;
 }
 
-export function discoverSocialCandidates(mission: Mission, userId = 'local-user') {
-  return apiFetch<DiscoveryResponse>('/api/discover/social', {
+export async function discoverSocialCandidates(mission: Mission, userId = 'local-user') {
+  const result = await apiFetch<unknown>('/api/discover/social', {
     method: 'POST',
     body: JSON.stringify({ userId, mission: missionText(mission), maxPerPlatform: 12 }),
   });
+  if (!isRecord(result)
+    || typeof result.enabled !== 'boolean'
+    || typeof result.provider !== 'string'
+    || !nonNegativeFinite(result.costUsd)
+    || !nonNegativeFinite(result.credits)
+    || !Array.isArray(result.profiles)
+    || !result.profiles.every(validDiscoveredProfile)) {
+    throw new Error('Discovery API returned an invalid success response');
+  }
+  return result as unknown as DiscoveryResponse;
 }
 
-export function rankCandidates(mission: Mission, candidates: Candidate[], monthlyLimitUsd: number, userId = 'local-user') {
+export async function rankCandidates(mission: Mission, candidates: Candidate[], monthlyLimitUsd: number, userId = 'local-user') {
   // Score the entire local pool before taking the API-sized subset. Slicing first can
   // hide a lower-prior-match candidate that has much stronger relationship/context value.
   const selected = selectCandidatesForRanking(mission, candidates, 30);
-  return apiFetch<RankResponse>('/api/ai/rank', {
+  const result = await apiFetch<unknown>('/api/ai/rank', {
     method: 'POST',
     body: JSON.stringify({
       userId,
@@ -126,12 +144,13 @@ export function rankCandidates(mission: Mission, candidates: Candidate[], monthl
       })),
     }),
   });
+  return validateRankResponse(result);
 }
 
-export function analyzeSelfProfile(mission: Mission, profileText: string, recentPostsText: string, monthlyLimitUsd: number, userId = 'local-user') {
+export async function analyzeSelfProfile(mission: Mission, profileText: string, recentPostsText: string, monthlyLimitUsd: number, userId = 'local-user') {
   const compactProfile = profileText.trim().slice(0, 10_000);
   const compactPosts = recentPostsText.trim().slice(0, 20_000);
-  return apiFetch<RankResponse>('/api/ai/rank', {
+  const result = await apiFetch<unknown>('/api/ai/rank', {
     method: 'POST',
     body: JSON.stringify({
       userId,
@@ -148,15 +167,85 @@ export function analyzeSelfProfile(mission: Mission, profileText: string, recent
       }],
     }),
   });
+  return validateRankResponse(result);
 }
 
-export function enrichXProfiles(candidates: Candidate[], monthlyLimitUsd: number, userId = 'local-user') {
+export async function enrichXProfiles(candidates: Candidate[], monthlyLimitUsd: number, userId = 'local-user') {
   const usernames = [...new Set(candidates.filter((candidate) => candidate.platform === 'x').map((candidate) => candidate.username))].slice(0, 100);
-  if (!usernames.length) return Promise.resolve<XEnrichResponse>({ enabled: false, costUsd: 0, profiles: [], reason: 'No X candidates to enrich.' });
-  return apiFetch<XEnrichResponse>('/api/x/enrich', {
+  if (!usernames.length) return { enabled: false, costUsd: 0, profiles: [], reason: 'No X candidates to enrich.' } satisfies XEnrichResponse;
+  const result = await apiFetch<unknown>('/api/x/enrich', {
     method: 'POST',
     body: JSON.stringify({ userId, usernames, monthlyLimitUsd }),
   });
+  if (!isRecord(result)
+    || typeof result.enabled !== 'boolean'
+    || !nonNegativeFinite(result.costUsd)
+    || !Array.isArray(result.profiles)
+    || !result.profiles.every(validXProfile)) {
+    throw new Error('X enrich API returned an invalid success response');
+  }
+  return result as unknown as XEnrichResponse;
+}
+
+function validateRankResponse(value: unknown): RankResponse {
+  if (!isRecord(value)
+    || typeof value.provider !== 'string'
+    || typeof value.paid !== 'boolean'
+    || !nonNegativeFinite(value.costUsd)
+    || !Array.isArray(value.results)
+    || !value.results.every(validRankResult)) {
+    throw new Error('AI ranking API returned an invalid success response');
+  }
+  return value as unknown as RankResponse;
+}
+
+function validRankResult(value: unknown) {
+  return isRecord(value)
+    && typeof value.id === 'string'
+    && value.id.length > 0
+    && finiteNumber(value.match);
+}
+
+function validDiscoveredProfile(value: unknown) {
+  return isRecord(value)
+    && (value.platform === 'x' || value.platform === 'instagram')
+    && typeof value.username === 'string'
+    && value.username.length > 0
+    && typeof value.profileUrl === 'string'
+    && typeof value.title === 'string'
+    && typeof value.snippet === 'string'
+    && typeof value.sourceUrl === 'string'
+    && finiteNumber(value.score);
+}
+
+function validXProfile(value: unknown) {
+  return isRecord(value)
+    && typeof value.id === 'string'
+    && typeof value.username === 'string'
+    && typeof value.name === 'string'
+    && typeof value.description === 'string'
+    && typeof value.verified === 'boolean'
+    && validMetrics(value.publicMetrics);
+}
+
+function validMetrics(value: unknown) {
+  return isRecord(value)
+    && nonNegativeFinite(value.followers)
+    && nonNegativeFinite(value.following)
+    && nonNegativeFinite(value.posts)
+    && (value.listed == null || nonNegativeFinite(value.listed));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function finiteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function nonNegativeFinite(value: unknown): value is number {
+  return finiteNumber(value) && value >= 0;
 }
 
 function missionText(mission: Mission) {
