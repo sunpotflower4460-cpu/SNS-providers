@@ -163,9 +163,11 @@ export async function rankCandidates(
     } satisfies RankResponse;
   }
 
-  // Score the entire eligible local pool before taking the API-sized subset. Slicing first
-  // can hide a lower-prior-match candidate that has much stronger relationship/context value.
-  const selected = selectCandidatesForRanking(mission, rankingPool, 30);
+  // Manual ranking still scores the entire candidate pool before taking 30. The
+  // free-only automatic path scores its entire untouched-discovery pool before taking 30.
+  const selected = paidAllowed
+    ? selectCandidatesForRanking(mission, candidates, 30)
+    : selectCandidatesForRanking(mission, rankingPool, 30);
   const result = await apiFetch<unknown>('/api/ai/rank', {
     method: 'POST',
     body: JSON.stringify({
