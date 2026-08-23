@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 const router = await readFile(new URL('../worker/src/router.ts', import.meta.url), 'utf8');
 const providerApi = await readFile(new URL('../worker/src/index.ts', import.meta.url), 'utf8');
 const xOAuth = await readFile(new URL('../worker/src/xOAuth.ts', import.meta.url), 'utf8');
+const xOwned = await readFile(new URL('../worker/src/xOwned.ts', import.meta.url), 'utf8');
 const xFollowEvidence = await readFile(new URL('../worker/src/xFollowEvidence.ts', import.meta.url), 'utf8');
 const instagramOwned = await readFile(new URL('../worker/src/instagramOwned.ts', import.meta.url), 'utf8');
 const apiClient = await readFile(new URL('../src/api.ts', import.meta.url), 'utf8');
@@ -56,6 +57,15 @@ if (!providerApi.includes("markReservationUncertain(env, reservationId, 'user_re
 }
 if (providerApi.includes('DELETE FROM budget_ledger WHERE id = ?')) {
   throw new Error('A paid-provider failure path can delete an existing budget reservation.');
+}
+
+const ownedTokenIndex = xOwned.indexOf('const accessToken = await getValidXAccessToken(env, userId);');
+const ownedReservationIndex = xOwned.indexOf('const reservationId = await reserveBudget(env, userId, worstCaseCost, budget.effectiveLimit);');
+if (ownedTokenIndex < 0 || ownedReservationIndex < 0 || ownedTokenIndex > ownedReservationIndex) {
+  throw new Error('Owned-X can reserve paid budget before local OAuth token resolution succeeds.');
+}
+if (!xOwned.includes('await markReservationUncertain(env, reservationId);') || !xOwned.includes("'owned_sync_uncertain'")) {
+  throw new Error('Owned-X paid-read failures no longer retain an explicitly uncertain conservative reservation.');
 }
 
 for (const source of [router, providerApi]) {
@@ -160,4 +170,4 @@ if (!xOAuth.includes('persistTokenResponse(env, userId, refreshed, row.refresh_t
   throw new Error('X OAuth refresh can no longer reuse only the previously verified scope when scope metadata is omitted.');
 }
 
-console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, protected X OAuth status, UTF-8 + validated D1 snapshot versions, account-bound X/Instagram caches, fresh-event-only candidate revival, normalized local/JSON/D1 restores, no demo candidates, conservative CRM progression, valid X identifiers, canonical official-platform handoff, guarded social drafts + self-profile rewrite, validated provider JSON responses, full-pool AI prefiltering, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, requested+granted X scopes=${scopes.join(', ')}`);
+console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, protected X OAuth status, UTF-8 + validated D1 snapshot versions, account-bound X/Instagram caches, local-OAuth-before-paid-X reservation, fresh-event-only candidate revival, normalized local/JSON/D1 restores, no demo candidates, conservative CRM progression, valid X identifiers, canonical official-platform handoff, guarded social drafts + self-profile rewrite, validated provider JSON responses, full-pool AI prefiltering, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, requested+granted X scopes=${scopes.join(', ')}`);
