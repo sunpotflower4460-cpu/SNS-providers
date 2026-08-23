@@ -2,10 +2,10 @@ import { useState } from 'react';
 import { apiConfigured } from './api';
 import { syncInstagramEngagers } from './instagramAccount';
 import { applyInstagramEngagers } from './instagramOwnedStore';
-import type { AppState } from './types';
+import type { AppState, AppStateUpdater } from './types';
 import './instagramAccount.css';
 
-export default function InstagramAccountControls({ state, onChange }: { state: AppState; onChange: (state: AppState) => void }) {
+export default function InstagramAccountControls({ state, onChange }: { state: AppState; onChange: AppStateUpdater }) {
   const [syncing, setSyncing] = useState(false);
   const [note, setNote] = useState(apiConfigured ? 'Professionalアカウント連携はWorker設定後に利用できます' : 'Worker未接続');
 
@@ -13,17 +13,15 @@ export default function InstagramAccountControls({ state, onChange }: { state: A
     setSyncing(true);
     setNote('自分の投稿にコメントしてくれた人を公式APIから確認中…');
     try {
-      const before = state.candidates.length;
       const result = await syncInstagramEngagers();
       if (!result.enabled) {
         setNote(result.reason || 'Instagramコメント同期は現在無効です');
         return;
       }
-      const next = applyInstagramEngagers(state, result);
-      const added = Math.max(0, next.candidates.length - before);
-      onChange(next);
+      // Preserve edits made elsewhere while the network request was running.
+      onChange((current) => applyInstagramEngagers(current, result));
       const source = result.source === 'cache' ? 'キャッシュ' : 'Instagram公式API';
-      setNote(`${source}から同期 · 反応者${result.engagers.length}人 · 新規候補${added}人 · $0`);
+      setNote(`${source}から同期 · 反応者${result.engagers.length}人 · $0`);
     } catch (error) {
       setNote(error instanceof Error ? error.message : 'Instagram同期に失敗しました');
     } finally {
