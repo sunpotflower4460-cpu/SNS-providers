@@ -1,3 +1,5 @@
+import { fetchWithTimeout } from './fetchWithTimeout';
+
 export interface InstagramOwnedEnv {
   DB: D1Database;
   INSTAGRAM_ACCESS_TOKEN?: string;
@@ -153,12 +155,12 @@ async function fetchComments(token: string, version: string, mediaId: string, li
 }
 
 async function graphFetch<T>(url: string, token: string): Promise<T> {
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     headers: {
       authorization: `Bearer ${token}`,
       accept: 'application/json',
     },
-  });
+  }, 30_000, 'Instagram Graph API');
   const body = await response.json().catch(() => null) as (T & { error?: { message?: string } }) | null;
   if (!response.ok) {
     const detail = body && typeof body === 'object' && body.error?.message ? `: ${body.error.message.slice(0, 180)}` : '';
