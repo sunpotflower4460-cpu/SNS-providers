@@ -7,7 +7,7 @@ export { clearSyncToken, getSyncToken, setSyncToken } from './controlToken';
 
 const REMOTE_VERSION_KEY = 'sns-providers:remote-state-version';
 let memoryRemoteVersion: string | null = null;
-let remoteVersionInitialized = false;
+let memoryVersionAuthoritative = false;
 
 interface DownloadResponse {
   found: boolean;
@@ -21,38 +21,40 @@ interface UploadResponse {
 }
 
 export function getRemoteStateVersion() {
-  if (remoteVersionInitialized) return memoryRemoteVersion;
-  remoteVersionInitialized = true;
+  if (memoryVersionAuthoritative) return memoryRemoteVersion;
   try {
     const value = localStorage.getItem(REMOTE_VERSION_KEY);
     memoryRemoteVersion = validIso(value) ? value : null;
   } catch {
-    memoryRemoteVersion = null;
+    // Preserve the most recently known in-memory version while storage is unreadable.
   }
   return memoryRemoteVersion;
 }
 
 export function clearRemoteStateVersion() {
   memoryRemoteVersion = null;
-  remoteVersionInitialized = true;
   try {
     localStorage.removeItem(REMOTE_VERSION_KEY);
+    memoryVersionAuthoritative = false;
     return true;
   } catch {
+    // Prefer the cleared in-memory version over any stale disk version for this session.
+    memoryVersionAuthoritative = true;
     return false;
   }
 }
 
 function setRemoteStateVersion(updatedAt: string | null) {
   memoryRemoteVersion = validIso(updatedAt) ? updatedAt : null;
-  remoteVersionInitialized = true;
   try {
     if (memoryRemoteVersion) localStorage.setItem(REMOTE_VERSION_KEY, memoryRemoteVersion);
     else localStorage.removeItem(REMOTE_VERSION_KEY);
+    memoryVersionAuthoritative = false;
     return true;
   } catch {
     // Keep the authoritative version in memory so optimistic locking remains safe for
     // the current session. The caller is told persistence failed because reload loses it.
+    memoryVersionAuthoritative = true;
     return false;
   }
 }
