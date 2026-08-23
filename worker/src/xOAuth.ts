@@ -159,9 +159,9 @@ async function persistTokenResponse(env: XOAuthEnv, userId: string, token: XToke
 }
 
 function validateGrantedScopes(scopeValue?: string) {
-  const scopes = scopeValue?.trim()
-    ? [...new Set(scopeValue.trim().split(/\s+/).filter(Boolean))]
-    : [...READ_ONLY_SCOPES];
+  const rawScope = scopeValue?.trim();
+  if (!rawScope) throw new Error('X OAuth response is missing granted scope metadata');
+  const scopes = [...new Set(rawScope.split(/\s+/).filter(Boolean))];
   const unexpected = scopes.filter((scope) => !READ_ONLY_SCOPE_SET.has(scope));
   if (unexpected.length) throw new Error(`X OAuth returned unexpected scope(s): ${unexpected.join(', ')}`);
   const missing = READ_ONLY_SCOPES.filter((scope) => !scopes.includes(scope));
