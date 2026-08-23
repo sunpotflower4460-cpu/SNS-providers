@@ -26,13 +26,17 @@ const protectedProviderPaths = [
 ];
 
 for (const path of protectedProviderPaths) {
-  if (!router.includes(`'${path}'`)) {
-    throw new Error(`Missing protected provider path: ${path}`);
-  }
+  if (!router.includes(`'${path}'`)) throw new Error(`Missing protected provider path: ${path}`);
 }
 
 if (!/if \(PROVIDER_COST_PATHS\.has\(url\.pathname\)\)\s*\{[\s\S]{0,300}?authorizeSync\(request, env\)/.test(router)) {
   throw new Error('Provider-cost routes are not guarded by authorizeSync().');
+}
+if (!router.includes('enforceSingleUserRequest(request, url)')
+  || !router.includes("queryUserId.trim() !== 'local-user'")
+  || !router.includes("body.userId.trim() !== 'local-user'")
+  || !router.includes("userId !== 'local-user'")) {
+  throw new Error('The single-user deployment boundary can be bypassed by rotating userId namespaces.');
 }
 
 if (!/request\.method === 'GET' && url\.pathname === '\/api\/x\/oauth\/status'\)\s*\{[\s\S]{0,300}?authorizeSync\(request, env\)/.test(router)) {
@@ -47,6 +51,11 @@ if (!router.includes('expectedUpdatedAt') || !router.includes('INSERT OR IGNORE 
 }
 if (!router.includes('new TextEncoder().encode(stateJson).byteLength > 2_000_000')) {
   throw new Error('D1 state snapshot size is no longer enforced using UTF-8 bytes.');
+}
+if (!router.includes('const updatedAt = nextSnapshotVersion(body.expectedUpdatedAt)')
+  || !router.includes('Math.max(now, previousMs + 1)')
+  || !router.includes('expectedUpdatedAt must be a valid ISO timestamp')) {
+  throw new Error('D1 optimistic-concurrency versions are not strictly monotonic and validated.');
 }
 if (!syncClient.includes('validIso(result.updatedAt)') || !syncClient.includes('D1 download returned an incomplete state snapshot')) {
   throw new Error('The client can persist malformed D1 version/snapshot responses.');
@@ -98,17 +107,43 @@ if (!backup.includes('safeSocialUrl(raw.platform, raw.engagementUrl)') || !backu
 if (!backup.includes('secondaryGoals') || !backup.includes('monthlyLimitUsd: clampNumber') || !backup.includes('hardLimit: true')) {
   throw new Error('Full restored AppState normalization or HARD LIMIT restoration was weakened.');
 }
+if (!backup.includes('dedupeCandidates(normalizedCandidates)')
+  || !backup.includes('dedupeById(normalizedInteractions.filter((interaction) => candidateIds.has(interaction.candidateId)))')
+  || !backup.includes('dedupeById(normalizedInsights)')) {
+  throw new Error('Restore normalization can retain duplicate candidates/history or discard a valid duplicate-id interaction in the wrong order.');
+}
 if (!syncControls.includes('normalizeAppState(result.state)') || !syncControls.includes('validateAppState(restored)')) {
   throw new Error('D1 restores can bypass AppState normalization/validation.');
 }
 if (!backup.includes('legacyDemoCandidates') || !store.includes('normalizeAppState(state)') || !store.includes('candidates: Array.isArray(parsed.candidates)')) {
   throw new Error('Persisted local state can bypass normalization or reintroduce legacy demo candidates.');
 }
+if (!app.includes('setMissionText(state.mission.text)')
+  || !app.includes('setBudget(state.budget.monthlyLimitUsd)')
+  || !app.includes('setFollowBackDays(state.relationshipPolicy.followBackReviewAfterDays)')) {
+  throw new Error('Settings form state can remain stale after a JSON/D1 restore and overwrite restored values.');
+}
+
 if (!store.includes("interaction.action === 'kept'") || !store.includes('advanceRelationshipStage') || !store.includes("target?.recommendedAction === 'unfollow_review'")) {
   throw new Error('Manual relationship outcomes no longer feed the conservative CRM progression/cleanup distinction.');
 }
 if (!store.includes('if (rawCandidate.skipped) return rawCandidate;') || !store.includes("recommendedAction: 'review' as const")) {
   throw new Error('Dismissed candidates can be re-promoted into cleanup advice immediately.');
+}
+if (!store.includes("const followedAt = !candidate.skipped && isFollowing ? candidate.followedAt ?? syncedAt : candidate.followedAt;")) {
+  throw new Error('Official X following evidence does not establish a conservative first-observed follow timestamp.');
+}
+if (!store.includes("candidate.recommendedAction === 'follow' && candidate.followedAt")
+  || !store.includes("candidate.recommendedAction === 'unfollow_review' && !candidate.followedAt")) {
+  throw new Error('Local relationship normalization can surface impossible follow/unfollow actions.');
+}
+if (!store.includes("const cleanupRemove = action === 'skipped' && target?.recommendedAction === 'unfollow_review';")
+  || !store.includes('followedAt: cleanupRemove ? undefined : candidate.followedAt')
+  || !store.includes('followBack: cleanupRemove ? null : candidate.followBack')) {
+  throw new Error('Manual unfollow completion can leave stale followed/follow-back state behind.');
+}
+if (!store.includes('if (!existing.skipped) return state;') || !store.includes('以前に見送った候補を、手動操作で再び候補へ戻しました。')) {
+  throw new Error('An explicit manual re-add cannot intentionally reactivate a previously dismissed candidate.');
 }
 if (!app.includes("!candidate.skipped && candidate.stage !== 'discovered'")) {
   throw new Error('Dismissed/unfollowed candidates can remain visible as actively tracked Relations.');
@@ -127,6 +162,9 @@ if (!xOwnedStore.includes("if (candidate.skipped || candidate.platform !== 'x' |
 }
 if (!instagramOwnedStore.includes('isFreshCommentAfterDismissal') || !instagramOwnedStore.includes('if (existing.skipped && !freshContact) continue;')) {
   throw new Error('Old/cached Instagram comments can revive explicitly dismissed candidates.');
+}
+if (!instagramOwnedStore.includes('latestIso(existing.lastInteractionAt, engager.lastCommentAt)')) {
+  throw new Error('Instagram sync can regress a newer manual relationship interaction timestamp.');
 }
 if (social.includes('intent/tweet') || social.includes('intent/follow')) {
   throw new Error('Legacy X intent handoff can bypass the official profile/conversation review flow.');
@@ -156,9 +194,7 @@ for (const scope of requiredReadScopes) {
 }
 
 const writeScopes = scopes.filter((scope) => scope.includes('.write') || scope === 'dm.write');
-if (writeScopes.length) {
-  throw new Error(`Write-capable X OAuth scope detected: ${writeScopes.join(', ')}`);
-}
+if (writeScopes.length) throw new Error(`Write-capable X OAuth scope detected: ${writeScopes.join(', ')}`);
 if (!xOAuth.includes('validateGrantedScopes(token.scope, existingGrantedScope)')
   || !xOAuth.includes('X OAuth response is missing granted scope metadata')
   || !xOAuth.includes('X OAuth returned unexpected scope(s)')
@@ -170,4 +206,4 @@ if (!xOAuth.includes('persistTokenResponse(env, userId, refreshed, row.refresh_t
   throw new Error('X OAuth refresh can no longer reuse only the previously verified scope when scope metadata is omitted.');
 }
 
-console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, protected X OAuth status, UTF-8 + validated D1 snapshot versions, account-bound X/Instagram caches, local-OAuth-before-paid-X reservation, fresh-event-only candidate revival, normalized local/JSON/D1 restores, no demo candidates, conservative CRM progression, valid X identifiers, canonical official-platform handoff, guarded social drafts + self-profile rewrite, validated provider JSON responses, full-pool AI prefiltering, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, requested+granted X scopes=${scopes.join(', ')}`);
+console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, single-user namespace enforcement, protected X OAuth status, UTF-8 + monotonic validated D1 snapshot versions, account-bound X/Instagram caches, local-OAuth-before-paid-X reservation, fresh-event-only candidate revival, normalized+deduplicated local/JSON/D1 restores, restore-aware Settings, conservative CRM progression, first-observed X follows, explicit manual reactivation, cleared manual unfollows, valid X identifiers, canonical official-platform handoff, guarded social drafts + self-profile rewrite, validated provider JSON responses, full-pool AI prefiltering, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, requested+granted X scopes=${scopes.join(', ')}`);
