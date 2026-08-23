@@ -1,3 +1,5 @@
+import { fetchWithTimeout } from './fetchWithTimeout';
+
 export interface DiscoveryEnv {
   TAVILY_API_KEY?: string;
   TAVILY_BILLING_MODE?: 'free' | 'paid';
@@ -43,7 +45,7 @@ export async function discoverSocialProfiles(mission: string, env: DiscoveryEnv,
   ];
 
   const settled = await Promise.allSettled(searches.map(async (search) => {
-    const response = await fetch('https://api.tavily.com/search', {
+    const response = await fetchWithTimeout('https://api.tavily.com/search', {
       method: 'POST',
       headers: {
         authorization: `Bearer ${env.TAVILY_API_KEY}`,
@@ -62,7 +64,7 @@ export async function discoverSocialProfiles(mission: string, env: DiscoveryEnv,
         safe_search: true,
         include_usage: true,
       }),
-    });
+    }, 45_000, 'Tavily search');
     if (!response.ok) throw new Error(`Tavily returned ${response.status}`);
     const data = await response.json<TavilyResponse>();
     return { platform: search.platform, data };
