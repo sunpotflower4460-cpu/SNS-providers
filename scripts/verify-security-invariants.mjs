@@ -3,10 +3,17 @@ import { readFile } from 'node:fs/promises';
 const router = await readFile(new URL('../worker/src/router.ts', import.meta.url), 'utf8');
 const providerApi = await readFile(new URL('../worker/src/index.ts', import.meta.url), 'utf8');
 const xOAuth = await readFile(new URL('../worker/src/xOAuth.ts', import.meta.url), 'utf8');
+const xFollowEvidence = await readFile(new URL('../worker/src/xFollowEvidence.ts', import.meta.url), 'utf8');
 const instagramOwned = await readFile(new URL('../worker/src/instagramOwned.ts', import.meta.url), 'utf8');
+const apiClient = await readFile(new URL('../src/api.ts', import.meta.url), 'utf8');
 const xAccount = await readFile(new URL('../src/xAccount.ts', import.meta.url), 'utf8');
+const xOwnedStore = await readFile(new URL('../src/xOwnedStore.ts', import.meta.url), 'utf8');
+const instagramOwnedStore = await readFile(new URL('../src/instagramOwnedStore.ts', import.meta.url), 'utf8');
+const instagramAccount = await readFile(new URL('../src/instagramAccount.ts', import.meta.url), 'utf8');
 const backup = await readFile(new URL('../src/backup.ts', import.meta.url), 'utf8');
+const syncClient = await readFile(new URL('../src/sync.ts', import.meta.url), 'utf8');
 const syncControls = await readFile(new URL('../src/SyncControls.tsx', import.meta.url), 'utf8');
+const app = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8');
 const store = await readFile(new URL('../src/store.ts', import.meta.url), 'utf8');
 const social = await readFile(new URL('../src/social.ts', import.meta.url), 'utf8');
 
@@ -40,6 +47,9 @@ if (!router.includes('expectedUpdatedAt') || !router.includes('INSERT OR IGNORE 
 if (!router.includes('new TextEncoder().encode(stateJson).byteLength > 2_000_000')) {
   throw new Error('D1 state snapshot size is no longer enforced using UTF-8 bytes.');
 }
+if (!syncClient.includes('validIso(result.updatedAt)') || !syncClient.includes('D1 download returned an incomplete state snapshot')) {
+  throw new Error('The client can persist malformed D1 version/snapshot responses.');
+}
 
 if (!providerApi.includes("markReservationUncertain(env, reservationId, 'user_read_uncertain')") || !providerApi.includes("markReservationUncertain(env, reservationId, 'rank_uncertain')")) {
   throw new Error('Paid-provider uncertainty no longer retains conservative budget reservations.');
@@ -63,6 +73,14 @@ if (!providerApi.includes("recommendedAction === 'reply' && !hasEngagementContex
 if (!providerApi.includes("candidate.kind === 'self_profile'\n      || (recommendedAction === 'reply'")) {
   throw new Error('Self-profile rewrite drafts are no longer preserved separately from guarded social reply/DM drafts.');
 }
+if (!apiClient.includes('selectCandidatesForRanking(mission, candidates, 30)')) {
+  throw new Error('AI ranking can pre-slice the candidate pool before local quality/relationship scoring.');
+}
+if (!apiClient.includes('API returned an empty or invalid JSON response')
+  || !xAccount.includes('X account API returned an empty or invalid JSON response')
+  || !instagramAccount.includes('Instagram sync returned an invalid success response')) {
+  throw new Error('Client provider integrations can accept malformed successful JSON responses.');
+}
 
 if (!backup.includes('safeSocialUrl(raw.platform, raw.engagementUrl)') || !backup.includes("profileUrl: raw.platform === 'x' ? `https://x.com/${username}`")) {
   throw new Error('Restored state no longer canonicalizes social URLs.');
@@ -82,8 +100,23 @@ if (!store.includes("interaction.action === 'kept'") || !store.includes('advance
 if (!store.includes('if (rawCandidate.skipped) return rawCandidate;') || !store.includes("recommendedAction: 'review' as const")) {
   throw new Error('Dismissed candidates can be re-promoted into cleanup advice immediately.');
 }
+if (!app.includes("!candidate.skipped && candidate.stage !== 'discovered'")) {
+  throw new Error('Dismissed/unfollowed candidates can remain visible as actively tracked Relations.');
+}
 if (!store.includes("if (platform === 'x') return /^[A-Za-z0-9_]{1,15}$/.test(username) ? username : '';")) {
   throw new Error('Manual X candidate input is no longer constrained to valid X handle shape.');
+}
+if (!xFollowEvidence.includes("return /^[A-Za-z0-9_]{1,15}$/.test(username) ? username : '';")) {
+  throw new Error('Follower-cycle evidence can accept non-canonical X handles.');
+}
+if (!xOwnedStore.includes('if (existing) continue;') || xOwnedStore.includes('reactivated = new Set')) {
+  throw new Error('A current X follower snapshot can be mistaken for a fresh event and revive dismissed candidates.');
+}
+if (!xOwnedStore.includes("if (candidate.skipped || candidate.platform !== 'x' || !candidate.followedAt) return candidate;")) {
+  throw new Error('Full-cycle X evidence can mutate dismissed candidates.');
+}
+if (!instagramOwnedStore.includes('isFreshCommentAfterDismissal') || !instagramOwnedStore.includes('if (existing.skipped && !freshContact) continue;')) {
+  throw new Error('Old/cached Instagram comments can revive explicitly dismissed candidates.');
 }
 if (social.includes('intent/tweet') || social.includes('intent/follow')) {
   throw new Error('Legacy X intent handoff can bypass the official profile/conversation review flow.');
@@ -116,8 +149,15 @@ const writeScopes = scopes.filter((scope) => scope.includes('.write') || scope =
 if (writeScopes.length) {
   throw new Error(`Write-capable X OAuth scope detected: ${writeScopes.join(', ')}`);
 }
-if (!xOAuth.includes('validateGrantedScopes(token.scope)') || !xOAuth.includes('X OAuth returned unexpected scope(s)') || !xOAuth.includes('X OAuth response is missing required scope(s)')) {
-  throw new Error('X OAuth no longer fail-closes on unexpected or missing granted scopes.');
+if (!xOAuth.includes('validateGrantedScopes(token.scope, existingGrantedScope)')
+  || !xOAuth.includes('X OAuth response is missing granted scope metadata')
+  || !xOAuth.includes('X OAuth returned unexpected scope(s)')
+  || !xOAuth.includes('X OAuth response is missing required scope(s)')
+  || !xOAuth.includes("token.token_type || '').trim().toLowerCase() !== 'bearer'")) {
+  throw new Error('X OAuth no longer fail-closes on token type or requested/granted scope boundaries.');
+}
+if (!xOAuth.includes('persistTokenResponse(env, userId, refreshed, row.refresh_token_enc, row.scope)')) {
+  throw new Error('X OAuth refresh can no longer reuse only the previously verified scope when scope metadata is omitted.');
 }
 
-console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, protected X OAuth status, UTF-8 snapshot limit, account-bound X/Instagram caches, normalized local/JSON/D1 restores, no demo candidates, conservative CRM progression, valid manual X handles, canonical official-platform handoff, guarded social drafts + self-profile rewrite, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, requested+granted X scopes=${scopes.join(', ')}`);
+console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, protected X OAuth status, UTF-8 + validated D1 snapshot versions, account-bound X/Instagram caches, fresh-event-only candidate revival, normalized local/JSON/D1 restores, no demo candidates, conservative CRM progression, valid X identifiers, canonical official-platform handoff, guarded social drafts + self-profile rewrite, validated provider JSON responses, full-pool AI prefiltering, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, requested+granted X scopes=${scopes.join(', ')}`);
