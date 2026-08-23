@@ -7,6 +7,7 @@ const xOwned = await readFile(new URL('../worker/src/xOwned.ts', import.meta.url
 const xFollowEvidence = await readFile(new URL('../worker/src/xFollowEvidence.ts', import.meta.url), 'utf8');
 const instagramOwned = await readFile(new URL('../worker/src/instagramOwned.ts', import.meta.url), 'utf8');
 const apiClient = await readFile(new URL('../src/api.ts', import.meta.url), 'utf8');
+const controlToken = await readFile(new URL('../src/controlToken.ts', import.meta.url), 'utf8');
 const xAccount = await readFile(new URL('../src/xAccount.ts', import.meta.url), 'utf8');
 const xOwnedStore = await readFile(new URL('../src/xOwnedStore.ts', import.meta.url), 'utf8');
 const instagramOwnedStore = await readFile(new URL('../src/instagramOwnedStore.ts', import.meta.url), 'utf8');
@@ -64,11 +65,31 @@ if (!router.includes('const updatedAt = nextSnapshotVersion(body.expectedUpdated
 if (!syncClient.includes('validIso(result.updatedAt)') || !syncClient.includes('D1 download returned an incomplete state snapshot')) {
   throw new Error('The client can persist malformed D1 version/snapshot responses.');
 }
-if (!syncClient.includes('expectedUpdatedAt: string | null = getRemoteStateVersion()')
-  || !syncControls.includes('expectedVersion = previous === next ? getRemoteStateVersion() : null')
-  || !syncControls.includes('setSyncToken(previous)')
+if (!apiClient.includes('(tokenOverride ?? getSyncToken()).trim()')
+  || !apiClient.includes("fetchBudget(userId = 'local-user', tokenOverride?: string)")
+  || !syncControls.includes("fetchBudget('local-user', next)")
   || !syncControls.includes('変更は保存していません')) {
-  throw new Error('Trying an invalid replacement control token can destroy the prior token or D1 optimistic-lock version.');
+  throw new Error('Replacement control tokens can no longer be verified before persistence.');
+}
+const candidateVerifyIndex = syncControls.indexOf("fetchBudget('local-user', next)");
+const candidatePersistIndex = syncControls.indexOf('const tokenPersisted = setSyncToken(next);', candidateVerifyIndex);
+if (candidateVerifyIndex < 0 || candidatePersistIndex < 0 || candidateVerifyIndex > candidatePersistIndex) {
+  throw new Error('A replacement control token can be persisted before the Worker validates it.');
+}
+if (!controlToken.includes('let memoryToken: string | null = null;')
+  || !controlToken.includes('return persisted;')
+  || !controlToken.includes('notifyControlTokenChanged();')) {
+  throw new Error('Control-token storage failures no longer preserve session behavior or report persistence status.');
+}
+if (!syncClient.includes('let memoryRemoteVersion: string | null = null;')
+  || !syncClient.includes('const versionPersisted = setRemoteStateVersion(result.updatedAt);')
+  || !syncClient.includes('return { ...result, versionPersisted };')
+  || !syncControls.includes('result.versionPersisted')) {
+  throw new Error('A localStorage failure can discard the current-session D1 optimistic-lock version or be reported as fully persisted.');
+}
+if (!syncClient.includes('expectedUpdatedAt: string | null = getRemoteStateVersion()')
+  || !syncControls.includes('expectedVersion = previous === next ? getRemoteStateVersion() : null')) {
+  throw new Error('D1 upload no longer uses the last known optimistic-lock version for the active key.');
 }
 
 if (!providerApi.includes("markReservationUncertain(env, reservationId, 'user_read_uncertain')") || !providerApi.includes("markReservationUncertain(env, reservationId, 'rank_uncertain')")) {
@@ -256,4 +277,4 @@ if (!/DELETE FROM x_oauth_tokens[\s\S]{0,500}?try \{[\s\S]{0,250}?clearOwnedXDer
   throw new Error('X disconnect can report failure after the authoritative token row was already deleted.');
 }
 
-console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, single-user namespace enforcement, protected X OAuth status, UTF-8 + monotonic validated D1 snapshot versions, DB-level non-negative HARD LIMIT constraints, rollback-safe control-token changes, account-bound X/Instagram caches, local-OAuth-before-paid-X reservation, fresh-event-only candidate revival, normalized+deduplicated local/JSON/D1 restores, restore-aware Settings, async latest-state merges, conservative CRM progression, first-observed X follows, explicit manual reactivation, cleared manual unfollows, valid X identifiers, canonical official-platform handoff, guarded social drafts + self-profile rewrite, validated provider/X success payloads, full-pool AI prefiltering, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, strict stored/session OAuth validation, requested+granted X scopes=${scopes.join(', ')}`);
+console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, single-user namespace enforcement, protected X OAuth status, UTF-8 + monotonic validated D1 snapshot versions, DB-level non-negative HARD LIMIT constraints, pre-validated/session-safe control-token changes, in-memory optimistic-lock fallback, account-bound X/Instagram caches, local-OAuth-before-paid-X reservation, fresh-event-only candidate revival, normalized+deduplicated local/JSON/D1 restores, restore-aware Settings, async latest-state merges, conservative CRM progression, first-observed X follows, explicit manual reactivation, cleared manual unfollows, valid X identifiers, canonical official-platform handoff, guarded social drafts + self-profile rewrite, validated provider/X success payloads, full-pool AI prefiltering, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, strict stored/session OAuth validation, requested+granted X scopes=${scopes.join(', ')}`);
