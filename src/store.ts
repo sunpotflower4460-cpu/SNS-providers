@@ -204,8 +204,8 @@ export function applyOwnedXSync(state: AppState, result: XOwnedSyncResponse): Ap
     const isFollower = followerSet.has(username);
     const isFollowing = followingSet.has(username);
     const followedAt = !candidate.skipped && isFollowing ? candidate.followedAt ?? syncedAt : candidate.followedAt;
-    const followBack = isFollower ? true : followersComplete && followedAt ? false : candidate.followBack;
-    const stage = isFollowing && (candidate.stage === 'discovered' || candidate.stage === 'interested') ? 'following' as const : candidate.stage;
+    const followBack = candidate.skipped ? candidate.followBack : isFollower ? true : followersComplete && followedAt ? false : candidate.followBack;
+    const stage = !candidate.skipped && isFollowing && (candidate.stage === 'discovered' || candidate.stage === 'interested') ? 'following' as const : candidate.stage;
     return {
       ...candidate,
       stage,
