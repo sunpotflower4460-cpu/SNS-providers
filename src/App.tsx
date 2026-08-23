@@ -5,7 +5,8 @@ import { getSyncToken } from './controlToken';
 import DailyQueue from './DailyQueue';
 import { buildDailyQueue, queueSummary } from './daily';
 import { mergeDiscoveredProfiles } from './discoveryStore';
-import { addCandidateFromReference, applyRankResults, applySelfAnalysis, applyXProfiles, loadState, recordInteraction, saveState, setFollowBackStatus, syncBudget, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
+import { resolveVisibleResult } from './resultResolution';
+import { addCandidateFromReference, applyRankResults, applySelfAnalysis, applyXProfiles, loadState, saveState, setFollowBackStatus, syncBudget, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
 import { copyDraft, openCandidate, platformLabel } from './social';
 import type { AppState, AppStateUpdater, Candidate, Mission, Platform } from './types';
 import { useLocalDayKey } from './useLocalDay';
@@ -80,7 +81,7 @@ function App() {
 
   function resolvePending(action: 'followed' | 'skipped' | 'later' | 'kept') {
     if (!pending) return;
-    if (action !== 'later') setState((current) => recordInteraction(current, pending.id, action));
+    if (action !== 'later') setState((current) => resolveVisibleResult(current, pending, action));
     setPending(null);
   }
 
