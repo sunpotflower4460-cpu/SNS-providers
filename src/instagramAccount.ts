@@ -51,47 +51,60 @@ function validInstagramResponse(value: unknown): value is InstagramEngagerSyncRe
     || !['instagram', 'cache', 'disabled'].includes(String(value.source || ''))
     || !nonNegativeFinite(value.externalCostUsd)
     || !Array.isArray(value.engagers)
+    || value.engagers.length > 80
     || !value.engagers.every(validEngager)) return false;
 
-  if (!value.enabled) return value.source === 'disabled';
-  if (value.source === 'disabled') return false;
-  if (value.syncedAt != null && (typeof value.syncedAt !== 'string' || !validIso(value.syncedAt))) return false;
-  if (value.accountId != null && (typeof value.accountId !== 'string' || !/^\d{4,30}$/.test(value.accountId))) return false;
-  if (value.mediaScanned != null && !nonNegativeFinite(value.mediaScanned)) return false;
-  if (value.commentEvents != null && !nonNegativeFinite(value.commentEvents)) return false;
+  if (!value.enabled) {
+    return value.source === 'disabled'
+      && value.externalCostUsd === 0
+      && value.engagers.length === 0;
+  }
+  if (value.source === 'disabled' || value.externalCostUsd !== 0) return false;
+  if (typeof value.syncedAt !== 'string' || !validIso(value.syncedAt)) return false;
+  if (typeof value.accountId !== 'string' || !/^\d{4,30}$/.test(value.accountId)) return false;
+  if (!boundedNonNegativeInteger(value.mediaScanned, 12)) return false;
+  if (!boundedNonNegativeInteger(value.commentEvents, 600)) return false;
   return true;
 }
 
 function validEngager(value: unknown): value is InstagramEngager {
   return isRecord(value)
     && typeof value.id === 'string'
-    && value.id.length > 0
+    && /^(?:\d{1,30}|username:[A-Za-z0-9._]{1,30})$/.test(value.id)
     && typeof value.username === 'string'
     && /^[A-Za-z0-9._]{1,30}$/.test(value.username)
     && typeof value.profileUrl === 'string'
     && validInstagramProfileUrl(value.profileUrl, value.username)
-    && nonNegativeFinite(value.commentCount)
-    && nonNegativeFinite(value.mediaCount)
+    && boundedPositiveInteger(value.commentCount, 600)
+    && boundedPositiveInteger(value.mediaCount, 12)
     && typeof value.lastCommentText === 'string'
+    && value.lastCommentText.length <= 500
     && nullableIso(value.lastCommentAt)
-    && (value.latestMediaPermalink == null || (typeof value.latestMediaPermalink === 'string' && validInstagramUrl(value.latestMediaPermalink)));
+    && (value.latestMediaPermalink == null || (typeof value.latestMediaPermalink === 'string' && validInstagramMediaUrl(value.latestMediaPermalink)));
 }
 
 function validInstagramProfileUrl(value: string, username: string) {
+  if (value.length > 2000) return false;
   try {
     const url = new URL(value);
     const host = url.hostname.replace(/^www\./, '').toLowerCase();
-    const first = url.pathname.split('/').filter(Boolean)[0] || '';
-    return url.protocol === 'https:' && host === 'instagram.com' && first.toLowerCase() === username.toLowerCase();
+    const parts = url.pathname.split('/').filter(Boolean);
+    return url.protocol === 'https:'
+      && host === 'instagram.com'
+      && parts.length === 1
+      && parts[0].toLowerCase() === username.toLowerCase();
   } catch {
     return false;
   }
 }
 
-function validInstagramUrl(value: string) {
+function validInstagramMediaUrl(value: string) {
+  if (value.length > 2000) return false;
   try {
     const url = new URL(value);
-    return url.protocol === 'https:' && url.hostname.replace(/^www\./, '').toLowerCase() === 'instagram.com';
+    const host = url.hostname.replace(/^www\./, '').toLowerCase();
+    const first = url.pathname.split('/').filter(Boolean)[0]?.toLowerCase() || '';
+    return url.protocol === 'https:' && host === 'instagram.com' && ['p', 'reel', 'reels', 'tv'].includes(first);
   } catch {
     return false;
   }
@@ -111,4 +124,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function nonNegativeFinite(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function boundedNonNegativeInteger(value: unknown, max: number) {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= max;
+}
+
+function boundedPositiveInteger(value: unknown, max: number) {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= max;
 }
