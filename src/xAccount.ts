@@ -1,5 +1,6 @@
 import { apiBaseUrl, apiConfigured } from './api';
 import { getSyncToken } from './controlToken';
+import { fetchWithTimeout } from './fetchWithTimeout';
 import type { Candidate, PublicMetrics } from './types';
 
 export interface XOAuthStatus {
@@ -75,7 +76,7 @@ export interface XOwnedSyncResponse {
 export async function fetchXOAuthStatus(userId = 'local-user') {
   if (!apiConfigured) return { configured: false, connected: false, scopes: [], expiresAt: null, updatedAt: null, refreshable: false } satisfies XOAuthStatus;
   const token = requiredControlToken();
-  const result = await request<unknown>(`/api/x/oauth/status?userId=${encodeURIComponent(userId)}`, undefined, token);
+  const result = await request<unknown>(`/api/x/oauth/status?userId=${encodeURIComponent(userId)}`, undefined, token, 30_000);
   if (!validOAuthStatus(result)) throw new Error('X OAuth status returned an invalid success response');
   return result;
 }
@@ -83,7 +84,7 @@ export async function fetchXOAuthStatus(userId = 'local-user') {
 export async function startXOAuth() {
   if (!apiConfigured) throw new Error('Worker URLが設定されていません');
   const token = requiredControlToken();
-  const result = await request<unknown>('/api/x/oauth/start', { method: 'POST' }, token);
+  const result = await request<unknown>('/api/x/oauth/start', { method: 'POST' }, token, 30_000);
   if (!isRecord(result) || typeof result.authorizeUrl !== 'string' || !validAuthorizeUrl(result.authorizeUrl)) {
     throw new Error('X認可URLを取得できませんでした');
   }
@@ -93,7 +94,7 @@ export async function startXOAuth() {
 export async function disconnectXOAuth(userId = 'local-user') {
   if (!apiConfigured) throw new Error('Worker URLが設定されていません');
   const token = requiredControlToken();
-  const result = await request<unknown>(`/api/x/oauth/disconnect?userId=${encodeURIComponent(userId)}`, { method: 'DELETE' }, token);
+  const result = await request<unknown>(`/api/x/oauth/disconnect?userId=${encodeURIComponent(userId)}`, { method: 'DELETE' }, token, 30_000);
   if (!isRecord(result) || result.ok !== true) throw new Error('X接続解除の成功応答が不正です');
   return { ok: true };
 }
@@ -119,7 +120,7 @@ export async function syncOwnedXData(monthlyLimitUsd: number, candidates: Candid
       maxPosts: 20,
       trackedAccounts,
     }),
-  }, token);
+  }, token, 90_000);
   if (!validOwnedSyncResponse(result)) throw new Error('X owned sync returned an invalid success response');
   return result;
 }
@@ -130,15 +131,15 @@ function requiredControlToken() {
   return token;
 }
 
-async function request<T>(path: string, init?: RequestInit, token?: string): Promise<T> {
-  const response = await fetch(`${apiBaseUrl}${path}`, {
+async function request<T>(path: string, init?: RequestInit, token?: string, timeoutMs = 30_000): Promise<T> {
+  const response = await fetchWithTimeout(`${apiBaseUrl}${path}`, {
     ...init,
     headers: {
       'content-type': 'application/json',
       ...(token ? { authorization: `Bearer ${token}` } : {}),
       ...(init?.headers || {}),
     },
-  });
+  }, timeoutMs, 'X連携');
   const body = await response.json().catch(() => null) as T | { error?: string } | null;
   if (!response.ok) {
     const message = body && typeof body === 'object' && 'error' in body && body.error ? body.error : `X account API returned ${response.status}`;
