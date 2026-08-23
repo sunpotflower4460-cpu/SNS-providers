@@ -53,7 +53,8 @@ function validInstagramResponse(value: unknown): value is InstagramEngagerSyncRe
     || !nonNegativeFinite(value.externalCostUsd)
     || !Array.isArray(value.engagers)
     || value.engagers.length > 80
-    || !value.engagers.every(validEngager)) return false;
+    || !value.engagers.every(validEngager)
+    || !uniqueEngagers(value.engagers as InstagramEngager[])) return false;
 
   if (!value.enabled) {
     return value.source === 'disabled'
@@ -61,10 +62,17 @@ function validInstagramResponse(value: unknown): value is InstagramEngagerSyncRe
       && value.engagers.length === 0;
   }
   if (value.source === 'disabled' || value.externalCostUsd !== 0) return false;
-  if (typeof value.syncedAt !== 'string' || !validIso(value.syncedAt)) return false;
+  if (typeof value.syncedAt !== 'string' || !validPastishIso(value.syncedAt)) return false;
   if (typeof value.accountId !== 'string' || !/^\d{4,30}$/.test(value.accountId)) return false;
   if (!boundedNonNegativeInteger(value.mediaScanned, 12)) return false;
   if (!boundedNonNegativeInteger(value.commentEvents, 600)) return false;
+
+  const mediaScanned = value.mediaScanned as number;
+  const commentEvents = value.commentEvents as number;
+  const engagers = value.engagers as InstagramEngager[];
+  if (engagers.some((engager) => engager.mediaCount > mediaScanned)) return false;
+  const countedExternalComments = engagers.reduce((sum, engager) => sum + engager.commentCount, 0);
+  if (countedExternalComments > commentEvents) return false;
   return true;
 }
 
@@ -80,8 +88,20 @@ function validEngager(value: unknown): value is InstagramEngager {
     && boundedPositiveInteger(value.mediaCount, 12)
     && typeof value.lastCommentText === 'string'
     && value.lastCommentText.length <= 500
-    && nullableIso(value.lastCommentAt)
+    && nullablePastishIso(value.lastCommentAt)
     && (value.latestMediaPermalink == null || (typeof value.latestMediaPermalink === 'string' && validInstagramMediaUrl(value.latestMediaPermalink)));
+}
+
+function uniqueEngagers(engagers: InstagramEngager[]) {
+  const ids = new Set<string>();
+  const usernames = new Set<string>();
+  for (const engager of engagers) {
+    const username = engager.username.toLowerCase();
+    if (ids.has(engager.id) || usernames.has(username)) return false;
+    ids.add(engager.id);
+    usernames.add(username);
+  }
+  return true;
 }
 
 function validInstagramProfileUrl(value: string, username: string) {
@@ -104,8 +124,11 @@ function validInstagramMediaUrl(value: string) {
   try {
     const url = new URL(value);
     const host = url.hostname.replace(/^www\./, '').toLowerCase();
-    const first = url.pathname.split('/').filter(Boolean)[0]?.toLowerCase() || '';
-    return url.protocol === 'https:' && host === 'instagram.com' && ['p', 'reel', 'reels', 'tv'].includes(first);
+    const [kind, shortcode] = url.pathname.split('/').filter(Boolean);
+    return url.protocol === 'https:'
+      && host === 'instagram.com'
+      && ['p', 'reel', 'reels', 'tv'].includes((kind || '').toLowerCase())
+      && /^[A-Za-z0-9_-]{1,100}$/.test(shortcode || '');
   } catch {
     return false;
   }
@@ -115,8 +138,17 @@ function nullableIso(value: unknown) {
   return value == null || (typeof value === 'string' && validIso(value));
 }
 
+function nullablePastishIso(value: unknown) {
+  return value == null || (typeof value === 'string' && validPastishIso(value));
+}
+
 function validIso(value: string) {
   return Number.isFinite(new Date(value).getTime());
+}
+
+function validPastishIso(value: string) {
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) && time <= Date.now() + 5 * 60 * 1000;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
