@@ -111,7 +111,7 @@ export async function getValidXAccessToken(env: XOAuthEnv, userId = 'local-user'
 
   const refreshToken = await decryptToken(env, row.refresh_token_enc);
   const refreshed = await refreshAccessToken(env, refreshToken);
-  await persistTokenResponse(env, userId, refreshed, row.refresh_token_enc);
+  await persistTokenResponse(env, userId, refreshed, row.refresh_token_enc, row.scope);
   if (!refreshed.access_token) throw new Error('X refresh response did not include access_token');
   return refreshed.access_token;
 }
@@ -134,9 +134,16 @@ async function loadStoredToken(env: XOAuthEnv, userId: string) {
     .first<StoredTokenRow>();
 }
 
-async function persistTokenResponse(env: XOAuthEnv, userId: string, token: XTokenResponse, existingRefreshTokenEnc?: string | null) {
+async function persistTokenResponse(
+  env: XOAuthEnv,
+  userId: string,
+  token: XTokenResponse,
+  existingRefreshTokenEnc?: string | null,
+  existingGrantedScope?: string,
+) {
   if (!token.access_token) throw new Error('X token response did not include access_token');
-  const grantedScopes = validateGrantedScopes(token.scope);
+  if ((token.token_type || '').trim().toLowerCase() !== 'bearer') throw new Error('X token response did not include a Bearer token type');
+  const grantedScopes = validateGrantedScopes(token.scope, existingGrantedScope);
   const accessTokenEnc = await encryptToken(env, token.access_token);
   const refreshTokenEnc = token.refresh_token
     ? await encryptToken(env, token.refresh_token)
@@ -158,8 +165,10 @@ async function persistTokenResponse(env: XOAuthEnv, userId: string, token: XToke
   ).bind(userId, accessTokenEnc, refreshTokenEnc, expiresAt, grantedScopes.join(' '), updatedAt).run();
 }
 
-function validateGrantedScopes(scopeValue?: string) {
-  const rawScope = scopeValue?.trim();
+function validateGrantedScopes(scopeValue?: string, verifiedFallbackScope?: string) {
+  // Authorization-code responses must prove the granted scopes. A refresh response may
+  // omit an unchanged scope; in that one case only, reuse the already-validated stored scope.
+  const rawScope = scopeValue?.trim() || verifiedFallbackScope?.trim();
   if (!rawScope) throw new Error('X OAuth response is missing granted scope metadata');
   const scopes = [...new Set(rawScope.split(/\s+/).filter(Boolean))];
   const unexpected = scopes.filter((scope) => !READ_ONLY_SCOPE_SET.has(scope));
