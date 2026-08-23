@@ -71,7 +71,7 @@ export function normalizeAppState(state: AppState): AppState {
   const normalizedInteractions = Array.isArray(state?.interactions)
     ? state.interactions.map(normalizeInteraction).filter((interaction): interaction is Interaction => interaction !== null)
     : [];
-  const interactions = dedupeById(normalizedInteractions).filter((interaction) => candidateIds.has(interaction.candidateId));
+  const interactions = dedupeById(normalizedInteractions.filter((interaction) => candidateIds.has(interaction.candidateId)));
   const secondaryGoals = Array.isArray(state?.mission?.secondaryGoals)
     ? state.mission.secondaryGoals.map((goal) => safeText(goal, 180)).filter(Boolean).slice(0, 20)
     : [];
