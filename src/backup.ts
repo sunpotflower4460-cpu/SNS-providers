@@ -63,20 +63,22 @@ export async function readBackup(file: File): Promise<AppState> {
 }
 
 export function normalizeAppState(state: AppState): AppState {
-  const candidates = Array.isArray(state?.candidates)
+  const normalizedCandidates = Array.isArray(state?.candidates)
     ? state.candidates.map(normalizeCandidate).filter((candidate): candidate is Candidate => Boolean(candidate))
     : [];
+  const candidates = dedupeCandidates(normalizedCandidates);
   const candidateIds = new Set(candidates.map((candidate) => candidate.id));
   const normalizedInteractions = Array.isArray(state?.interactions)
     ? state.interactions.map(normalizeInteraction).filter((interaction): interaction is Interaction => interaction !== null)
     : [];
-  const interactions = normalizedInteractions.filter((interaction) => candidateIds.has(interaction.candidateId));
+  const interactions = dedupeById(normalizedInteractions).filter((interaction) => candidateIds.has(interaction.candidateId));
   const secondaryGoals = Array.isArray(state?.mission?.secondaryGoals)
     ? state.mission.secondaryGoals.map((goal) => safeText(goal, 180)).filter(Boolean).slice(0, 20)
     : [];
-  const insights = Array.isArray(state?.insights)
-    ? state.insights.map(normalizeInsight).filter((insight): insight is SelfInsight => insight !== null).slice(0, 50)
+  const normalizedInsights = Array.isArray(state?.insights)
+    ? state.insights.map(normalizeInsight).filter((insight): insight is SelfInsight => insight !== null)
     : [];
+  const insights = dedupeById(normalizedInsights).slice(0, 50);
 
   return {
     mission: {
@@ -256,6 +258,27 @@ function safeSocialUrl(platform: Candidate['platform'], value?: string) {
   } catch {
     return undefined;
   }
+}
+
+function dedupeCandidates(candidates: Candidate[]) {
+  const seenIds = new Set<string>();
+  const seenProfiles = new Set<string>();
+  return candidates.filter((candidate) => {
+    const profileKey = `${candidate.platform}:${candidate.username.toLowerCase()}`;
+    if (seenIds.has(candidate.id) || seenProfiles.has(profileKey)) return false;
+    seenIds.add(candidate.id);
+    seenProfiles.add(profileKey);
+    return true;
+  });
+}
+
+function dedupeById<T extends { id: string }>(items: T[]) {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    if (seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  });
 }
 
 function normalizeMetrics(metrics: Candidate['publicMetrics']) {
