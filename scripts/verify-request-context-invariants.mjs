@@ -175,8 +175,14 @@ requireAll(store, [
 ], 'X profile attempt timestamps can mutate dismissed/unrequested candidates or fail to back off misses.');
 
 requireAll(backup, [
-  'profileSyncAttemptedAt: validOptionalIso(raw.profileSyncAttemptedAt)',
-], 'X profile attempt backoff metadata is lost or accepted without timestamp normalization during restore.');
+  'profileSyncAttemptedAt: validPastishOptionalIso(raw.profileSyncAttemptedAt)',
+  'followedAt: validPastishOptionalIso(raw.followedAt)',
+  'lastInteractionAt: validPastishOptionalIso(raw.lastInteractionAt)',
+  'analyzedAt: validPastishOptionalIso(state?.selfProfile?.analyzedAt)',
+  "statusSegment !== 'status'",
+  'return `https://x.com/${username}/status/${postId}`;',
+  'return `https://www.instagram.com/${kind.toLowerCase()}/${shortcode}/`;',
+], 'Restored action URLs or event timestamps can poison reply eligibility and relationship clocks.');
 
 requireAll(store, [
   'localStorage.setItem(KEY, JSON.stringify(state));',
@@ -257,4 +263,4 @@ requireAll(instagramOwned, [
   'Instagram Graph API returned an empty or invalid JSON response',
 ], 'Instagram owned sync can trust malformed/future cache state, mutate invalid usernames, or accept invalid successful JSON.');
 
-console.log('Request-context invariants OK: stale async results are discarded, visible result-sheet semantics are preserved, routed bodies and frontend/Worker timeouts are bounded, social handoff stays canonical, X/Instagram payload identity/count/time coherence fails closed, X enrichment uses future-safe backoff, persistence failures stay visible, and paid LLM preflight remains byte-conservative.');
+console.log('Request-context invariants OK: stale async results are discarded, visible result-sheet semantics are preserved, routed bodies and frontend/Worker timeouts are bounded, social handoff and restore URLs stay canonical, X/Instagram payload identity/count/time coherence fails closed, restored relationship clocks reject future poison, X enrichment uses future-safe backoff, persistence failures stay visible, and paid LLM preflight remains byte-conservative.');
