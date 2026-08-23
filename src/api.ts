@@ -226,7 +226,16 @@ export async function enrichXProfiles(candidates: Candidate[], monthlyLimitUsd: 
     || !optionalString(result.reason, 2000)) {
     throw new Error('X enrich API returned an invalid success response');
   }
-  return result as unknown as XEnrichResponse;
+  const validated = result as unknown as XEnrichResponse;
+  if (!validated.enabled && (validated.costUsd !== 0 || validated.profiles.length !== 0)) {
+    throw new Error('Disabled X enrichment returned billable or profile data');
+  }
+  const requested = new Set(usernames.map((username) => username.toLowerCase()));
+  const returned = validated.profiles.map((profile) => profile.username.toLowerCase());
+  if (returned.some((username) => !requested.has(username)) || new Set(returned).size !== returned.length) {
+    throw new Error('X enrichment returned an unrequested or duplicate profile');
+  }
+  return validated;
 }
 
 function validateRankResponse(value: unknown): RankResponse {
