@@ -1,3 +1,4 @@
+import { fetchWithTimeout } from './fetchWithTimeout';
 import { prepareFollowCycleTargets, updateFollowCycleEvidence, type TrackedXAccount } from './xFollowEvidence';
 import { getValidXAccessToken, xOAuthStatus, type XOAuthEnv } from './xOAuth';
 
@@ -234,7 +235,7 @@ async function fetchPostsPage(accessToken: string, userId: string, maxResults: n
 }
 
 async function xFetch<T>(url: string, accessToken: string): Promise<T> {
-  const response = await fetch(url, { headers: { authorization: `Bearer ${accessToken}` } });
+  const response = await fetchWithTimeout(url, { headers: { authorization: `Bearer ${accessToken}` } }, 30_000, 'X API');
   if (!response.ok) throw new Error(`X API returned ${response.status}`);
   const body = await response.json().catch(() => null) as T | null;
   if (!body || typeof body !== 'object') throw new Error('X API returned an empty or invalid JSON response');
