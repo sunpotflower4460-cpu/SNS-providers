@@ -160,6 +160,7 @@ function normalizeCandidate(raw: Candidate): Candidate | null {
     verified: Boolean(raw.verified),
     publicMetrics: normalizeMetrics(raw.publicMetrics),
     profileSyncedAt: validOptionalIso(raw.profileSyncedAt),
+    profileSyncAttemptedAt: validOptionalIso(raw.profileSyncAttemptedAt),
     kind: allowedKinds.has(raw.kind) ? raw.kind : 'other',
     match: clampScore(raw.match),
     relationshipScore: clampScore(raw.relationshipScore),
