@@ -109,10 +109,10 @@ export async function fetchBudget(userId = 'local-user', tokenOverride?: string)
   return result as unknown as BudgetResponse;
 }
 
-export async function discoverSocialCandidates(mission: Mission, userId = 'local-user') {
+export async function discoverSocialCandidates(mission: Mission, userId = 'local-user', automatic = false) {
   const result = await apiFetch<unknown>('/api/discover/social', {
     method: 'POST',
-    body: JSON.stringify({ userId, mission: missionText(mission), maxPerPlatform: 20 }),
+    body: JSON.stringify({ userId, mission: missionText(mission), maxPerPlatform: 20, automatic }),
   }, undefined, 60_000);
   if (!isRecord(result)
     || typeof result.enabled !== 'boolean'
@@ -140,7 +140,13 @@ export async function discoverSocialCandidates(mission: Mission, userId = 'local
   };
 }
 
-export async function rankCandidates(mission: Mission, candidates: Candidate[], monthlyLimitUsd: number, userId = 'local-user') {
+export async function rankCandidates(
+  mission: Mission,
+  candidates: Candidate[],
+  monthlyLimitUsd: number,
+  userId = 'local-user',
+  paidAllowed = true,
+) {
   // Score the entire local pool before taking the API-sized subset. Slicing first can
   // hide a lower-prior-match candidate that has much stronger relationship/context value.
   const selected = selectCandidatesForRanking(mission, candidates, 30);
@@ -151,6 +157,7 @@ export async function rankCandidates(mission: Mission, candidates: Candidate[], 
       mission: missionText(mission),
       communicationDNA: mission.communicationDNA.slice(0, 4000),
       monthlyLimitUsd,
+      paidAllowed,
       candidates: selected.map((candidate) => ({
         id: candidate.id,
         username: candidate.username,
@@ -172,6 +179,9 @@ export async function rankCandidates(mission: Mission, candidates: Candidate[], 
     }),
   }, undefined, 120_000);
   const validated = validateRankResponse(result);
+  if (!paidAllowed && (validated.paid || validated.costUsd !== 0)) {
+    throw new Error('Free-only ranking returned a paid response');
+  }
   const selectedById = new Map(selected.map((candidate) => [candidate.id, candidate]));
   if (validated.results.some((item) => !selectedById.has(item.id))) {
     throw new Error('AI ranking returned a result for an unrequested candidate');
