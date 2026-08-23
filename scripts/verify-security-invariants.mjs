@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 const router = await readFile(new URL('../worker/src/router.ts', import.meta.url), 'utf8');
 const providerApi = await readFile(new URL('../worker/src/index.ts', import.meta.url), 'utf8');
 const xOAuth = await readFile(new URL('../worker/src/xOAuth.ts', import.meta.url), 'utf8');
+const instagramOwned = await readFile(new URL('../worker/src/instagramOwned.ts', import.meta.url), 'utf8');
 const xAccount = await readFile(new URL('../src/xAccount.ts', import.meta.url), 'utf8');
 const backup = await readFile(new URL('../src/backup.ts', import.meta.url), 'utf8');
 const syncControls = await readFile(new URL('../src/SyncControls.tsx', import.meta.url), 'utf8');
@@ -91,6 +92,17 @@ if (social.includes('window.open(candidate.profileUrl') || !social.includes('can
   throw new Error('Social handoff can trust stored URLs instead of canonical official-platform destinations.');
 }
 
+if (!xOAuth.includes('await clearOwnedXDerivedState(env, userId);\n  await persistTokenResponse(env, userId, token);')
+  || !xOAuth.includes("DELETE FROM x_owned_snapshots WHERE user_id = ?")
+  || !xOAuth.includes("DELETE FROM x_owned_paging WHERE user_id = ?")
+  || !xOAuth.includes("DELETE FROM x_follow_cycle_targets WHERE user_id = ?")) {
+  throw new Error('X account changes can retain stale owned-account cache or paging evidence.');
+}
+if (!instagramOwned.includes('snapshot.accountId !== expectedAccountId')
+  || !instagramOwned.includes('loadFreshCache(env, userId, Boolean(body.force), instagramUserId)')) {
+  throw new Error('Instagram cache is not bound to the currently configured Professional account.');
+}
+
 const scopeMatch = xOAuth.match(/const READ_ONLY_SCOPES\s*=\s*\[([^\]]+)\]/s);
 if (!scopeMatch) throw new Error('READ_ONLY_SCOPES definition was not found.');
 
@@ -108,4 +120,4 @@ if (!xOAuth.includes('validateGrantedScopes(token.scope)') || !xOAuth.includes('
   throw new Error('X OAuth no longer fail-closes on unexpected or missing granted scopes.');
 }
 
-console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, protected X OAuth status, UTF-8 snapshot limit, fully normalized JSON/D1 restores, no demo candidates, conservative CRM progression, valid manual X handles, canonical official-platform handoff, guarded social drafts + self-profile rewrite, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, requested+granted X scopes=${scopes.join(', ')}`);
+console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, protected X OAuth status, UTF-8 snapshot limit, account-bound X/Instagram caches, fully normalized JSON/D1 restores, no demo candidates, conservative CRM progression, valid manual X handles, canonical official-platform handoff, guarded social drafts + self-profile rewrite, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, requested+granted X scopes=${scopes.join(', ')}`);
