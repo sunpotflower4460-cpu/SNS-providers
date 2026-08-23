@@ -6,6 +6,8 @@ import type { AppState } from './types';
 export { clearSyncToken, getSyncToken, setSyncToken } from './controlToken';
 
 const REMOTE_VERSION_KEY = 'sns-providers:remote-state-version';
+let memoryRemoteVersion: string | null = null;
+let remoteVersionInitialized = false;
 
 interface DownloadResponse {
   found: boolean;
@@ -19,17 +21,40 @@ interface UploadResponse {
 }
 
 export function getRemoteStateVersion() {
-  const value = localStorage.getItem(REMOTE_VERSION_KEY);
-  return validIso(value) ? value : null;
+  if (remoteVersionInitialized) return memoryRemoteVersion;
+  remoteVersionInitialized = true;
+  try {
+    const value = localStorage.getItem(REMOTE_VERSION_KEY);
+    memoryRemoteVersion = validIso(value) ? value : null;
+  } catch {
+    memoryRemoteVersion = null;
+  }
+  return memoryRemoteVersion;
 }
 
 export function clearRemoteStateVersion() {
-  localStorage.removeItem(REMOTE_VERSION_KEY);
+  memoryRemoteVersion = null;
+  remoteVersionInitialized = true;
+  try {
+    localStorage.removeItem(REMOTE_VERSION_KEY);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function setRemoteStateVersion(updatedAt: string | null) {
-  if (validIso(updatedAt)) localStorage.setItem(REMOTE_VERSION_KEY, updatedAt);
-  else localStorage.removeItem(REMOTE_VERSION_KEY);
+  memoryRemoteVersion = validIso(updatedAt) ? updatedAt : null;
+  remoteVersionInitialized = true;
+  try {
+    if (memoryRemoteVersion) localStorage.setItem(REMOTE_VERSION_KEY, memoryRemoteVersion);
+    else localStorage.removeItem(REMOTE_VERSION_KEY);
+    return true;
+  } catch {
+    // Keep the authoritative version in memory so optimistic locking remains safe for
+    // the current session. The caller is told persistence failed because reload loses it.
+    return false;
+  }
 }
 
 export async function uploadRemoteState(
@@ -51,8 +76,8 @@ export async function uploadRemoteState(
     }),
   });
   if (result.ok !== true || !validIso(result.updatedAt)) throw new Error('D1 upload returned an invalid version response');
-  setRemoteStateVersion(result.updatedAt);
-  return result;
+  const versionPersisted = setRemoteStateVersion(result.updatedAt);
+  return { ...result, versionPersisted };
 }
 
 export async function downloadRemoteState(token = getSyncToken(), userId = 'local-user') {
@@ -67,8 +92,8 @@ export async function downloadRemoteState(token = getSyncToken(), userId = 'loca
   } else if (result.state !== null || result.updatedAt !== null) {
     throw new Error('D1 download returned an inconsistent empty snapshot');
   }
-  setRemoteStateVersion(result.updatedAt);
-  return result;
+  const versionPersisted = setRemoteStateVersion(result.updatedAt);
+  return { ...result, versionPersisted };
 }
 
 async function syncFetch<T>(path: string, token: string, init?: RequestInit): Promise<T> {
