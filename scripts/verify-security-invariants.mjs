@@ -76,16 +76,20 @@ const candidatePersistIndex = syncControls.indexOf('const tokenPersisted = setSy
 if (candidateVerifyIndex < 0 || candidatePersistIndex < 0 || candidateVerifyIndex > candidatePersistIndex) {
   throw new Error('A replacement control token can be persisted before the Worker validates it.');
 }
-if (!controlToken.includes('let memoryToken: string | null = null;')
+if (!controlToken.includes("let memoryToken = '';")
+  || !controlToken.includes('let memoryAuthoritative = false;')
+  || !controlToken.includes('if (memoryAuthoritative) return memoryToken;')
   || !controlToken.includes('return persisted;')
   || !controlToken.includes('notifyControlTokenChanged();')) {
-  throw new Error('Control-token storage failures no longer preserve session behavior or report persistence status.');
+  throw new Error('Control-token storage failures no longer preserve only the failed-persistence session fallback while normal reads stay cross-tab fresh.');
 }
 if (!syncClient.includes('let memoryRemoteVersion: string | null = null;')
+  || !syncClient.includes('let memoryVersionAuthoritative = false;')
+  || !syncClient.includes('if (memoryVersionAuthoritative) return memoryRemoteVersion;')
   || !syncClient.includes('const versionPersisted = setRemoteStateVersion(result.updatedAt);')
   || !syncClient.includes('return { ...result, versionPersisted };')
   || !syncControls.includes('result.versionPersisted')) {
-  throw new Error('A localStorage failure can discard the current-session D1 optimistic-lock version or be reported as fully persisted.');
+  throw new Error('A localStorage failure can discard the current-session D1 optimistic-lock version, hide persistence failure, or make normal reads stale across tabs.');
 }
 if (!syncClient.includes('expectedUpdatedAt: string | null = getRemoteStateVersion()')
   || !syncControls.includes('expectedVersion = previous === next ? getRemoteStateVersion() : null')) {
@@ -277,4 +281,4 @@ if (!/DELETE FROM x_oauth_tokens[\s\S]{0,500}?try \{[\s\S]{0,250}?clearOwnedXDer
   throw new Error('X disconnect can report failure after the authoritative token row was already deleted.');
 }
 
-console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, single-user namespace enforcement, protected X OAuth status, UTF-8 + monotonic validated D1 snapshot versions, DB-level non-negative HARD LIMIT constraints, pre-validated/session-safe control-token changes, in-memory optimistic-lock fallback, account-bound X/Instagram caches, local-OAuth-before-paid-X reservation, fresh-event-only candidate revival, normalized+deduplicated local/JSON/D1 restores, restore-aware Settings, async latest-state merges, conservative CRM progression, first-observed X follows, explicit manual reactivation, cleared manual unfollows, valid X identifiers, canonical official-platform handoff, guarded social drafts + self-profile rewrite, validated provider/X success payloads, full-pool AI prefiltering, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, strict stored/session OAuth validation, requested+granted X scopes=${scopes.join(', ')}`);
+console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, single-user namespace enforcement, protected X OAuth status, UTF-8 + monotonic validated D1 snapshot versions, DB-level non-negative HARD LIMIT constraints, pre-validated/session-safe control-token changes, fallback-only in-memory optimistic-lock state, account-bound X/Instagram caches, local-OAuth-before-paid-X reservation, fresh-event-only candidate revival, normalized+deduplicated local/JSON/D1 restores, restore-aware Settings, async latest-state merges, conservative CRM progression, first-observed X follows, explicit manual reactivation, cleared manual unfollows, valid X identifiers, canonical official-platform handoff, guarded social drafts + self-profile rewrite, validated provider/X success payloads, full-pool AI prefiltering, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, strict stored/session OAuth validation, requested+granted X scopes=${scopes.join(', ')}`);
