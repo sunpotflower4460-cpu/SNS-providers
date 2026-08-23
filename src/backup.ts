@@ -16,6 +16,7 @@ const relationshipDefaults: RelationshipPolicy = {
   dailyLightEngagementLimit: 8,
   dailyCleanupLimit: 5,
   dailySelfImproveLimit: 2,
+  autoReplenishEnabled: true,
 };
 
 const legacyDemoCandidates = new Set([
@@ -139,6 +140,9 @@ function normalizeRelationshipPolicy(policy: RelationshipPolicy | undefined): Re
     dailyLightEngagementLimit: clampInteger(policy?.dailyLightEngagementLimit, 0, 100, relationshipDefaults.dailyLightEngagementLimit || 8),
     dailyCleanupLimit: clampInteger(policy?.dailyCleanupLimit, 0, 100, relationshipDefaults.dailyCleanupLimit || 5),
     dailySelfImproveLimit: clampInteger(policy?.dailySelfImproveLimit, 0, 20, relationshipDefaults.dailySelfImproveLimit || 2),
+    autoReplenishEnabled: typeof policy?.autoReplenishEnabled === 'boolean'
+      ? policy.autoReplenishEnabled
+      : relationshipDefaults.autoReplenishEnabled,
   };
 }
 
