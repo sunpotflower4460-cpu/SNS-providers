@@ -84,6 +84,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     const message = body && typeof body === 'object' && 'error' in body && body.error ? body.error : `API returned ${response.status}`;
     throw new Error(message);
   }
+  if (body == null) throw new Error('API returned an empty or invalid JSON response');
   return body as T;
 }
 
@@ -99,7 +100,9 @@ export function discoverSocialCandidates(mission: Mission, userId = 'local-user'
 }
 
 export function rankCandidates(mission: Mission, candidates: Candidate[], monthlyLimitUsd: number, userId = 'local-user') {
-  const selected = selectCandidatesForRanking(mission, candidates.slice(0, 50), 30);
+  // Score the entire local pool before taking the API-sized subset. Slicing first can
+  // hide a lower-prior-match candidate that has much stronger relationship/context value.
+  const selected = selectCandidatesForRanking(mission, candidates, 30);
   return apiFetch<RankResponse>('/api/ai/rank', {
     method: 'POST',
     body: JSON.stringify({
