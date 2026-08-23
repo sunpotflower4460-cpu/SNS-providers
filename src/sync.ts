@@ -1,6 +1,7 @@
 import { apiBaseUrl, apiConfigured } from './api';
 import { normalizeAppState, validateAppState } from './backup';
 import { getSyncToken } from './controlToken';
+import { fetchWithTimeout } from './fetchWithTimeout';
 import type { AppState } from './types';
 
 export { clearSyncToken, getSyncToken, setSyncToken } from './controlToken';
@@ -99,14 +100,14 @@ export async function downloadRemoteState(token = getSyncToken(), userId = 'loca
 }
 
 async function syncFetch<T>(path: string, token: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${apiBaseUrl}${path}`, {
+  const response = await fetchWithTimeout(`${apiBaseUrl}${path}`, {
     ...init,
     headers: {
       'content-type': 'application/json',
       authorization: `Bearer ${token.trim()}`,
       ...(init?.headers || {}),
     },
-  });
+  }, 45_000, 'D1同期');
   const body = await response.json().catch(() => null) as T | { error?: string } | null;
   if (!response.ok) {
     const message = body && typeof body === 'object' && 'error' in body && body.error ? body.error : `Sync API returned ${response.status}`;
