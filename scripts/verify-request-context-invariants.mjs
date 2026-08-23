@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 const api = await readFile(new URL('../src/api.ts', import.meta.url), 'utf8');
 const app = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8');
 const store = await readFile(new URL('../src/store.ts', import.meta.url), 'utf8');
+const backup = await readFile(new URL('../src/backup.ts', import.meta.url), 'utf8');
 const discoveryStore = await readFile(new URL('../src/discoveryStore.ts', import.meta.url), 'utf8');
 const requestContext = await readFile(new URL('../src/requestContext.ts', import.meta.url), 'utf8');
 const xAccountControls = await readFile(new URL('../src/XAccountControls.tsx', import.meta.url), 'utf8');
@@ -41,6 +42,13 @@ requireAll(api, [
   'validOfficialSocialUrl(value.platform, value.sourceUrl, false)',
 ], 'Discovery HTTP-200 validation can admit malformed social identities or URLs.');
 
+requireAll(api, [
+  'Disabled X enrichment returned billable or profile data',
+  'X enrichment returned an unrequested or duplicate profile',
+  'returned.some((username) => !requested.has(username))',
+  'new Set(returned).size !== returned.length',
+], 'X enrichment success payloads can escape their requested handle set or disabled boundary.');
+
 requireAll(store, [
   'result.requestMissionKey && result.requestMissionKey !== currentMissionKey',
   'result.requestCandidateKey && result.requestCandidateKey !== candidateRequestKey(candidate)',
@@ -78,6 +86,34 @@ requireAll(store, [
   "platform === 'instagram' && (INSTAGRAM_RESERVED_PATHS.has(lowered) || parts.length !== 1)",
   'if (!target || target.skipped) return state;',
 ], 'Manual social references can create fake reserved-path profiles or orphan interactions.');
+
+requireAll(app, [
+  'candidate.profileSyncAttemptedAt || candidate.profileSyncedAt',
+  'const attemptedUsernames = targets.map((candidate) => candidate.username);',
+  'applyXProfiles(current, result.profiles, attemptedUsernames, result.costUsd)',
+], 'X enrichment misses can be retried immediately instead of observing the 24-hour attempt backoff.');
+
+requireAll(store, [
+  'profileSyncAttemptedAt: attemptedAt',
+  "candidate.platform !== 'x' || candidate.skipped",
+  'if (!attempted.has(username)) return candidate;',
+], 'X profile attempt timestamps can mutate dismissed/unrequested candidates or fail to back off misses.');
+
+requireAll(backup, [
+  'profileSyncAttemptedAt: validOptionalIso(raw.profileSyncAttemptedAt)',
+], 'X profile attempt backoff metadata is lost or accepted without timestamp normalization during restore.');
+
+requireAll(store, [
+  'localStorage.setItem(KEY, JSON.stringify(state));',
+  "error.name === 'QuotaExceededError'",
+  'ローカル保存容量がいっぱいです。',
+], 'Browser persistence failures can become uncaught/silent again.');
+
+requireAll(app, [
+  "const [persistenceError, setPersistenceError] = useState('');",
+  "setPersistenceError(saved.ok ? '' : saved.reason);",
+  'const statusNote = persistenceError || apiNote;',
+], 'Local persistence failures can be hidden by ordinary API status messages.');
 
 requireAll(xAccountControls, [
   'let requestGeneration = 0;',
@@ -119,4 +155,4 @@ requireAll(instagramOwned, [
   'Instagram Graph API returned an empty or invalid JSON response',
 ], 'Instagram owned sync can trust malformed/future cache state, mutate invalid usernames, or accept invalid successful JSON.');
 
-console.log('Request-context invariants OK: stale async results are discarded, UI writes merge into current state, manual social identities stay canonical, malformed success/cache payloads fail closed, X status races are ordered, and paid LLM preflight remains byte-conservative.');
+console.log('Request-context invariants OK: stale async results are discarded, UI writes merge into current state, X enrichment is request-bound with 24-hour miss backoff, persistence failures stay visible, malformed success/cache payloads fail closed, and paid LLM preflight remains byte-conservative.');
