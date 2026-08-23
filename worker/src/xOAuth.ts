@@ -77,7 +77,9 @@ export async function completeXOAuth(env: XOAuthEnv, requestUrl: URL, userId = '
     .first<{ code_verifier: string; created_at: string }>();
   await env.DB.prepare('DELETE FROM x_oauth_sessions WHERE state = ?').bind(state).run();
   if (!session) throw new Error('OAuth session not found or already used');
-  if (Date.now() - new Date(session.created_at).getTime() > SESSION_TTL_MS) throw new Error('OAuth session expired');
+  const createdMs = new Date(session.created_at).getTime();
+  const sessionAgeMs = Date.now() - createdMs;
+  if (!Number.isFinite(createdMs) || sessionAgeMs < 0 || sessionAgeMs > SESSION_TTL_MS) throw new Error('OAuth session expired or malformed');
 
   const token = await exchangeAuthorizationCode(env, code, session.code_verifier);
   await clearOwnedXDerivedState(env, userId);
@@ -90,22 +92,36 @@ export async function xOAuthStatus(env: XOAuthEnv, userId = 'local-user') {
     return { configured: false, connected: false, scopes: [], expiresAt: null, updatedAt: null, refreshable: false };
   }
   const row = await loadStoredToken(env, userId);
-  return {
-    configured: true,
-    connected: Boolean(row),
-    scopes: row?.scope ? row.scope.split(/\s+/).filter(Boolean) : [],
-    expiresAt: row?.expires_at || null,
-    updatedAt: row?.updated_at || null,
-    refreshable: Boolean(row?.refresh_token_enc),
-  };
+  if (!row) return { configured: true, connected: false, scopes: [], expiresAt: null, updatedAt: null, refreshable: false };
+
+  try {
+    const scopes = validateGrantedScopes(row.scope);
+    await decryptToken(env, row.access_token_enc);
+    const expiresAtMs = parseStoredExpiry(row.expires_at);
+    const refreshable = Boolean(row.refresh_token_enc);
+    const usable = expiresAtMs > Date.now() || refreshable;
+    return {
+      configured: true,
+      connected: usable,
+      scopes: usable ? scopes : [],
+      expiresAt: usable ? row.expires_at : null,
+      updatedAt: usable && validIso(row.updated_at) ? row.updated_at : null,
+      refreshable: usable && refreshable,
+    };
+  } catch {
+    // A malformed/undecryptable row is not a usable connection. Keep configuration true
+    // so the UI offers a fresh OAuth connection that can overwrite the stale row.
+    return { configured: true, connected: false, scopes: [], expiresAt: null, updatedAt: null, refreshable: false };
+  }
 }
 
 export async function getValidXAccessToken(env: XOAuthEnv, userId = 'local-user') {
   assertConfigured(env);
   const row = await loadStoredToken(env, userId);
   if (!row) throw new Error('X account is not connected');
+  validateGrantedScopes(row.scope);
 
-  const expiresAt = row.expires_at ? new Date(row.expires_at).getTime() : Number.POSITIVE_INFINITY;
+  const expiresAt = parseStoredExpiry(row.expires_at);
   if (expiresAt > Date.now() + REFRESH_EARLY_MS) return decryptToken(env, row.access_token_enc);
   if (!row.refresh_token_enc) throw new Error('X access token expired and no refresh token is available');
 
@@ -150,14 +166,15 @@ async function persistTokenResponse(
 ) {
   if (!token.access_token) throw new Error('X token response did not include access_token');
   if ((token.token_type || '').trim().toLowerCase() !== 'bearer') throw new Error('X token response did not include a Bearer token type');
+  if (typeof token.expires_in !== 'number' || !Number.isFinite(token.expires_in) || token.expires_in <= 0) {
+    throw new Error('X token response did not include a valid positive expires_in');
+  }
   const grantedScopes = validateGrantedScopes(token.scope, existingGrantedScope);
   const accessTokenEnc = await encryptToken(env, token.access_token);
   const refreshTokenEnc = token.refresh_token
     ? await encryptToken(env, token.refresh_token)
     : existingRefreshTokenEnc || null;
-  const expiresAt = Number.isFinite(token.expires_in)
-    ? new Date(Date.now() + Number(token.expires_in) * 1000).toISOString()
-    : null;
+  const expiresAt = new Date(Date.now() + token.expires_in * 1000).toISOString();
   const updatedAt = new Date().toISOString();
 
   await env.DB.prepare(
@@ -276,6 +293,17 @@ function validHttpsOrLocalUrl(value?: string) {
   } catch {
     return false;
   }
+}
+
+function parseStoredExpiry(value: string | null) {
+  if (!value) throw new Error('Stored OAuth token expiry is missing');
+  const time = new Date(value).getTime();
+  if (!Number.isFinite(time)) throw new Error('Stored OAuth token expiry is invalid');
+  return time;
+}
+
+function validIso(value: string) {
+  return Number.isFinite(new Date(value).getTime());
 }
 
 function randomBase64Url(bytes: number) {
