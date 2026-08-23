@@ -191,8 +191,13 @@ export default {
             const rates = parseRates(env.GROQ_INPUT_PER_MILLION, env.GROQ_OUTPUT_PER_MILLION);
             const preflight = rates ? estimateMaxCost(body, rates) : Number.POSITIVE_INFINITY;
             if (rates && preflight <= budget.remainingUsd) {
-              const result = await runPaidRankingWithReservation('groq', body, env, userId, rates, preflight, budget.effectiveLimit);
-              if (result) return json({ provider: 'groq', paid: true, costUsd: result.costUsd, results: result.results }, 200, cors);
+              const attempt = await runPaidRankingWithReservation('groq', body, env, userId, rates, preflight, budget.effectiveLimit);
+              if (attempt.status === 'success') {
+                return json({ provider: 'groq', paid: true, costUsd: attempt.costUsd, results: attempt.results }, 200, cors);
+              }
+              if (attempt.status === 'uncertain') {
+                return uncertainPaidFallback('groq', body, preflight, cors);
+              }
             }
           }
         }
@@ -201,8 +206,13 @@ export default {
           const rates = parseRates(env.DEEPSEEK_INPUT_PER_MILLION, env.DEEPSEEK_OUTPUT_PER_MILLION);
           const preflight = rates ? estimateMaxCost(body, rates) : Number.POSITIVE_INFINITY;
           if (rates && preflight <= budget.remainingUsd) {
-            const result = await runPaidRankingWithReservation('deepseek', body, env, userId, rates, preflight, budget.effectiveLimit);
-            if (result) return json({ provider: 'deepseek', paid: true, costUsd: result.costUsd, results: result.results }, 200, cors);
+            const attempt = await runPaidRankingWithReservation('deepseek', body, env, userId, rates, preflight, budget.effectiveLimit);
+            if (attempt.status === 'success') {
+              return json({ provider: 'deepseek', paid: true, costUsd: attempt.costUsd, results: attempt.results }, 200, cors);
+            }
+            if (attempt.status === 'uncertain') {
+              return uncertainPaidFallback('deepseek', body, preflight, cors);
+            }
           }
         }
 
@@ -406,18 +416,29 @@ async function runPaidRankingWithReservation(
   effectiveLimit: number,
 ) {
   const reservationId = await reserveBudget(env, userId, provider, 'rank_reservation', preflightUsd, effectiveLimit);
-  if (!reservationId) return null;
+  if (!reservationId) return { status: 'unavailable' as const };
   try {
     const result = await rankWithProvider(provider, body, env);
     const costUsd = calculateCost(result.usage, rates, preflightUsd);
     await finalizeReservation(env, reservationId, 'rank', costUsd, result.usage);
-    return { ...result, costUsd };
+    return { status: 'success' as const, ...result, costUsd };
   } catch {
     // Once the request has been attempted, the provider may have billed it even if
-    // transport/JSON handling failed locally. Retain the conservative preflight amount.
+    // transport/JSON handling failed locally. Retain the conservative preflight amount
+    // and explicitly stop any second paid provider from being attempted in this request.
     await markReservationUncertain(env, reservationId, 'rank_uncertain');
-    return null;
+    return { status: 'uncertain' as const };
   }
+}
+
+function uncertainPaidFallback(provider: 'groq' | 'deepseek', body: RankRequest, reservedUsd: number, cors: Record<string, string>) {
+  return json({
+    provider: `${provider}-uncertain-local`,
+    paid: true,
+    costUsd: reservedUsd,
+    reason: 'The paid provider result became uncertain. Its conservative reservation was retained, no second paid provider was attempted, and local ranking was used for this response.',
+    results: localRank(body.mission, body.candidates),
+  }, 200, cors);
 }
 
 function buildProviderMessages(body: RankRequest) {
