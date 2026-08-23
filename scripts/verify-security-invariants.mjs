@@ -11,6 +11,9 @@ const xAccount = await readFile(new URL('../src/xAccount.ts', import.meta.url), 
 const xOwnedStore = await readFile(new URL('../src/xOwnedStore.ts', import.meta.url), 'utf8');
 const instagramOwnedStore = await readFile(new URL('../src/instagramOwnedStore.ts', import.meta.url), 'utf8');
 const instagramAccount = await readFile(new URL('../src/instagramAccount.ts', import.meta.url), 'utf8');
+const xAccountControls = await readFile(new URL('../src/XAccountControls.tsx', import.meta.url), 'utf8');
+const instagramAccountControls = await readFile(new URL('../src/InstagramAccountControls.tsx', import.meta.url), 'utf8');
+const backupControls = await readFile(new URL('../src/BackupControls.tsx', import.meta.url), 'utf8');
 const backup = await readFile(new URL('../src/backup.ts', import.meta.url), 'utf8');
 const syncClient = await readFile(new URL('../src/sync.ts', import.meta.url), 'utf8');
 const syncControls = await readFile(new URL('../src/SyncControls.tsx', import.meta.url), 'utf8');
@@ -60,6 +63,12 @@ if (!router.includes('const updatedAt = nextSnapshotVersion(body.expectedUpdated
 if (!syncClient.includes('validIso(result.updatedAt)') || !syncClient.includes('D1 download returned an incomplete state snapshot')) {
   throw new Error('The client can persist malformed D1 version/snapshot responses.');
 }
+if (!syncClient.includes('expectedUpdatedAt: string | null = getRemoteStateVersion()')
+  || !syncControls.includes('expectedVersion = previous === next ? getRemoteStateVersion() : null')
+  || !syncControls.includes('setSyncToken(previous)')
+  || !syncControls.includes('変更は保存していません')) {
+  throw new Error('Trying an invalid replacement control token can destroy the prior token or D1 optimistic-lock version.');
+}
 
 if (!providerApi.includes("markReservationUncertain(env, reservationId, 'user_read_uncertain')") || !providerApi.includes("markReservationUncertain(env, reservationId, 'rank_uncertain')")) {
   throw new Error('Paid-provider uncertainty no longer retains conservative budget reservations.');
@@ -95,10 +104,19 @@ if (!providerApi.includes("candidate.kind === 'self_profile'\n      || (recommen
 if (!apiClient.includes('selectCandidatesForRanking(mission, candidates, 30)')) {
   throw new Error('AI ranking can pre-slice the candidate pool before local quality/relationship scoring.');
 }
-if (!apiClient.includes('API returned an empty or invalid JSON response')
-  || !xAccount.includes('X account API returned an empty or invalid JSON response')
+if (!apiClient.includes('Budget API returned an invalid success response')
+  || !apiClient.includes('AI ranking API returned an invalid success response')
+  || !apiClient.includes('Discovery API returned an invalid success response')
+  || !apiClient.includes('X enrich API returned an invalid success response')
+  || !xAccount.includes('X OAuth status returned an invalid success response')
+  || !xAccount.includes('X owned sync returned an invalid success response')
   || !instagramAccount.includes('Instagram sync returned an invalid success response')) {
-  throw new Error('Client provider integrations can accept malformed successful JSON responses.');
+  throw new Error('Client provider integrations can accept malformed successful responses.');
+}
+if (!xAccount.includes('validCoverage(value.coverage)')
+  || !xAccount.includes('validFollowEvidence(value.followEvidence)')
+  || !xAccount.includes('validPacing(value.pacing)')) {
+  throw new Error('Nested X owned-sync metadata can bypass client validation and crash UI consumers.');
 }
 
 if (!backup.includes('safeSocialUrl(raw.platform, raw.engagementUrl)') || !backup.includes("profileUrl: raw.platform === 'x' ? `https://x.com/${username}`")) {
@@ -122,6 +140,13 @@ if (!app.includes('setMissionText(state.mission.text)')
   || !app.includes('setBudget(state.budget.monthlyLimitUsd)')
   || !app.includes('setFollowBackDays(state.relationshipPolicy.followBackReviewAfterDays)')) {
   throw new Error('Settings form state can remain stale after a JSON/D1 restore and overwrite restored values.');
+}
+if (!backupControls.includes('latestStateRef.current = state')
+  || !backupControls.includes("typeof value === 'function' ? value(latestStateRef.current) : value")
+  || !xAccountControls.includes('onChange((current) =>')
+  || !instagramAccountControls.includes('onChange((current) => applyInstagramEngagers(current, result))')
+  || !syncControls.includes('onRestore((current) => syncBudget(current, budget.usedUsd, budget.limitUsd))')) {
+  throw new Error('Async settings/X/Instagram completions can overwrite newer local state with a stale request-time snapshot.');
 }
 
 if (!store.includes("interaction.action === 'kept'") || !store.includes('advanceRelationshipStage') || !store.includes("target?.recommendedAction === 'unfollow_review'")) {
@@ -179,6 +204,10 @@ if (!xOAuth.includes('await clearOwnedXDerivedState(env, userId);\n  await persi
   || !xOAuth.includes("DELETE FROM x_follow_cycle_targets WHERE user_id = ?")) {
   throw new Error('X account changes can retain stale owned-account cache or paging evidence.');
 }
+if (!xAccountControls.includes("onChange((current) => ({ ...current, xAccount: {} }))")
+  || !xAccountControls.includes('status.connected && state.xAccount.username')) {
+  throw new Error('Disconnecting X can leave stale account-level identity/stat summaries visible in the client.');
+}
 if (!instagramOwned.includes('snapshot.accountId !== expectedAccountId')
   || !instagramOwned.includes('loadFreshCache(env, userId, Boolean(body.force), instagramUserId)')) {
   throw new Error('Instagram cache is not bound to the currently configured Professional account.');
@@ -205,5 +234,16 @@ if (!xOAuth.includes('validateGrantedScopes(token.scope, existingGrantedScope)')
 if (!xOAuth.includes('persistTokenResponse(env, userId, refreshed, row.refresh_token_enc, row.scope)')) {
   throw new Error('X OAuth refresh can no longer reuse only the previously verified scope when scope metadata is omitted.');
 }
+if (!xOAuth.includes('validateGrantedScopes(row.scope)')
+  || !xOAuth.includes('await decryptToken(env, row.access_token_enc)')
+  || !xOAuth.includes('parseStoredExpiry(row.expires_at)')
+  || !xOAuth.includes('token.expires_in <= 0')
+  || !xOAuth.includes('sessionAgeMs < 0')
+  || !xOAuth.includes('OAuth session expired or malformed')) {
+  throw new Error('Stored/session X OAuth state can bypass scope, ciphertext, expiry, or session-age validation.');
+}
+if (!/DELETE FROM x_oauth_tokens[\s\S]{0,500}?try \{[\s\S]{0,250}?clearOwnedXDerivedState/.test(xOAuth)) {
+  throw new Error('X disconnect can report failure after the authoritative token row was already deleted.');
+}
 
-console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, single-user namespace enforcement, protected X OAuth status, UTF-8 + monotonic validated D1 snapshot versions, account-bound X/Instagram caches, local-OAuth-before-paid-X reservation, fresh-event-only candidate revival, normalized+deduplicated local/JSON/D1 restores, restore-aware Settings, conservative CRM progression, first-observed X follows, explicit manual reactivation, cleared manual unfollows, valid X identifiers, canonical official-platform handoff, guarded social drafts + self-profile rewrite, validated provider JSON responses, full-pool AI prefiltering, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, requested+granted X scopes=${scopes.join(', ')}`);
+console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, single-user namespace enforcement, protected X OAuth status, UTF-8 + monotonic validated D1 snapshot versions, rollback-safe control-token changes, account-bound X/Instagram caches, local-OAuth-before-paid-X reservation, fresh-event-only candidate revival, normalized+deduplicated local/JSON/D1 restores, restore-aware Settings, async latest-state merges, conservative CRM progression, first-observed X follows, explicit manual reactivation, cleared manual unfollows, valid X identifiers, canonical official-platform handoff, guarded social drafts + self-profile rewrite, validated provider/X success payloads, full-pool AI prefiltering, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, strict stored/session OAuth validation, requested+granted X scopes=${scopes.join(', ')}`);
