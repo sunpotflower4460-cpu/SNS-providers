@@ -3,7 +3,7 @@ import { apiConfigured } from './api';
 import { CONTROL_TOKEN_CHANGED_EVENT } from './controlToken';
 import { applyOwnedXSyncWithDiscovery } from './xOwnedStore';
 import { disconnectXOAuth, fetchXOAuthStatus, startXOAuth, syncOwnedXData, type XOAuthStatus } from './xAccount';
-import type { AppState } from './types';
+import type { AppState, AppStateUpdater } from './types';
 import './xAccount.css';
 
 const emptyStatus: XOAuthStatus = {
@@ -15,7 +15,7 @@ const emptyStatus: XOAuthStatus = {
   refreshable: false,
 };
 
-export default function XAccountControls({ state, onChange }: { state: AppState; onChange: (state: AppState) => void }) {
+export default function XAccountControls({ state, onChange }: { state: AppState; onChange: AppStateUpdater }) {
   const [status, setStatus] = useState<XOAuthStatus>(emptyStatus);
   const [loading, setLoading] = useState(apiConfigured);
   const [syncing, setSyncing] = useState(false);
@@ -71,28 +71,28 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
         setNote(result.reason || 'X owned-read同期は現在無効です');
         return;
       }
-      const beforeCount = state.candidates.length;
-      const syncedState = applyOwnedXSyncWithDiscovery(state, result);
-      const nextState: AppState = {
-        ...syncedState,
-        xAccount: {
-          ...syncedState.xAccount,
-          followerCycle: result.coverage?.followers.cycle ?? syncedState.xAccount.followerCycle,
-          followingCycle: result.coverage?.following.cycle ?? syncedState.xAccount.followingCycle,
-          lastSyncCostUsd: result.costUsd,
-          pacedCapUsd: result.pacing?.pacedCapUsd ?? syncedState.xAccount.pacedCapUsd,
-          pacingDaysRemaining: result.pacing?.daysRemaining ?? syncedState.xAccount.pacingDaysRemaining,
-        },
-      };
-      const addedCandidates = Math.max(0, nextState.candidates.length - beforeCount);
-      onChange(nextState);
+      // Apply the network result to the latest state, not the snapshot captured when
+      // the request started. This preserves edits made in other tabs while syncing.
+      onChange((current) => {
+        const syncedState = applyOwnedXSyncWithDiscovery(current, result);
+        return {
+          ...syncedState,
+          xAccount: {
+            ...syncedState.xAccount,
+            followerCycle: result.coverage?.followers.cycle ?? syncedState.xAccount.followerCycle,
+            followingCycle: result.coverage?.following.cycle ?? syncedState.xAccount.followingCycle,
+            lastSyncCostUsd: result.costUsd,
+            pacedCapUsd: result.pacing?.pacedCapUsd ?? syncedState.xAccount.pacedCapUsd,
+            pacingDaysRemaining: result.pacing?.daysRemaining ?? syncedState.xAccount.pacingDaysRemaining,
+          },
+        };
+      });
       const source = result.source === 'cache' ? 'キャッシュ' : 'X公式API';
       const cost = result.costUsd > 0 ? ` · $${result.costUsd.toFixed(4)}` : ' · $0';
-      const added = addedCandidates > 0 ? ` · 新規候補${addedCandidates}人` : '';
       const evidence = result.followEvidence?.complete
         ? ` · フォロバ判定${result.followEvidence.targetCount}人分を1周完了`
         : '';
-      setNote(`${source}から同期完了${cost}${added}${evidence}`);
+      setNote(`${source}から同期完了${cost}${evidence}`);
     } catch (error) {
       setNote(error instanceof Error ? error.message : 'Xデータ同期に失敗しました');
     } finally {
@@ -105,6 +105,9 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
     try {
       await disconnectXOAuth();
       setStatus((current) => ({ ...current, connected: false, expiresAt: null, updatedAt: null }));
+      // Keep candidates/history, but remove account-level summary that belongs to the
+      // disconnected identity so a later reconnect cannot display stale account stats.
+      onChange((current) => ({ ...current, xAccount: {} }));
       setNote('Worker内のX接続トークンを削除しました');
     } catch (error) {
       setNote(error instanceof Error ? error.message : 'X接続解除に失敗しました');
@@ -132,7 +135,7 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
       {state.xAccount.lastSyncedAt && <span><b>データ同期</b> {new Date(state.xAccount.lastSyncedAt).toLocaleString('ja-JP')}</span>}
     </div>}
 
-    {state.xAccount.username && <>
+    {status.connected && state.xAccount.username && <>
       <div className="x-sync-summary">
         <span><b>{state.xAccount.followerSampleCount || 0}</b> followers確認</span>
         <span><b>{state.xAccount.followingSampleCount || 0}</b> following確認</span>
