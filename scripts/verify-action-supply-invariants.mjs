@@ -38,13 +38,14 @@ requireAll(discoveryWorker, [
 
 requireAll(discoveryStore, [
   'canonicalEngagementUrl(profile.platform, profile.sourceUrl)',
+  'id: `web-${profile.platform}-${normalizedUsername}`',
   "'concrete-post'",
   "segment !== 'status'",
   "['p', 'reel', 'reels', 'tv'].includes",
-], 'Discovery can no longer preserve a concrete post/media target for later like/reply recommendations.');
+], 'Discovery can no longer preserve stable candidate identity or a concrete post/media target for later like/reply recommendations.');
 
 requireAll(api, [
-  "candidate.reason.includes('無料Web検索から候補として発見しました')",
+  "candidate.reason.startsWith('無料Web検索から候補')",
   'Free-only ranking found no untouched web-discovery candidates to evaluate.',
   'currentMatch: candidate.match',
   'followedAt: candidate.followedAt',
@@ -128,4 +129,4 @@ requireAll(backup, [
   "typeof policy?.autoReplenishEnabled === 'boolean'",
 ], 'Backup/D1 restore can lose the automatic replenishment preference.');
 
-console.log('Action/supply invariants OK: discovery can feed the default queue, automatic refill is free-only and cross-device throttled, only untouched web discoveries are auto-ranked, completed work is not overfilled, concrete engagement targets are preserved, timing/follow context is request-bound, review-only decisions stay out of Today, recent people cool down unless a fresh inbound signal arrives, and workload supply counts only actionable candidates.');
+console.log('Action/supply invariants OK: discovery can feed the default queue, stable discovery IDs keep auto ranking attached, automatic refill is free-only and cross-device throttled, only untouched web discoveries are auto-ranked, completed work is not overfilled, concrete engagement targets are preserved, timing/follow context is request-bound, review-only decisions stay out of Today, recent people cool down unless a fresh inbound signal arrives, and workload supply counts only actionable candidates.');
