@@ -7,9 +7,19 @@ import WorkloadControls from './WorkloadControls';
 import XAccountControls from './XAccountControls';
 import type { AppState, AppStateUpdater } from './types';
 
-export default function BackupControls({ state, onRestore }: { state: AppState; onRestore: AppStateUpdater }) {
+export default function BackupControls({ state, onRestore }: { state: AppState; onRestore: (state: AppState) => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const latestStateRef = useRef(state);
+  latestStateRef.current = state;
   const [status, setStatus] = useState('');
+
+  // Settings currently exposes a plain state callback. Adapt nested async controls to a
+  // functional updater against the latest rendered state so network completions cannot
+  // overwrite edits made while their request was in flight.
+  const updateState: AppStateUpdater = (value) => {
+    const next = typeof value === 'function' ? value(latestStateRef.current) : value;
+    onRestore(next);
+  };
 
   async function restore(file?: File) {
     if (!file) return;
@@ -27,9 +37,9 @@ export default function BackupControls({ state, onRestore }: { state: AppState; 
   return <>
     <InstallControls />
     <WorkloadControls state={state} onChange={onRestore} />
-    <SyncControls state={state} onRestore={onRestore} />
-    <XAccountControls state={state} onChange={onRestore} />
-    <InstagramAccountControls state={state} onChange={onRestore} />
+    <SyncControls state={state} onRestore={updateState} />
+    <XAccountControls state={state} onChange={updateState} />
+    <InstagramAccountControls state={state} onChange={updateState} />
     <section className="form-card backup-card">
       <div className="field-title"><div><strong>ローカルデータ</strong><span>Mission・候補・関係性・設定を持ち運ぶ</span></div><b>JSON</b></div>
       <div className="backup-actions">
