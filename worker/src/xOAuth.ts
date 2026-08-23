@@ -80,6 +80,7 @@ export async function completeXOAuth(env: XOAuthEnv, requestUrl: URL, userId = '
   if (Date.now() - new Date(session.created_at).getTime() > SESSION_TTL_MS) throw new Error('OAuth session expired');
 
   const token = await exchangeAuthorizationCode(env, code, session.code_verifier);
+  await clearOwnedXDerivedState(env, userId);
   await persistTokenResponse(env, userId, token);
   return returnUrl(env, 'x_oauth=connected');
 }
@@ -117,7 +118,14 @@ export async function getValidXAccessToken(env: XOAuthEnv, userId = 'local-user'
 
 export async function disconnectXOAuth(env: XOAuthEnv, userId = 'local-user') {
   await env.DB.prepare('DELETE FROM x_oauth_tokens WHERE user_id = ?').bind(userId).run();
+  await clearOwnedXDerivedState(env, userId);
   return { ok: true };
+}
+
+async function clearOwnedXDerivedState(env: XOAuthEnv, userId: string) {
+  await env.DB.prepare('DELETE FROM x_owned_snapshots WHERE user_id = ?').bind(userId).run();
+  await env.DB.prepare('DELETE FROM x_owned_paging WHERE user_id = ?').bind(userId).run();
+  await env.DB.prepare('DELETE FROM x_follow_cycle_targets WHERE user_id = ?').bind(userId).run();
 }
 
 async function loadStoredToken(env: XOAuthEnv, userId: string) {
