@@ -24,22 +24,24 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
   useEffect(() => {
     if (!apiConfigured) return;
     let cancelled = false;
+    let requestGeneration = 0;
 
     const refreshStatus = () => {
+      const generation = ++requestGeneration;
       setLoading(true);
       fetchXOAuthStatus()
         .then((next) => {
-          if (cancelled) return;
+          if (cancelled || generation !== requestGeneration) return;
           setStatus(next);
           setNote(next.connected ? '読み取り専用で接続済み' : next.configured ? '接続できます' : 'Worker側のX OAuth設定が未完了です');
         })
         .catch((error) => {
-          if (cancelled) return;
+          if (cancelled || generation !== requestGeneration) return;
           setStatus(emptyStatus);
           setNote(error instanceof Error ? error.message : '接続状態の確認に失敗しました');
         })
         .finally(() => {
-          if (!cancelled) setLoading(false);
+          if (!cancelled && generation === requestGeneration) setLoading(false);
         });
     };
 
@@ -47,6 +49,7 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
     window.addEventListener(CONTROL_TOKEN_CHANGED_EVENT, refreshStatus);
     return () => {
       cancelled = true;
+      requestGeneration += 1;
       window.removeEventListener(CONTROL_TOKEN_CHANGED_EVENT, refreshStatus);
     };
   }, []);
