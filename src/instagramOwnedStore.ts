@@ -12,13 +12,14 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
     const username = engager.username.trim().replace(/^@/, '').toLowerCase();
     if (!username) continue;
     const existing = byUsername.get(username);
+    const freshContact = !existing?.skipped || isFreshCommentAfterDismissal(existing, engager.lastCommentAt);
     const relationshipScore = Math.min(85, 28 + engager.commentCount * 9 + Math.max(0, engager.mediaCount - 1) * 5);
     const match = Math.min(88, 68 + Math.min(20, engager.commentCount * 4));
     const baseReason = engager.commentCount > 1
       ? `あなたのInstagram投稿に${engager.commentCount}回コメント済み。すでに接点があるため、新規の無関係候補より交流優先度が高いです。`
       : 'あなたのInstagram投稿にコメント済み。すでに自然な接点があるため、関係を深める候補です。';
-    const reason = existing?.skipped
-      ? `過去に候補から外していましたが、新しいInstagramコメント接点を確認したため再確認候補へ戻しました。${baseReason}`
+    const reason = existing?.skipped && freshContact
+      ? `過去に候補から外していましたが、その後の新しいInstagramコメント接点を確認したため再確認候補へ戻しました。${baseReason}`
       : baseReason;
     const strategy = engager.lastCommentText
       ? `直近コメント「${engager.lastCommentText.slice(0, 120)}」の文脈から、まず自然に返信・プロフィール確認を優先。いきなり営業DMには進めません。`
@@ -28,6 +29,9 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
     const recommendedAction: Candidate['recommendedAction'] = engagementUrl ? 'reply' : 'review';
 
     if (existing) {
+      // A cached/old comment must not undo an explicit user dismissal. Only a comment
+      // whose timestamp is newer than the dismissal/last known signal may reactivate it.
+      if (existing.skipped && !freshContact) continue;
       updates.set(existing.id, {
         ...existing,
         skipped: false,
@@ -80,6 +84,17 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
       engagerCount: result.engagers?.length || 0,
     },
   };
+}
+
+function isFreshCommentAfterDismissal(candidate: Candidate, incomingAt: string | null) {
+  if (!incomingAt) return false;
+  const incoming = new Date(incomingAt).getTime();
+  if (!Number.isFinite(incoming)) return false;
+  const baselines = [candidate.lastInteractionAt, candidate.profileSyncedAt]
+    .map((value) => value ? new Date(value).getTime() : Number.NaN)
+    .filter(Number.isFinite);
+  if (!baselines.length) return false;
+  return incoming > Math.max(...baselines);
 }
 
 function promoteStage(stage: Candidate['stage']): Candidate['stage'] {
