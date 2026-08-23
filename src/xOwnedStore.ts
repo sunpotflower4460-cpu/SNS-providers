@@ -16,15 +16,14 @@ export function applyOwnedXSyncWithDiscovery(state: AppState, result: XOwnedSync
   );
   const followingSet = new Set((result.following || []).map((user) => user.username.toLowerCase()));
   const additions: Candidate[] = [];
-  const reactivated = new Set<string>();
 
   for (const follower of result.followers) {
     const username = follower.username.toLowerCase();
     const existing = existingByUsername.get(username);
-    if (existing) {
-      if (existing.skipped) reactivated.add(existing.id);
-      continue;
-    }
+    // A follower list is a current snapshot, not an event stream. If the user has
+    // explicitly dismissed this person, seeing the same follower again is not proof
+    // of a new follow event, so keep the dismissal until fresh evidence exists.
+    if (existing) continue;
     if (additions.length >= MAX_NEW_INBOUND_CANDIDATES) continue;
     const mutual = followingSet.has(username);
     const candidate: Candidate = {
@@ -52,24 +51,8 @@ export function applyOwnedXSyncWithDiscovery(state: AppState, result: XOwnedSync
     existingByUsername.set(username, candidate);
   }
 
-  const existingCandidates = reactivated.size
-    ? synced.candidates.map((candidate) => {
-      if (!reactivated.has(candidate.id)) return candidate;
-      return {
-        ...candidate,
-        skipped: false,
-        stage: candidate.stage === 'discovered' || candidate.stage === 'interested' ? 'recognized' as const : candidate.stage,
-        followBack: true,
-        recommendedAction: 'review' as const,
-        draft: undefined,
-        reason: '過去に候補から外していましたが、X公式同期で新しいフォロー接点を確認したため再確認候補へ戻しました。',
-        strategy: '新しい実接点を優先し、プロフィールと最近の発信を確認してから今後の交流を判断します。',
-      };
-    })
-    : synced.candidates;
-
-  return additions.length || reactivated.size
-    ? { ...synced, candidates: [...additions, ...existingCandidates] }
+  return additions.length
+    ? { ...synced, candidates: [...additions, ...synced.candidates] }
     : synced;
 }
 
@@ -83,7 +66,7 @@ function applyFullCycleFollowEvidence(state: AppState, result: XOwnedSyncRespons
   const now = Date.now();
   const waitDays = Math.max(1, Math.min(180, state.relationshipPolicy.followBackReviewAfterDays));
   const candidates = state.candidates.map((candidate) => {
-    if (candidate.platform !== 'x' || !candidate.followedAt) return candidate;
+    if (candidate.skipped || candidate.platform !== 'x' || !candidate.followedAt) return candidate;
     if (seen.has(candidate.id)) {
       return {
         ...candidate,
