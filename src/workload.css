@@ -16,6 +16,20 @@
 .workload-advisor span { color: #7f91a8; font-size: 8px; letter-spacing: .08em; text-transform: uppercase; }
 .workload-advisor strong { color: #bdeede; font-size: 14px; }
 .workload-advisor p { margin: 0; color: #8293a9; font-size: 9px; line-height: 1.55; }
+.auto-replenish-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px;
+  border: 1px solid rgba(121,231,197,.12);
+  border-radius: 14px;
+  background: rgba(255,255,255,.018);
+}
+.auto-replenish-toggle > span { display: grid; gap: 3px; min-width: 0; }
+.auto-replenish-toggle strong { color: #d4deeb; font-size: 10px; }
+.auto-replenish-toggle small { color: #65758c; font-size: 8px; line-height: 1.5; }
+.auto-replenish-toggle input { width: 18px; height: 18px; flex: 0 0 auto; accent-color: #79e7c5; }
 .workload-slider { display: grid; gap: 7px; }
 .workload-slider > div {
   display: flex;
