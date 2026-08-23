@@ -147,9 +147,25 @@ export async function rankCandidates(
   userId = 'local-user',
   paidAllowed = true,
 ) {
-  // Score the entire local pool before taking the API-sized subset. Slicing first can
-  // hide a lower-prior-match candidate that has much stronger relationship/context value.
-  const selected = selectCandidatesForRanking(mission, candidates, 30);
+  // Automatic/free-only ranking must not revisit a candidate that a prior AI pass has
+  // already left at review. Only untouched web-discovery review candidates retain this
+  // marker; manual ranking still evaluates the full candidate pool.
+  const rankingPool = paidAllowed
+    ? candidates
+    : candidates.filter((candidate) => candidate.reason.includes('無料Web検索から候補として発見しました'));
+  if (!rankingPool.length) {
+    return {
+      provider: 'local',
+      paid: false,
+      costUsd: 0,
+      reason: 'Free-only ranking found no untouched web-discovery candidates to evaluate.',
+      results: [],
+    } satisfies RankResponse;
+  }
+
+  // Score the entire eligible local pool before taking the API-sized subset. Slicing first
+  // can hide a lower-prior-match candidate that has much stronger relationship/context value.
+  const selected = selectCandidatesForRanking(mission, rankingPool, 30);
   const result = await apiFetch<unknown>('/api/ai/rank', {
     method: 'POST',
     body: JSON.stringify({
