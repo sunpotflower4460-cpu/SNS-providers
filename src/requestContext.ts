@@ -23,6 +23,10 @@ export function candidateRequestKey(candidate: Candidate) {
     candidate.reason.slice(0, 800),
     candidate.strategy?.slice(0, 1000) || null,
     candidate.engagementUrl || null,
+    candidate.followedAt || null,
+    candidate.followBack ?? null,
+    candidate.lastInteractionAt || null,
+    candidate.profileSyncedAt || null,
   ]);
 }
 
