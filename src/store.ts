@@ -1,13 +1,9 @@
 import type { RankResult, XProfileResult } from './api';
+import { normalizeAppState } from './backup';
 import type { XOwnedSyncResponse } from './xAccount';
 import type { AppState, Candidate, Interaction, Mission, Platform, RecommendedAction, RelationshipPolicy } from './types';
 
 const KEY = 'sns-providers:v1';
-const LEGACY_DEMO_CANDIDATES = new Set([
-  'x-1:x:music_listener',
-  'ig-1:instagram:indie_creator',
-  'x-2:x:songwriter_friend',
-]);
 
 const defaultState: AppState = {
   mission: {
@@ -54,22 +50,18 @@ export function loadState(): AppState {
     const raw = localStorage.getItem(KEY);
     if (!raw) return defaultState;
     const parsed = JSON.parse(raw) as Partial<AppState>;
-    const candidates = Array.isArray(parsed.candidates) ? parsed.candidates.filter((candidate) => !isLegacyDemoCandidate(candidate)) : [];
-    const interactions = Array.isArray(parsed.interactions)
-      ? parsed.interactions.filter((interaction) => candidates.some((candidate) => candidate.id === interaction.candidateId))
-      : [];
     const state: AppState = {
       ...defaultState,
       ...parsed,
-      candidates,
-      interactions,
+      candidates: Array.isArray(parsed.candidates) ? parsed.candidates : [],
+      interactions: Array.isArray(parsed.interactions) ? parsed.interactions : [],
       mission: { ...defaultState.mission, ...(parsed.mission || {}) },
       budget: { ...defaultState.budget, ...(parsed.budget || {}) },
       relationshipPolicy: { ...defaultState.relationshipPolicy, ...(parsed.relationshipPolicy || {}) },
       selfProfile: { ...defaultState.selfProfile, ...(parsed.selfProfile || {}) },
       xAccount: { ...defaultState.xAccount, ...(parsed.xAccount || {}) },
     };
-    return refreshRelationshipAdvice(state);
+    return refreshRelationshipAdvice(normalizeAppState(state));
   } catch {
     return defaultState;
   }
@@ -399,10 +391,6 @@ function normalizeLocalRelationshipAction(candidate: Candidate): Candidate {
     };
   }
   return candidate;
-}
-
-function isLegacyDemoCandidate(candidate: Candidate) {
-  return LEGACY_DEMO_CANDIDATES.has(`${candidate.id}:${candidate.platform}:${candidate.username.toLowerCase()}`);
 }
 
 function parseUsername(platform: Platform, value: string) {
