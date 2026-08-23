@@ -54,8 +54,10 @@ requireAll(daily, [
   'freshnessBoost(candidate, action, now)',
   'isCoolingDown(candidate, lastHandledAt.get(candidate.id), now)',
   'signalMs > handledMs + 60_000',
+  "light: relationshipItems.filter((item) => item.action === 'like')",
+  'Keep those\n    // candidates in Discover instead of putting a human decision back into Today.',
   "case 'reply': return `${name} のこの投稿へ返信する`;",
-], 'Daily Queue can again require post selection, ignore fresh timing signals, or repeatedly surface the same handled people.');
+], 'Daily Queue can again require post selection, surface review-only decisions, ignore fresh timing signals, or repeatedly surface the same handled people.');
 
 requireAll(workload, [
   'function actionableSupply(state: AppState)',
@@ -65,4 +67,4 @@ requireAll(workload, [
   "candidate.recommendedAction === 'reply' && Boolean(candidate.engagementUrl)",
 ], 'Workload advisor can again inflate supply by counting review-only or targetless engagement candidates.');
 
-console.log('Action/supply invariants OK: discovery can feed the default queue, concrete engagement targets are preserved, timing context is ranked, recent people cool down unless a fresh inbound signal arrives, and review-only candidates do not inflate actionable supply.');
+console.log('Action/supply invariants OK: discovery can feed the default queue, concrete engagement targets are preserved, timing context is ranked, review-only decisions stay out of Today, recent people cool down unless a fresh inbound signal arrives, and workload supply counts only actionable candidates.');
