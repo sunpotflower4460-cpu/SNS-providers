@@ -41,5 +41,8 @@ export async function syncInstagramEngagers(userId = 'local-user') {
     const message = body && typeof body === 'object' && 'error' in body && body.error ? body.error : `Instagram sync returned ${response.status}`;
     throw new Error(message);
   }
+  if (!body || typeof body !== 'object' || !('enabled' in body) || typeof body.enabled !== 'boolean' || !('engagers' in body) || !Array.isArray(body.engagers)) {
+    throw new Error('Instagram sync returned an invalid success response');
+  }
   return body as InstagramEngagerSyncResponse;
 }
