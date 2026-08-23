@@ -35,11 +35,13 @@ function setRemoteStateVersion(updatedAt: string | null) {
 export async function uploadRemoteState(state: AppState, token = getSyncToken(), userId = 'local-user') {
   if (!apiConfigured) throw new Error('Worker URLが設定されていません');
   if (!token.trim()) throw new Error('同期キーを入力してください');
+  const normalizedState = normalizeAppState(state);
+  validateAppState(normalizedState);
   const result = await syncFetch<UploadResponse>(`/api/sync/state`, token, {
     method: 'PUT',
     body: JSON.stringify({
       userId,
-      state,
+      state: normalizedState,
       expectedUpdatedAt: getRemoteStateVersion(),
     }),
   });
