@@ -153,7 +153,8 @@ function validOAuthStatus(value: unknown): value is XOAuthStatus {
     && typeof value.configured === 'boolean'
     && typeof value.connected === 'boolean'
     && Array.isArray(value.scopes)
-    && value.scopes.every((scope) => typeof scope === 'string')
+    && value.scopes.length <= 16
+    && value.scopes.every((scope) => typeof scope === 'string' && scope.length <= 80)
     && nullableIso(value.expiresAt)
     && nullableIso(value.updatedAt)
     && (value.refreshable == null || typeof value.refreshable === 'boolean');
@@ -164,11 +165,20 @@ function validOwnedSyncResponse(value: unknown): value is XOwnedSyncResponse {
     || typeof value.enabled !== 'boolean'
     || !['x', 'cache', 'disabled'].includes(String(value.source || ''))
     || !nonNegativeFinite(value.costUsd)) return false;
-  if (!value.enabled) return value.source === 'disabled';
+
+  if (!value.enabled) {
+    return value.source === 'disabled'
+      && value.costUsd === 0
+      && value.profile == null
+      && value.followers == null
+      && value.following == null
+      && value.posts == null;
+  }
   if (value.source === 'disabled' || !validOwnedUser(value.profile)) return false;
-  if (value.followers != null && (!Array.isArray(value.followers) || !value.followers.every(validOwnedUser))) return false;
-  if (value.following != null && (!Array.isArray(value.following) || !value.following.every(validOwnedUser))) return false;
-  if (value.posts != null && (!Array.isArray(value.posts) || !value.posts.every(validOwnedPost))) return false;
+  if (value.source === 'cache' && value.costUsd !== 0) return false;
+  if (value.followers != null && (!Array.isArray(value.followers) || value.followers.length > 500 || !value.followers.every(validOwnedUser))) return false;
+  if (value.following != null && (!Array.isArray(value.following) || value.following.length > 500 || !value.following.every(validOwnedUser))) return false;
+  if (value.posts != null && (!Array.isArray(value.posts) || value.posts.length > 50 || !value.posts.every(validOwnedPost))) return false;
   if (value.coverage != null && !validCoverage(value.coverage)) return false;
   if (value.followEvidence != null && !validFollowEvidence(value.followEvidence)) return false;
   if (value.requested != null && !validRequested(value.requested)) return false;
@@ -180,19 +190,24 @@ function validOwnedSyncResponse(value: unknown): value is XOwnedSyncResponse {
 function validOwnedUser(value: unknown): value is XOwnedUser {
   return isRecord(value)
     && typeof value.id === 'string'
+    && /^\d{1,30}$/.test(value.id)
     && typeof value.username === 'string'
     && /^[A-Za-z0-9_]{1,15}$/.test(value.username)
     && typeof value.name === 'string'
+    && value.name.length <= 300
     && typeof value.description === 'string'
+    && value.description.length <= 5000
     && typeof value.verified === 'boolean'
-    && (value.profileImageUrl == null || typeof value.profileImageUrl === 'string')
+    && (value.profileImageUrl == null || (typeof value.profileImageUrl === 'string' && validHttpsUrl(value.profileImageUrl)))
     && validMetrics(value.publicMetrics);
 }
 
 function validOwnedPost(value: unknown): value is XOwnedPost {
   return isRecord(value)
     && typeof value.id === 'string'
+    && /^\d{1,30}$/.test(value.id)
     && typeof value.text === 'string'
+    && value.text.length <= 30_000
     && nullableIso(value.createdAt)
     && isRecord(value.publicMetrics)
     && nonNegativeFinite(value.publicMetrics.likes)
@@ -203,42 +218,51 @@ function validOwnedPost(value: unknown): value is XOwnedPost {
 
 function validCoverage(value: unknown) {
   return isRecord(value)
-    && validCoverageSlice(value.followers)
-    && validCoverageSlice(value.following)
+    && validCoverageSlice(value.followers, 500)
+    && validCoverageSlice(value.following, 500)
     && isRecord(value.posts)
-    && nonNegativeFinite(value.posts.fetched)
+    && boundedNonNegativeInteger(value.posts.fetched, 50)
     && typeof value.posts.complete === 'boolean';
 }
 
-function validCoverageSlice(value: unknown) {
+function validCoverageSlice(value: unknown, maxFetched: number) {
   return isRecord(value)
-    && nonNegativeFinite(value.fetched)
+    && boundedNonNegativeInteger(value.fetched, maxFetched)
     && typeof value.complete === 'boolean'
-    && (value.cycle == null || nonNegativeFinite(value.cycle))
+    && (value.cycle == null || boundedNonNegativeInteger(value.cycle, 1_000_000))
     && (value.rotated == null || typeof value.rotated === 'boolean');
 }
 
 function validFollowEvidence(value: unknown): value is XFollowEvidence {
-  return isRecord(value)
-    && typeof value.complete === 'boolean'
-    && nonNegativeFinite(value.cycle)
-    && nonNegativeFinite(value.targetCount)
-    && Array.isArray(value.seenKeys)
-    && value.seenKeys.every((key) => typeof key === 'string')
-    && Array.isArray(value.unseenKeys)
-    && value.unseenKeys.every((key) => typeof key === 'string');
+  if (!isRecord(value)
+    || typeof value.complete !== 'boolean'
+    || !boundedNonNegativeInteger(value.cycle, 1_000_000)
+    || !boundedNonNegativeInteger(value.targetCount, 500)
+    || !Array.isArray(value.seenKeys)
+    || !Array.isArray(value.unseenKeys)
+    || value.seenKeys.length > 500
+    || value.unseenKeys.length > 500
+    || !value.seenKeys.every(validEvidenceKey)
+    || !value.unseenKeys.every(validEvidenceKey)) return false;
+  if (!value.complete) return value.seenKeys.length === 0 && value.unseenKeys.length === 0;
+  const allKeys = [...value.seenKeys, ...value.unseenKeys];
+  return allKeys.length === value.targetCount && new Set(allKeys).size === allKeys.length;
+}
+
+function validEvidenceKey(value: unknown) {
+  return typeof value === 'string' && /^[A-Za-z0-9._:-]{1,160}$/.test(value);
 }
 
 function validRequested(value: unknown) {
   return isRecord(value)
-    && nonNegativeFinite(value.followers)
-    && nonNegativeFinite(value.following)
-    && nonNegativeFinite(value.posts);
+    && boundedNonNegativeInteger(value.followers, 500)
+    && boundedNonNegativeInteger(value.following, 500)
+    && boundedNonNegativeInteger(value.posts, 50);
 }
 
 function validPacing(value: unknown) {
   return isRecord(value)
-    && nonNegativeFinite(value.daysRemaining)
+    && boundedPositiveInteger(value.daysRemaining, 31)
     && nonNegativeFinite(value.pacedCapUsd)
     && nonNegativeFinite(value.globalRemainingUsd);
 }
@@ -260,6 +284,15 @@ function validAuthorizeUrl(value: string) {
   }
 }
 
+function validHttpsUrl(value: string) {
+  if (value.length > 2000) return false;
+  try {
+    return new URL(value).protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 function nullableIso(value: unknown) {
   return value == null || (typeof value === 'string' && validIso(value));
 }
@@ -274,4 +307,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function nonNegativeFinite(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function boundedNonNegativeInteger(value: unknown, max: number) {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= max;
+}
+
+function boundedPositiveInteger(value: unknown, max: number) {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= max;
 }
