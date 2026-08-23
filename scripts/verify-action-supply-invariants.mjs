@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 const api = await readFile(new URL('../src/api.ts', import.meta.url), 'utf8');
 const daily = await readFile(new URL('../src/daily.ts', import.meta.url), 'utf8');
 const discoveryStore = await readFile(new URL('../src/discoveryStore.ts', import.meta.url), 'utf8');
+const requestContext = await readFile(new URL('../src/requestContext.ts', import.meta.url), 'utf8');
 const workload = await readFile(new URL('../src/WorkloadControls.tsx', import.meta.url), 'utf8');
 const discoveryWorker = await readFile(new URL('../worker/src/discovery.ts', import.meta.url), 'utf8');
 const store = await readFile(new URL('../src/store.ts', import.meta.url), 'utf8');
@@ -40,12 +41,21 @@ requireAll(discoveryStore, [
 
 requireAll(api, [
   'followedAt: candidate.followedAt',
+  'followBack: candidate.followBack',
   'lastInteractionAt: candidate.lastInteractionAt',
   'profileSyncedAt: candidate.profileSyncedAt',
   "item.recommendedAction === 'like' || item.recommendedAction === 'reply'",
   'const missingExactTarget = exactTargetRequired && !candidate.engagementUrl;',
   "recommendedAction: missingExactTarget ? 'review' : item.recommendedAction",
-], 'AI ranking no longer receives relationship timing context or can emit targetless like/reply actions.');
+], 'AI ranking no longer receives relationship timing/follow context or can emit targetless like/reply actions.');
+
+requireAll(requestContext, [
+  'candidate.engagementUrl || null',
+  'candidate.followedAt || null',
+  'candidate.followBack ?? null',
+  'candidate.lastInteractionAt || null',
+  'candidate.profileSyncedAt || null',
+], 'AI request fingerprints can ignore relationship timing/follow state and accept stale recommendations.');
 
 requireAll(daily, [
   'effectiveAction(candidate)',
@@ -67,4 +77,4 @@ requireAll(workload, [
   "candidate.recommendedAction === 'reply' && Boolean(candidate.engagementUrl)",
 ], 'Workload advisor can again inflate supply by counting review-only or targetless engagement candidates.');
 
-console.log('Action/supply invariants OK: discovery can feed the default queue, concrete engagement targets are preserved, timing context is ranked, review-only decisions stay out of Today, recent people cool down unless a fresh inbound signal arrives, and workload supply counts only actionable candidates.');
+console.log('Action/supply invariants OK: discovery can feed the default queue, concrete engagement targets are preserved, timing/follow context is request-bound, review-only decisions stay out of Today, recent people cool down unless a fresh inbound signal arrives, and workload supply counts only actionable candidates.');
