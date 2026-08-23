@@ -239,10 +239,10 @@ async function enforceSingleUserRequest(request: Request, url: URL) {
   }
 
   if (request.method === 'POST' || request.method === 'PUT') {
-    const contentType = request.headers.get('content-type') || '';
-    if (contentType.toLowerCase().includes('application/json')) {
-      const body = await request.clone().json<{ userId?: unknown }>().catch(() => null);
-      if (body && Object.prototype.hasOwnProperty.call(body, 'userId') && body.userId != null) {
+    const rawBody = await request.clone().text().catch(() => '');
+    if (rawBody.trim()) {
+      const body = JSON.parse(rawBody) as { userId?: unknown };
+      if (Object.prototype.hasOwnProperty.call(body, 'userId') && body.userId != null) {
         if (typeof body.userId !== 'string' || body.userId.trim() !== 'local-user') {
           return { ok: false as const, reason: 'This deployment only supports userId=local-user.' };
         }
