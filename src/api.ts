@@ -6,6 +6,9 @@ const rawBase = import.meta.env.VITE_API_BASE_URL?.trim() || '';
 export const apiBaseUrl = rawBase.replace(/\/$/, '');
 export const apiConfigured = Boolean(apiBaseUrl);
 
+const rankKinds = new Set(['fan', 'artist', 'creator', 'media', 'venue', 'other', 'self_profile']);
+const rankActions = new Set(['follow', 'like', 'reply', 'dm', 'review', 'unfollow_review']);
+
 export interface BudgetResponse {
   usedUsd: number;
   limitUsd: number;
@@ -107,11 +110,12 @@ export async function discoverSocialCandidates(mission: Mission, userId = 'local
   });
   if (!isRecord(result)
     || typeof result.enabled !== 'boolean'
-    || typeof result.provider !== 'string'
+    || !boundedString(result.provider, 1, 80)
     || !nonNegativeFinite(result.costUsd)
     || !nonNegativeFinite(result.credits)
     || !Array.isArray(result.profiles)
-    || !result.profiles.every(validDiscoveredProfile)) {
+    || !result.profiles.every(validDiscoveredProfile)
+    || !optionalString(result.reason, 2000)) {
     throw new Error('Discovery API returned an invalid success response');
   }
   return result as unknown as DiscoveryResponse;
@@ -167,7 +171,11 @@ export async function analyzeSelfProfile(mission: Mission, profileText: string, 
       }],
     }),
   });
-  return validateRankResponse(result);
+  const validated = validateRankResponse(result);
+  if (validated.results.length !== 1 || validated.results[0].id !== '__self__') {
+    throw new Error('AI self-analysis returned an invalid result identity');
+  }
+  return validated;
 }
 
 export async function enrichXProfiles(candidates: Candidate[], monthlyLimitUsd: number, userId = 'local-user') {
@@ -181,7 +189,8 @@ export async function enrichXProfiles(candidates: Candidate[], monthlyLimitUsd: 
     || typeof result.enabled !== 'boolean'
     || !nonNegativeFinite(result.costUsd)
     || !Array.isArray(result.profiles)
-    || !result.profiles.every(validXProfile)) {
+    || !result.profiles.every(validXProfile)
+    || !optionalString(result.reason, 2000)) {
     throw new Error('X enrich API returned an invalid success response');
   }
   return result as unknown as XEnrichResponse;
@@ -189,11 +198,15 @@ export async function enrichXProfiles(candidates: Candidate[], monthlyLimitUsd: 
 
 function validateRankResponse(value: unknown): RankResponse {
   if (!isRecord(value)
-    || typeof value.provider !== 'string'
+    || !boundedString(value.provider, 1, 80)
     || typeof value.paid !== 'boolean'
     || !nonNegativeFinite(value.costUsd)
     || !Array.isArray(value.results)
-    || !value.results.every(validRankResult)) {
+    || value.results.length === 0
+    || value.results.length > 50
+    || !value.results.every(validRankResult)
+    || !uniqueResultIds(value.results)
+    || !optionalString(value.reason, 2000)) {
     throw new Error('AI ranking API returned an invalid success response');
   }
   return value as unknown as RankResponse;
@@ -201,30 +214,38 @@ function validateRankResponse(value: unknown): RankResponse {
 
 function validRankResult(value: unknown) {
   return isRecord(value)
-    && typeof value.id === 'string'
-    && value.id.length > 0
-    && finiteNumber(value.match);
+    && boundedString(value.id, 1, 180)
+    && finiteNumber(value.match)
+    && value.match >= 0
+    && value.match <= 100
+    && (value.kind == null || (typeof value.kind === 'string' && rankKinds.has(value.kind)))
+    && (value.recommendedAction == null || (typeof value.recommendedAction === 'string' && rankActions.has(value.recommendedAction)))
+    && optionalString(value.reason, 2400)
+    && optionalString(value.strategy, 3200)
+    && optionalString(value.draft, 2400);
 }
 
 function validDiscoveredProfile(value: unknown) {
-  return isRecord(value)
-    && (value.platform === 'x' || value.platform === 'instagram')
-    && typeof value.username === 'string'
-    && value.username.length > 0
-    && typeof value.profileUrl === 'string'
-    && typeof value.title === 'string'
-    && typeof value.snippet === 'string'
-    && typeof value.sourceUrl === 'string'
-    && finiteNumber(value.score);
+  if (!isRecord(value) || (value.platform !== 'x' && value.platform !== 'instagram')) return false;
+  return validSocialUsername(value.platform, value.username)
+    && validOfficialSocialUrl(value.platform, value.profileUrl, true)
+    && validOfficialSocialUrl(value.platform, value.sourceUrl, false)
+    && boundedString(value.title, 0, 300)
+    && boundedString(value.snippet, 0, 2000)
+    && finiteNumber(value.score)
+    && value.score >= 0
+    && value.score <= 1;
 }
 
 function validXProfile(value: unknown) {
   return isRecord(value)
-    && typeof value.id === 'string'
-    && typeof value.username === 'string'
-    && typeof value.name === 'string'
-    && typeof value.description === 'string'
+    && boundedString(value.id, 1, 30)
+    && /^\d{1,30}$/.test(value.id)
+    && validSocialUsername('x', value.username)
+    && boundedString(value.name, 0, 300)
+    && boundedString(value.description, 0, 5000)
     && typeof value.verified === 'boolean'
+    && (value.createdAt == null || validIso(value.createdAt))
     && validMetrics(value.publicMetrics);
 }
 
@@ -234,6 +255,46 @@ function validMetrics(value: unknown) {
     && nonNegativeFinite(value.following)
     && nonNegativeFinite(value.posts)
     && (value.listed == null || nonNegativeFinite(value.listed));
+}
+
+function uniqueResultIds(results: unknown[]) {
+  const ids = results.map((item) => isRecord(item) && typeof item.id === 'string' ? item.id : '');
+  return new Set(ids).size === ids.length;
+}
+
+function validSocialUsername(platform: 'x' | 'instagram', value: unknown) {
+  if (typeof value !== 'string') return false;
+  return platform === 'x'
+    ? /^[A-Za-z0-9_]{1,15}$/.test(value)
+    : /^[A-Za-z0-9._]{1,30}$/.test(value);
+}
+
+function validOfficialSocialUrl(platform: 'x' | 'instagram', value: unknown, profileOnly: boolean) {
+  if (typeof value !== 'string') return false;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:') return false;
+    const host = url.hostname.replace(/^www\./, '').toLowerCase();
+    const allowedHosts = platform === 'x' ? new Set(['x.com', 'twitter.com']) : new Set(['instagram.com']);
+    if (!allowedHosts.has(host)) return false;
+    if (!profileOnly) return true;
+    const parts = url.pathname.split('/').filter(Boolean);
+    return parts.length === 1 && validSocialUsername(platform, parts[0].replace(/^@/, ''));
+  } catch {
+    return false;
+  }
+}
+
+function validIso(value: unknown) {
+  return typeof value === 'string' && Number.isFinite(new Date(value).getTime());
+}
+
+function optionalString(value: unknown, maxLength: number) {
+  return value == null || (typeof value === 'string' && value.length <= maxLength);
+}
+
+function boundedString(value: unknown, minLength: number, maxLength: number): value is string {
+  return typeof value === 'string' && value.length >= minLength && value.length <= maxLength;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
