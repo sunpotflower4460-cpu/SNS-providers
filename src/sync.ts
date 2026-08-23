@@ -32,7 +32,12 @@ function setRemoteStateVersion(updatedAt: string | null) {
   else localStorage.removeItem(REMOTE_VERSION_KEY);
 }
 
-export async function uploadRemoteState(state: AppState, token = getSyncToken(), userId = 'local-user') {
+export async function uploadRemoteState(
+  state: AppState,
+  token = getSyncToken(),
+  userId = 'local-user',
+  expectedUpdatedAt: string | null = getRemoteStateVersion(),
+) {
   if (!apiConfigured) throw new Error('Worker URLが設定されていません');
   if (!token.trim()) throw new Error('同期キーを入力してください');
   const normalizedState = normalizeAppState(state);
@@ -42,7 +47,7 @@ export async function uploadRemoteState(state: AppState, token = getSyncToken(),
     body: JSON.stringify({
       userId,
       state: normalizedState,
-      expectedUpdatedAt: getRemoteStateVersion(),
+      expectedUpdatedAt,
     }),
   });
   if (result.ok !== true || !validIso(result.updatedAt)) throw new Error('D1 upload returned an invalid version response');
