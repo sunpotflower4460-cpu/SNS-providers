@@ -120,11 +120,19 @@ export async function discoverSocialCandidates(mission: Mission, userId = 'local
     || !nonNegativeFinite(result.costUsd)
     || !nonNegativeFinite(result.credits)
     || !Array.isArray(result.profiles)
+    || result.profiles.length > 40
     || !result.profiles.every(validDiscoveredProfile)
+    || !uniqueDiscoveredProfiles(result.profiles)
     || !optionalString(result.reason, 2000)) {
     throw new Error('Discovery API returned an invalid success response');
   }
   const validated = result as unknown as DiscoveryResponse;
+  if (!validated.enabled && (validated.costUsd !== 0 || validated.credits !== 0 || validated.profiles.length !== 0)) {
+    throw new Error('Disabled discovery returned usage or profile data');
+  }
+  if (validated.enabled && validated.costUsd !== 0) {
+    throw new Error('Initial free discovery returned a billable response');
+  }
   const requestMissionKey = missionRequestKey(mission);
   return {
     ...validated,
@@ -141,7 +149,7 @@ export async function rankCandidates(mission: Mission, candidates: Candidate[], 
     body: JSON.stringify({
       userId,
       mission: missionText(mission),
-      communicationDNA: mission.communicationDNA,
+      communicationDNA: mission.communicationDNA.slice(0, 4000),
       monthlyLimitUsd,
       candidates: selected.map((candidate) => ({
         id: candidate.id,
@@ -186,7 +194,7 @@ export async function analyzeSelfProfile(mission: Mission, profileText: string, 
     body: JSON.stringify({
       userId,
       mission: missionText(mission),
-      communicationDNA: mission.communicationDNA,
+      communicationDNA: mission.communicationDNA.slice(0, 4000),
       monthlyLimitUsd,
       candidates: [{
         id: '__self__',
@@ -252,6 +260,7 @@ function validateRankResponse(value: unknown): RankResponse {
     || !optionalString(value.reason, 2000)) {
     throw new Error('AI ranking API returned an invalid success response');
   }
+  if (value.paid === false && value.costUsd !== 0) throw new Error('Free AI ranking returned a billable response');
   return value as unknown as RankResponse;
 }
 
@@ -305,6 +314,14 @@ function uniqueResultIds(results: unknown[]) {
   return new Set(ids).size === ids.length;
 }
 
+function uniqueDiscoveredProfiles(profiles: unknown[]) {
+  const keys = profiles.map((profile) => {
+    if (!isRecord(profile) || typeof profile.platform !== 'string' || typeof profile.username !== 'string') return '';
+    return `${profile.platform}:${profile.username.toLowerCase()}`;
+  });
+  return keys.every(Boolean) && new Set(keys).size === keys.length;
+}
+
 function validSocialUsername(platform: 'x' | 'instagram', value: unknown) {
   if (typeof value !== 'string') return false;
   return platform === 'x'
@@ -313,7 +330,7 @@ function validSocialUsername(platform: 'x' | 'instagram', value: unknown) {
 }
 
 function validOfficialSocialUrl(platform: 'x' | 'instagram', value: unknown, profileOnly: boolean) {
-  if (typeof value !== 'string') return false;
+  if (typeof value !== 'string' || value.length > 2000) return false;
   try {
     const url = new URL(value);
     if (url.protocol !== 'https:') return false;
@@ -353,5 +370,5 @@ function nonNegativeFinite(value: unknown): value is number {
 }
 
 function missionText(mission: Mission) {
-  return `${mission.primaryGoal}\n${mission.text}\nSecondary: ${mission.secondaryGoals.join(', ')}`;
+  return `${mission.primaryGoal.trim()}\n${mission.text.trim()}\nSecondary: ${mission.secondaryGoals.join(', ')}`.slice(0, 4000);
 }
