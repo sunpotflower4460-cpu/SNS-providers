@@ -30,7 +30,7 @@ interface TavilyResponse {
 const instagramReserved = new Set(['p', 'reel', 'reels', 'stories', 'explore', 'accounts', 'direct', 'about', 'developer']);
 const xReserved = new Set(['home', 'explore', 'notifications', 'messages', 'search', 'i', 'settings', 'compose', 'intent']);
 
-export async function discoverSocialProfiles(mission: string, env: DiscoveryEnv, maxPerPlatform = 12) {
+export async function discoverSocialProfiles(mission: string, env: DiscoveryEnv, maxPerPlatform = 20) {
   if (!env.TAVILY_API_KEY) {
     return { enabled: false, provider: 'tavily', costUsd: 0, credits: 0, profiles: [], reason: 'TAVILY_API_KEY is not configured.' };
   }
@@ -38,10 +38,15 @@ export async function discoverSocialProfiles(mission: string, env: DiscoveryEnv,
     return { enabled: false, provider: 'tavily', costUsd: 0, credits: 0, profiles: [], reason: 'Only Tavily free-mode discovery is enabled in the initial $0-$3 build.' };
   }
 
+  const targetPerPlatform = Math.max(1, Math.min(20, maxPerPlatform));
   const missionQuery = compactMission(mission);
+  // Use two intent angles per platform so a single generic query does not leave the
+  // Daily Queue with only a handful of people. Results are deduplicated and capped below.
   const searches = [
-    { platform: 'x' as const, domain: 'x.com', query: `${missionQuery} creator artist listener community profile` },
-    { platform: 'instagram' as const, domain: 'instagram.com', query: `${missionQuery} creator artist listener community profile` },
+    { platform: 'x' as const, domain: 'x.com', query: `${missionQuery} fan listener supporter music community profile` },
+    { platform: 'x' as const, domain: 'x.com', query: `${missionQuery} artist creator musician songwriter collaboration profile` },
+    { platform: 'instagram' as const, domain: 'instagram.com', query: `${missionQuery} fan listener supporter music community profile` },
+    { platform: 'instagram' as const, domain: 'instagram.com', query: `${missionQuery} artist creator musician collaboration profile` },
   ];
 
   const settled = await Promise.allSettled(searches.map(async (search) => {
@@ -54,7 +59,7 @@ export async function discoverSocialProfiles(mission: string, env: DiscoveryEnv,
       body: JSON.stringify({
         query: search.query,
         search_depth: 'basic',
-        max_results: Math.max(1, Math.min(20, maxPerPlatform)),
+        max_results: 20,
         topic: 'general',
         include_answer: false,
         include_raw_content: false,
@@ -89,13 +94,18 @@ export async function discoverSocialProfiles(mission: string, env: DiscoveryEnv,
   }
 
   const deduped = dedupeProfiles(profiles).sort((a, b) => b.score - a.score);
+  const selected = [
+    ...deduped.filter((profile) => profile.platform === 'x').slice(0, targetPerPlatform),
+    ...deduped.filter((profile) => profile.platform === 'instagram').slice(0, targetPerPlatform),
+  ].sort((a, b) => b.score - a.score);
+
   return {
     enabled: true,
     provider: 'tavily',
     costUsd: 0,
     credits,
-    profiles: deduped,
-    reason: deduped.length ? undefined : 'Search completed but no profile-shaped results were found.',
+    profiles: selected,
+    reason: selected.length ? undefined : 'Search completed but no profile-shaped results were found.',
   };
 }
 
