@@ -29,6 +29,7 @@ interface DiscoverRequest {
   userId?: string;
   mission: string;
   maxPerPlatform?: number;
+  automatic?: boolean;
 }
 
 interface StateSyncRequest {
@@ -38,6 +39,7 @@ interface StateSyncRequest {
 }
 
 const MAX_ROUTED_BODY_BYTES = 2_100_000;
+const AUTO_DISCOVERY_COOLDOWN_MS = 20 * 60 * 60 * 1000;
 
 const ROUTER_CORS_PATHS = new Set([
   '/api/budget',
@@ -212,19 +214,44 @@ export default {
     }
 
     if (request.method === 'POST' && url.pathname === '/api/discover/social') {
+      let automaticGuardId: string | null = null;
       try {
         const body = await request.json<DiscoverRequest>();
         if (!body || typeof body.mission !== 'string' || !body.mission.trim()) {
           return json({ error: 'mission is required' }, 400, request, env);
         }
         if (body.mission.length > 4000) return json({ error: 'mission is too long' }, 400, request, env);
+        if (body.automatic != null && typeof body.automatic !== 'boolean') {
+          return json({ error: 'automatic must be boolean' }, 400, request, env);
+        }
+        const userId = sanitizeUserId(body.userId || 'local-user');
+        if (body.automatic) {
+          const guard = await reserveAutomaticDiscovery(env, userId);
+          if (!guard.ok) {
+            return json({
+              enabled: false,
+              provider: 'tavily',
+              costUsd: 0,
+              credits: 0,
+              profiles: [],
+              reason: guard.reason,
+            }, 200, request, env);
+          }
+          automaticGuardId = guard.id;
+        }
+
         const maxPerPlatform = Math.max(1, Math.min(20, Number(body.maxPerPlatform || 12)));
         const result = await discoverSocialProfiles(body.mission, env, maxPerPlatform);
+        if (!result.enabled && automaticGuardId) {
+          await releaseAutomaticDiscovery(env, automaticGuardId);
+          automaticGuardId = null;
+        }
         if (result.enabled && result.credits > 0) {
-          await recordFreeSearchUsage(env, sanitizeUserId(body.userId || 'local-user'), result.credits);
+          await recordFreeSearchUsage(env, userId, result.credits);
         }
         return json(result, 200, request, env);
       } catch (error) {
+        if (automaticGuardId) await releaseAutomaticDiscovery(env, automaticGuardId);
         const message = error instanceof Error ? error.message : 'Discovery failed';
         return json({ error: message }, 400, request, env);
       }
@@ -313,6 +340,40 @@ function nextSnapshotVersion(previous: string | null | undefined) {
   const previousMs = previous ? new Date(previous).getTime() : Number.NaN;
   const nextMs = Number.isFinite(previousMs) ? Math.max(now, previousMs + 1) : now;
   return new Date(nextMs).toISOString();
+}
+
+async function reserveAutomaticDiscovery(env: Env, userId: string) {
+  const id = crypto.randomUUID();
+  const now = new Date();
+  const cutoff = new Date(now.getTime() - AUTO_DISCOVERY_COOLDOWN_MS).toISOString();
+  try {
+    const result = await env.DB.prepare(
+      `INSERT INTO budget_ledger (id, user_id, provider, operation, cost_usd, input_units, output_units, cache_hit, occurred_at)
+       SELECT ?, ?, 'tavily', 'search_auto_guard', 0, 0, 0, 0, ?
+       WHERE NOT EXISTS (
+         SELECT 1 FROM budget_ledger
+         WHERE user_id = ? AND provider = 'tavily' AND operation = 'search_auto_guard' AND occurred_at >= ?
+       )`
+    ).bind(id, userId, now.toISOString(), userId, cutoff).run();
+    if (result.meta.changes > 0) return { ok: true as const, id };
+    return {
+      ok: false as const,
+      reason: '自動候補補充は直近20時間以内に実行済みです。必要ならDiscoverから手動探索できます。',
+    };
+  } catch {
+    return {
+      ok: false as const,
+      reason: 'D1の自動補充ガードを確認できないため、自動探索だけ安全側で停止しました。手動探索は利用できます。',
+    };
+  }
+}
+
+async function releaseAutomaticDiscovery(env: Env, id: string) {
+  try {
+    await env.DB.prepare("DELETE FROM budget_ledger WHERE id = ? AND operation = 'search_auto_guard'").bind(id).run();
+  } catch {
+    // Keeping the zero-cost guard is safer than risking repeated automatic free-quota use.
+  }
 }
 
 async function recordFreeSearchUsage(env: Env, userId: string, credits: number) {
