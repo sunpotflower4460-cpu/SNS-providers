@@ -34,13 +34,28 @@ function canonicalProfileUrl(platform: Candidate['platform'], rawUsername: strin
 }
 
 function safeEngagementUrl(platform: Candidate['platform'], value?: string) {
-  if (!value) return '';
+  if (!value || value.length > 2000) return '';
   try {
     const url = new URL(value);
     if (url.protocol !== 'https:') return '';
     const host = url.hostname.replace(/^www\./, '').toLowerCase();
-    const allowed = platform === 'x' ? new Set(['x.com', 'twitter.com']) : new Set(['instagram.com']);
-    return allowed.has(host) ? url.toString() : '';
+    const parts = url.pathname.split('/').filter(Boolean);
+
+    if (platform === 'x') {
+      if (host !== 'x.com' && host !== 'twitter.com') return '';
+      const [username, statusSegment, postId] = parts;
+      if (parts.length < 3
+        || !/^[A-Za-z0-9_]{1,15}$/.test(username || '')
+        || statusSegment !== 'status'
+        || !/^\d{1,30}$/.test(postId || '')) return '';
+      return `https://x.com/${username}/status/${postId}`;
+    }
+
+    if (host !== 'instagram.com') return '';
+    const [kind, shortcode] = parts;
+    if (!['p', 'reel', 'reels', 'tv'].includes((kind || '').toLowerCase())
+      || !/^[A-Za-z0-9_-]{1,100}$/.test(shortcode || '')) return '';
+    return `https://www.instagram.com/${kind.toLowerCase()}/${shortcode}/`;
   } catch {
     return '';
   }
