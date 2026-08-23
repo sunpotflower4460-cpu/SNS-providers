@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { analyzeSelfProfile, apiConfigured, discoverSocialCandidates, enrichXProfiles, fetchBudget, rankCandidates } from './api';
 import BackupControls from './BackupControls';
 import { getSyncToken } from './controlToken';
@@ -35,6 +35,8 @@ function App() {
   const [analyzingSelf, setAnalyzingSelf] = useState(false);
   const [apiNote, setApiNote] = useState(apiConfigured ? 'API接続待機' : 'ローカルモード');
   const [persistenceError, setPersistenceError] = useState('');
+  const autoReplenishingRef = useRef(false);
+  const autoReplenishAttemptKeyRef = useRef('');
   const localDay = useLocalDayKey();
   const statusNote = persistenceError || apiNote;
 
@@ -53,6 +55,75 @@ function App() {
       .then((budget) => setState((current) => syncBudget(current, budget.usedUsd, budget.limitUsd)))
       .catch((error) => setApiNote(error instanceof Error ? `予算同期: ${error.message}` : '予算同期に失敗しました'));
   }, []);
+
+  useEffect(() => {
+    if (state.relationshipPolicy.autoReplenishEnabled === false
+      || !apiConfigured
+      || !getSyncToken().trim()
+      || discovering
+      || ranking
+      || autoReplenishingRef.current) return;
+
+    const demand = autoReplenishDemand(state);
+    if (demand.remainingTarget <= 0 || demand.current >= demand.lowWater) return;
+
+    const missionKey = JSON.stringify([
+      state.mission.primaryGoal,
+      state.mission.text,
+      state.mission.secondaryGoals,
+      state.mission.communicationDNA,
+    ]);
+    const attemptKey = `${localDay}:${missionKey}`;
+    if (autoReplenishAttemptKeyRef.current === attemptKey) return;
+
+    autoReplenishAttemptKeyRef.current = attemptKey;
+    autoReplenishingRef.current = true;
+    setDiscovering(true);
+    setRanking(true);
+    setApiNote(`実行可能候補 ${demand.current}/${demand.remainingTarget}件 · 無料で自動補充中…`);
+    const snapshot = state;
+
+    void (async () => {
+      try {
+        const discovered = await discoverSocialCandidates(snapshot.mission, 'local-user', true);
+        if (!discovered.enabled) {
+          setApiNote(discovered.reason || '自動候補補充は現在利用できません');
+          return;
+        }
+
+        const merged = mergeDiscoveredProfiles(snapshot, discovered.profiles);
+        const addedCount = Math.max(0, merged.candidates.length - snapshot.candidates.length);
+        const now = Date.now();
+        const rankTargets = merged.candidates.filter((candidate) => {
+          if (candidate.skipped || candidate.recommendedAction !== 'review') return false;
+          if (!candidate.snoozedUntil) return true;
+          const until = new Date(candidate.snoozedUntil).getTime();
+          return !Number.isFinite(until) || until <= now;
+        });
+
+        if (!rankTargets.length) {
+          setState((current) => mergeDiscoveredProfiles(current, discovered.profiles));
+          setApiNote(`自動補充完了 · 新規${addedCount}件 · 追加評価対象なし · $0`);
+          return;
+        }
+
+        // Automatic replenishment is explicitly free-only. Free Groq may be used when
+        // configured; otherwise the Worker falls back to deterministic local ranking.
+        const ranked = await rankCandidates(merged.mission, rankTargets, merged.budget.monthlyLimitUsd, 'local-user', false);
+        setState((current) => {
+          const withDiscovery = mergeDiscoveredProfiles(current, discovered.profiles);
+          return applyRankResults(withDiscovery, ranked.results, ranked.costUsd);
+        });
+        setApiNote(`自動補充完了 · 新規${addedCount}件 · ${ranked.provider}で${ranked.results.length}件評価 · $0`);
+      } catch (error) {
+        setApiNote(error instanceof Error ? `自動補充: ${error.message}` : '自動候補補充に失敗しました');
+      } finally {
+        autoReplenishingRef.current = false;
+        setDiscovering(false);
+        setRanking(false);
+      }
+    })();
+  }, [localDay, state, discovering, ranking]);
 
   const active = useMemo(() => {
     const now = Date.now();
@@ -471,6 +542,34 @@ function Settings({ state, onChange }: { state: AppState; onChange: AppStateUpda
     </section>
     <BackupControls state={state} onRestore={onChange} />
   </>;
+}
+
+function autoReplenishDemand(state: AppState) {
+  const total = clampInt(state.relationshipPolicy.dailyQueueLimit, 30, 1, 150);
+  const connect = clampInt(state.relationshipPolicy.dailyConnectionLimit, 20, 0, 120);
+  const conversation = clampInt(state.relationshipPolicy.dailyConversationLimit, 8, 0, 30);
+  const light = clampInt(state.relationshipPolicy.dailyLightEngagementLimit, 8, 0, 30);
+  const cleanup = clampInt(state.relationshipPolicy.dailyCleanupLimit, 5, 0, 30);
+  const selfLimit = clampInt(state.relationshipPolicy.dailySelfImproveLimit, 2, 0, 5);
+  const plannedSelf = state.insights.length > 0 ? Math.min(selfLimit, state.insights.length) : 0;
+  const relationshipCapacity = connect + conversation + light + cleanup;
+  const relationshipTarget = Math.max(0, Math.min(total - plannedSelf, relationshipCapacity));
+  const now = new Date();
+  const completedToday = state.interactions.filter((interaction) => {
+    const at = new Date(interaction.at);
+    return at.getFullYear() === now.getFullYear()
+      && at.getMonth() === now.getMonth()
+      && at.getDate() === now.getDate();
+  }).length;
+  const remainingTarget = Math.max(0, relationshipTarget - completedToday);
+  const current = buildDailyQueue(state).filter((item) => item.kind === 'relationship').length;
+  const lowWater = remainingTarget > 0 ? Math.max(1, Math.ceil(remainingTarget * 0.7)) : 0;
+  return { current, remainingTarget, lowWater };
+}
+
+function clampInt(value: number | undefined, fallback: number, min: number, max: number) {
+  const normalized = Number.isFinite(value) ? Math.round(value!) : fallback;
+  return Math.max(min, Math.min(max, normalized));
 }
 
 function PageHeading({ eyebrow, title, text }: { eyebrow: string; title: string; text: string }) {
