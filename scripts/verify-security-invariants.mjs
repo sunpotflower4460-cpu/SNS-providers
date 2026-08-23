@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 const router = await readFile(new URL('../worker/src/router.ts', import.meta.url), 'utf8');
 const providerApi = await readFile(new URL('../worker/src/index.ts', import.meta.url), 'utf8');
 const xOAuth = await readFile(new URL('../worker/src/xOAuth.ts', import.meta.url), 'utf8');
+const xAccount = await readFile(new URL('../src/xAccount.ts', import.meta.url), 'utf8');
 const backup = await readFile(new URL('../src/backup.ts', import.meta.url), 'utf8');
 const syncControls = await readFile(new URL('../src/SyncControls.tsx', import.meta.url), 'utf8');
 const store = await readFile(new URL('../src/store.ts', import.meta.url), 'utf8');
@@ -25,8 +26,18 @@ if (!/if \(PROVIDER_COST_PATHS\.has\(url\.pathname\)\)\s*\{[\s\S]{0,300}?authori
   throw new Error('Provider-cost routes are not guarded by authorizeSync().');
 }
 
+if (!/request\.method === 'GET' && url\.pathname === '\/api\/x\/oauth\/status'\)\s*\{[\s\S]{0,300}?authorizeSync\(request, env\)/.test(router)) {
+  throw new Error('X OAuth status is not guarded by authorizeSync().');
+}
+if (!xAccount.includes('const token = requiredControlToken();') || !xAccount.includes("/api/x/oauth/status?userId=${encodeURIComponent(userId)}`")) {
+  throw new Error('The client no longer authenticates X OAuth status reads.');
+}
+
 if (!router.includes('expectedUpdatedAt') || !router.includes('INSERT OR IGNORE INTO state_snapshots') || !router.includes('AND updated_at = ?')) {
   throw new Error('D1 state sync lost its optimistic-concurrency guard.');
+}
+if (!router.includes('new TextEncoder().encode(stateJson).byteLength > 2_000_000')) {
+  throw new Error('D1 state snapshot size is no longer enforced using UTF-8 bytes.');
 }
 
 if (!providerApi.includes("markReservationUncertain(env, reservationId, 'user_read_uncertain')") || !providerApi.includes("markReservationUncertain(env, reservationId, 'rank_uncertain')")) {
@@ -67,6 +78,12 @@ if (!backup.includes('legacyDemoCandidates') || !store.includes('LEGACY_DEMO_CAN
 if (!store.includes("interaction.action === 'kept'") || !store.includes('advanceRelationshipStage') || !store.includes("target?.recommendedAction === 'unfollow_review'")) {
   throw new Error('Manual relationship outcomes no longer feed the conservative CRM progression/cleanup distinction.');
 }
+if (!store.includes('if (rawCandidate.skipped) return rawCandidate;') || !store.includes("recommendedAction: 'review' as const")) {
+  throw new Error('Dismissed candidates can be re-promoted into cleanup advice immediately.');
+}
+if (!store.includes("if (platform === 'x') return /^[A-Za-z0-9_]{1,15}$/.test(username) ? username : '';")) {
+  throw new Error('Manual X candidate input is no longer constrained to valid X handle shape.');
+}
 if (social.includes('intent/tweet') || social.includes('intent/follow')) {
   throw new Error('Legacy X intent handoff can bypass the official profile/conversation review flow.');
 }
@@ -91,4 +108,4 @@ if (!xOAuth.includes('validateGrantedScopes(token.scope)') || !xOAuth.includes('
   throw new Error('X OAuth no longer fail-closes on unexpected or missing granted scopes.');
 }
 
-console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, fully normalized JSON/D1 restores, no demo candidates, conservative CRM progression, canonical official-platform handoff, guarded social drafts + self-profile rewrite, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, requested+granted X scopes=${scopes.join(', ')}`);
+console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, protected X OAuth status, UTF-8 snapshot limit, fully normalized JSON/D1 restores, no demo candidates, conservative CRM progression, valid manual X handles, canonical official-platform handoff, guarded social drafts + self-profile rewrite, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, requested+granted X scopes=${scopes.join(', ')}`);
