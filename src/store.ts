@@ -190,11 +190,13 @@ export function applyOwnedXSync(state: AppState, result: XOwnedSyncResponse): Ap
     const relatedProfile = profileByUsername.get(username);
     const isFollower = followerSet.has(username);
     const isFollowing = followingSet.has(username);
-    const followBack = isFollower ? true : followersComplete && candidate.followedAt ? false : candidate.followBack;
+    const followedAt = !candidate.skipped && isFollowing ? candidate.followedAt ?? syncedAt : candidate.followedAt;
+    const followBack = isFollower ? true : followersComplete && followedAt ? false : candidate.followBack;
     const stage = isFollowing && (candidate.stage === 'discovered' || candidate.stage === 'interested') ? 'following' as const : candidate.stage;
     return {
       ...candidate,
       stage,
+      followedAt,
       followBack,
       platformUserId: relatedProfile?.id || candidate.platformUserId,
       displayName: relatedProfile?.name || candidate.displayName,
@@ -374,6 +376,22 @@ function refreshRelationshipAdvice(state: AppState): AppState {
 function normalizeLocalRelationshipAction(candidate: Candidate): Candidate {
   const replyReady = Boolean(candidate.engagementUrl) || ['engaged', 'recognized', 'conversation', 'relationship'].includes(candidate.stage);
   const dmReady = ['recognized', 'conversation', 'relationship'].includes(candidate.stage);
+  if (candidate.recommendedAction === 'follow' && candidate.followedAt) {
+    return {
+      ...candidate,
+      recommendedAction: 'review',
+      draft: undefined,
+      strategy: 'すでにフォロー済みとして記録されているため、重複フォローではなく現在の関係性や投稿を確認します。',
+    };
+  }
+  if (candidate.recommendedAction === 'unfollow_review' && !candidate.followedAt) {
+    return {
+      ...candidate,
+      recommendedAction: 'review',
+      draft: undefined,
+      strategy: 'フォロー済みの記録がないため、フォロー解除候補にはせず現在の状態を確認します。',
+    };
+  }
   if (candidate.recommendedAction === 'reply' && !replyReady) {
     return {
       ...candidate,
