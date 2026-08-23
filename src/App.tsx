@@ -7,7 +7,7 @@ import { buildDailyQueue, queueSummary } from './daily';
 import { mergeDiscoveredProfiles } from './discoveryStore';
 import { addCandidateFromReference, applyRankResults, applySelfAnalysis, applyXProfiles, loadState, recordInteraction, saveState, setFollowBackStatus, syncBudget, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
 import { copyDraft, openCandidate, platformLabel } from './social';
-import type { AppState, Candidate, Mission, Platform } from './types';
+import type { AppState, AppStateUpdater, Candidate, Mission, Platform } from './types';
 import { useLocalDayKey } from './useLocalDay';
 
 type Tab = 'today' | 'discover' | 'relations' | 'me' | 'settings';
@@ -176,7 +176,9 @@ function App() {
     setApiNote('自分のアカウントをMissionから逆算して分析中…');
     try {
       const result = await analyzeSelfProfile(state.mission, profileText, recentPostsText, state.budget.monthlyLimitUsd);
-      setState((current) => applySelfAnalysis(updateSelfProfileInputs(current, profileText, recentPostsText), result.results[0], result.costUsd));
+      // Inputs were already persisted before the request. Re-applying the request-time
+      // text here would overwrite a newer X sync/restore that completed while AI was busy.
+      setState((current) => applySelfAnalysis(current, result.results[0], result.costUsd));
       setApiNote(`${result.provider}で自己分析完了${result.paid ? ` · $${result.costUsd.toFixed(4)}` : ' · $0'}`);
     } catch (error) {
       setApiNote(error instanceof Error ? `自己分析失敗: ${error.message}` : '自己分析に失敗しました');
@@ -268,7 +270,7 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
   state: AppState;
   candidates: Candidate[];
   onOpen: (c: Candidate) => void;
-  onChange: (state: AppState) => void;
+  onChange: AppStateUpdater;
   onDiscover: () => void;
   onRerank: () => void;
   onEnrichX: () => void;
@@ -292,17 +294,17 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
 
   function addReference(value = reference) {
     if (!value.trim()) return;
-    onChange(addCandidateFromReference(state, platform, value));
+    onChange((current) => addCandidateFromReference(current, platform, value));
     setReference('');
   }
 
   function snoozeCandidate(candidate: Candidate) {
     const until = new Date();
     until.setHours(24, 0, 0, 0);
-    onChange({
-      ...state,
-      candidates: state.candidates.map((item) => item.id === candidate.id ? { ...item, snoozedUntil: until.toISOString() } : item),
-    });
+    onChange((current) => ({
+      ...current,
+      candidates: current.candidates.map((item) => item.id === candidate.id ? { ...item, snoozedUntil: until.toISOString() } : item),
+    }));
   }
 
   async function addFromClipboard() {
@@ -371,7 +373,7 @@ function CandidateCard({ candidate, onOpen, onLater, featured = false }: { candi
   </article>;
 }
 
-function Relations({ state, onOpen, onChange }: { state: AppState; onOpen: (c: Candidate) => void; onChange: (state: AppState) => void }) {
+function Relations({ state, onOpen, onChange }: { state: AppState; onOpen: (c: Candidate) => void; onChange: AppStateUpdater }) {
   const following = state.candidates.filter((candidate) => !candidate.skipped && candidate.stage !== 'discovered');
   const cleanup = following.filter((candidate) => candidate.recommendedAction === 'unfollow_review');
   return <>
@@ -390,9 +392,9 @@ function Relations({ state, onOpen, onChange }: { state: AppState; onOpen: (c: C
       </button>
       {candidate.strategy && <p className="relation-advice">{candidate.strategy}</p>}
       <div className="followback-controls" role="group" aria-label={`${candidate.username} follow back status`}>
-        <button className={candidate.followBack === true ? 'active' : ''} onClick={() => onChange(setFollowBackStatus(state, candidate.id, true))}>相互</button>
-        <button className={candidate.followBack === false ? 'active warn' : ''} onClick={() => onChange(setFollowBackStatus(state, candidate.id, false))}>フォロバなし</button>
-        <button className={candidate.followBack == null ? 'active' : ''} onClick={() => onChange(setFollowBackStatus(state, candidate.id, null))}>未確認</button>
+        <button className={candidate.followBack === true ? 'active' : ''} onClick={() => onChange((current) => setFollowBackStatus(current, candidate.id, true))}>相互</button>
+        <button className={candidate.followBack === false ? 'active warn' : ''} onClick={() => onChange((current) => setFollowBackStatus(current, candidate.id, false))}>フォロバなし</button>
+        <button className={candidate.followBack == null ? 'active' : ''} onClick={() => onChange((current) => setFollowBackStatus(current, candidate.id, null))}>未確認</button>
       </div>
     </article>)}</div>
   </>;
@@ -422,7 +424,7 @@ function Me({ state, onAnalyze, analyzing }: { state: AppState; onAnalyze: (prof
   </>;
 }
 
-function Settings({ state, onChange }: { state: AppState; onChange: (state: AppState) => void }) {
+function Settings({ state, onChange }: { state: AppState; onChange: AppStateUpdater }) {
   const [missionText, setMissionText] = useState(state.mission.text);
   const [primaryGoal, setPrimaryGoal] = useState(state.mission.primaryGoal);
   const [communicationDNA, setCommunicationDNA] = useState(state.mission.communicationDNA);
@@ -436,10 +438,12 @@ function Settings({ state, onChange }: { state: AppState; onChange: (state: AppS
   useEffect(() => setFollowBackDays(state.relationshipPolicy.followBackReviewAfterDays), [state.relationshipPolicy.followBackReviewAfterDays]);
 
   function persist() {
-    let next = updateMission(state, { ...state.mission, text: missionText, primaryGoal, communicationDNA });
-    next = { ...next, budget: { ...next.budget, monthlyLimitUsd: Math.max(0, budget), hardLimit: true } };
-    next = updateRelationshipPolicy(next, { ...next.relationshipPolicy, followBackReviewAfterDays: Math.max(7, Math.min(90, Math.round(followBackDays || 30))) });
-    onChange(next);
+    onChange((current) => {
+      let next = updateMission(current, { ...current.mission, text: missionText, primaryGoal, communicationDNA });
+      next = { ...next, budget: { ...next.budget, monthlyLimitUsd: Math.max(0, budget), hardLimit: true } };
+      next = updateRelationshipPolicy(next, { ...next.relationshipPolicy, followBackReviewAfterDays: Math.max(7, Math.min(90, Math.round(followBackDays || 30))) });
+      return next;
+    });
   }
 
   return <>
