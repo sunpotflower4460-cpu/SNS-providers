@@ -5,6 +5,7 @@ const app = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8');
 const store = await readFile(new URL('../src/store.ts', import.meta.url), 'utf8');
 const discoveryStore = await readFile(new URL('../src/discoveryStore.ts', import.meta.url), 'utf8');
 const requestContext = await readFile(new URL('../src/requestContext.ts', import.meta.url), 'utf8');
+const xAccountControls = await readFile(new URL('../src/XAccountControls.tsx', import.meta.url), 'utf8');
 const providerApi = await readFile(new URL('../worker/src/index.ts', import.meta.url), 'utf8');
 const xOwned = await readFile(new URL('../worker/src/xOwned.ts', import.meta.url), 'utf8');
 const instagramOwned = await readFile(new URL('../worker/src/instagramOwned.ts', import.meta.url), 'utf8');
@@ -71,6 +72,20 @@ requireAll(store, [
   'const recentPostsText = postsWereRead ? fetchedPostsText : state.selfProfile.recentPostsText;',
 ], 'Official X empty bio/zero-post semantics can regress to stale local profile text.');
 
+requireAll(store, [
+  'X_RESERVED_PATHS',
+  'INSTAGRAM_RESERVED_PATHS',
+  "platform === 'instagram' && (INSTAGRAM_RESERVED_PATHS.has(lowered) || parts.length !== 1)",
+  'if (!target || target.skipped) return state;',
+], 'Manual social references can create fake reserved-path profiles or orphan interactions.');
+
+requireAll(xAccountControls, [
+  'let requestGeneration = 0;',
+  'const generation = ++requestGeneration;',
+  'generation !== requestGeneration',
+  'generation === requestGeneration',
+], 'An older X OAuth status request can overwrite a newer control-token status result.');
+
 requireAll(providerApi, [
   'new TextEncoder().encode(JSON.stringify(body)).byteLength',
   'const messages = buildProviderMessages(body);',
@@ -104,4 +119,4 @@ requireAll(instagramOwned, [
   'Instagram Graph API returned an empty or invalid JSON response',
 ], 'Instagram owned sync can trust malformed/future cache state, mutate invalid usernames, or accept invalid successful JSON.');
 
-console.log('Request-context invariants OK: stale async results are discarded, UI writes merge into current state, malformed success/cache payloads fail closed, X empty values are authoritative, and paid LLM preflight remains byte-conservative with unknown-usage reservations preserved.');
+console.log('Request-context invariants OK: stale async results are discarded, UI writes merge into current state, manual social identities stay canonical, malformed success/cache payloads fail closed, X status races are ordered, and paid LLM preflight remains byte-conservative.');
