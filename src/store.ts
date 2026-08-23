@@ -71,7 +71,19 @@ export function loadState(): AppState {
 }
 
 export function saveState(state: AppState) {
-  localStorage.setItem(KEY, JSON.stringify(state));
+  try {
+    localStorage.setItem(KEY, JSON.stringify(state));
+    return { ok: true as const };
+  } catch (error) {
+    const quotaExceeded = error instanceof DOMException
+      && (error.name === 'QuotaExceededError' || error.name === 'NS_ERROR_DOM_QUOTA_REACHED');
+    return {
+      ok: false as const,
+      reason: quotaExceeded
+        ? 'ローカル保存容量がいっぱいです。Settingsからバックアップを書き出し、不要な候補を整理してください。'
+        : 'ローカル保存に失敗しました。ブラウザのストレージ設定を確認してください。',
+    };
+  }
 }
 
 export function updateMission(state: AppState, mission: Mission): AppState {
@@ -168,13 +180,20 @@ export function addCandidateFromReference(state: AppState, platform: Platform, r
   return { ...state, candidates: [candidate, ...state.candidates] };
 }
 
-export function applyXProfiles(state: AppState, profiles: XProfileResult[], costUsd = 0): AppState {
+export function applyXProfiles(state: AppState, profiles: XProfileResult[], attemptedUsernames: string[], costUsd = 0): AppState {
   const byUsername = new Map(profiles.map((profile) => [profile.username.toLowerCase(), profile]));
-  const syncedAt = new Date().toISOString();
+  const attempted = new Set(attemptedUsernames.map((username) => username.trim().toLowerCase()).filter(Boolean));
+  const attemptedAt = new Date().toISOString();
   const candidates = state.candidates.map((candidate) => {
-    if (candidate.platform !== 'x') return candidate;
-    const profile = byUsername.get(candidate.username.toLowerCase());
-    if (!profile) return candidate;
+    if (candidate.platform !== 'x' || candidate.skipped) return candidate;
+    const username = candidate.username.toLowerCase();
+    if (!attempted.has(username)) return candidate;
+    const profile = byUsername.get(username);
+    if (!profile) {
+      // A valid paid lookup that found no profile should still back off repeat reads.
+      // Keep the last successful sync timestamp separate from the last attempted read.
+      return { ...candidate, profileSyncAttemptedAt: attemptedAt };
+    }
     return {
       ...candidate,
       platformUserId: profile.id,
@@ -182,7 +201,8 @@ export function applyXProfiles(state: AppState, profiles: XProfileResult[], cost
       bio: profile.description,
       verified: profile.verified,
       publicMetrics: profile.publicMetrics,
-      profileSyncedAt: syncedAt,
+      profileSyncedAt: attemptedAt,
+      profileSyncAttemptedAt: attemptedAt,
     };
   });
   return {
@@ -227,6 +247,7 @@ export function applyOwnedXSync(state: AppState, result: XOwnedSyncResponse): Ap
       verified: relatedProfile ? relatedProfile.verified : candidate.verified,
       publicMetrics: relatedProfile?.publicMetrics || candidate.publicMetrics,
       profileSyncedAt: relatedProfile ? syncedAt : candidate.profileSyncedAt,
+      profileSyncAttemptedAt: relatedProfile ? syncedAt : candidate.profileSyncAttemptedAt,
     };
   });
 
