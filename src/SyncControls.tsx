@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { apiConfigured, fetchBudget } from './api';
 import { normalizeAppState, validateAppState } from './backup';
-import { clearRemoteStateVersion, clearSyncToken, downloadRemoteState, getSyncToken, setSyncToken, uploadRemoteState } from './sync';
+import { clearRemoteStateVersion, clearSyncToken, downloadRemoteState, getRemoteStateVersion, getSyncToken, setSyncToken, uploadRemoteState } from './sync';
 import { syncBudget } from './store';
 import type { AppState } from './types';
 import './sync.css';
@@ -14,25 +14,33 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
   async function saveToken() {
     const previous = getSyncToken().trim();
     const next = token.trim();
-    if (previous !== next) clearRemoteStateVersion();
-    setSyncToken(token);
     if (!next) {
+      clearSyncToken();
+      clearRemoteStateVersion();
       setStatus('個人管理キーを削除しました');
       return;
     }
     if (!apiConfigured) {
+      if (previous !== next) clearRemoteStateVersion();
+      setSyncToken(next);
       setStatus('個人管理キーをこの端末に保存しました · Worker未接続');
       return;
     }
 
     setBusy(true);
     setStatus('個人管理キーを確認中…');
+    // fetchBudget reads the shared control token, so stage the candidate key temporarily.
+    // If validation fails, restore the previously working key and keep its D1 version.
+    setSyncToken(next);
     try {
       const budget = await fetchBudget();
+      if (previous !== next) clearRemoteStateVersion();
       onRestore(syncBudget(state, budget.usedUsd, budget.limitUsd));
       setStatus('個人管理キーを保存し、Worker接続を確認しました');
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : '個人管理キーの確認に失敗しました');
+      setSyncToken(previous);
+      const message = error instanceof Error ? error.message : '個人管理キーの確認に失敗しました';
+      setStatus(`${message} · 変更は保存していません`);
     } finally {
       setBusy(false);
     }
@@ -43,9 +51,9 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
     try {
       const previous = getSyncToken().trim();
       const next = token.trim();
-      if (previous !== next) clearRemoteStateVersion();
-      setSyncToken(token);
-      const result = await uploadRemoteState(state, token);
+      const expectedVersion = previous === next ? getRemoteStateVersion() : null;
+      const result = await uploadRemoteState(state, next, 'local-user', expectedVersion);
+      setSyncToken(next);
       setStatus(`D1へ安全に保存 · ${new Date(result.updatedAt).toLocaleString('ja-JP')}`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : '同期アップロードに失敗しました');
@@ -57,11 +65,9 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
   async function download() {
     setBusy(true);
     try {
-      const previous = getSyncToken().trim();
       const next = token.trim();
-      if (previous !== next) clearRemoteStateVersion();
-      setSyncToken(token);
-      const result = await downloadRemoteState(token);
+      const result = await downloadRemoteState(next);
+      setSyncToken(next);
       if (!result.found || !result.state) {
         setStatus('D1に保存済みデータはありません');
         return;
