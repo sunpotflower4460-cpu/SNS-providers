@@ -51,9 +51,6 @@ const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 
 export async function syncInstagramEngagers(env: InstagramOwnedEnv, body: InstagramOwnedSyncRequest) {
   const userId = sanitizeUserId(body.userId || 'local-user');
-  const cached = await loadFreshCache(env, userId, Boolean(body.force));
-  if (cached) return { ...cached, source: 'cache', externalCostUsd: 0 };
-
   const accessToken = env.INSTAGRAM_ACCESS_TOKEN?.trim();
   const instagramUserId = env.INSTAGRAM_USER_ID?.trim();
   const apiVersion = env.INSTAGRAM_API_VERSION?.trim();
@@ -62,6 +59,9 @@ export async function syncInstagramEngagers(env: InstagramOwnedEnv, body: Instag
   }
   if (!/^v\d+\.\d+$/.test(apiVersion)) return disabled('INSTAGRAM_API_VERSION must look like v24.0.');
   if (!/^\d{4,30}$/.test(instagramUserId)) return disabled('INSTAGRAM_USER_ID is invalid.');
+
+  const cached = await loadFreshCache(env, userId, Boolean(body.force), instagramUserId);
+  if (cached) return { ...cached, source: 'cache', externalCostUsd: 0 };
 
   const maxMedia = clampInt(body.maxMedia, 8, 1, 12);
   const maxCommentsPerMedia = clampInt(body.maxCommentsPerMedia, 25, 1, 50);
@@ -167,7 +167,7 @@ async function graphFetch<T>(url: string, token: string): Promise<T> {
   return body as T;
 }
 
-async function loadFreshCache(env: InstagramOwnedEnv, userId: string, force: boolean) {
+async function loadFreshCache(env: InstagramOwnedEnv, userId: string, force: boolean, expectedAccountId: string) {
   if (force) return null;
   try {
     const row = await env.DB.prepare('SELECT snapshot_json, synced_at FROM instagram_engager_snapshots WHERE user_id = ?')
@@ -175,7 +175,9 @@ async function loadFreshCache(env: InstagramOwnedEnv, userId: string, force: boo
       .first<{ snapshot_json: string; synced_at: string }>();
     if (!row) return null;
     if (Date.now() - new Date(row.synced_at).getTime() > CACHE_TTL_MS) return null;
-    return JSON.parse(row.snapshot_json) as Record<string, unknown>;
+    const snapshot = JSON.parse(row.snapshot_json) as Record<string, unknown>;
+    if (snapshot.accountId !== expectedAccountId) return null;
+    return snapshot;
   } catch {
     return null;
   }
