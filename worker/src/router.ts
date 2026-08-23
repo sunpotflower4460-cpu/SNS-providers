@@ -170,10 +170,13 @@ export default {
           if (body.expectedUpdatedAt !== null && typeof body.expectedUpdatedAt !== 'string') {
             return json({ error: 'expectedUpdatedAt must be a string or null' }, 400, request, env);
           }
+          if (typeof body.expectedUpdatedAt === 'string' && !validIso(body.expectedUpdatedAt)) {
+            return json({ error: 'expectedUpdatedAt must be a valid ISO timestamp' }, 400, request, env);
+          }
 
           const stateJson = JSON.stringify(body.state);
           if (new TextEncoder().encode(stateJson).byteLength > 2_000_000) return json({ error: 'state snapshot is too large' }, 413, request, env);
-          const updatedAt = new Date().toISOString();
+          const updatedAt = nextSnapshotVersion(body.expectedUpdatedAt);
 
           if (body.expectedUpdatedAt === null) {
             const inserted = await env.DB.prepare(
@@ -252,6 +255,17 @@ function sanitizeUserId(value: string) {
   const userId = value.trim();
   if (!/^[A-Za-z0-9._-]{1,80}$/.test(userId)) throw new Error('invalid userId');
   return userId;
+}
+
+function validIso(value: string) {
+  return Number.isFinite(new Date(value).getTime());
+}
+
+function nextSnapshotVersion(previous: string | null | undefined) {
+  const now = Date.now();
+  const previousMs = previous ? new Date(previous).getTime() : Number.NaN;
+  const nextMs = Number.isFinite(previousMs) ? Math.max(now, previousMs + 1) : now;
+  return new Date(nextMs).toISOString();
 }
 
 async function recordFreeSearchUsage(env: Env, userId: string, credits: number) {
