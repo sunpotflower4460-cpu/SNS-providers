@@ -75,9 +75,9 @@ export interface DiscoveryResponse {
   reason?: string;
 }
 
-async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+async function apiFetch<T>(path: string, init?: RequestInit, tokenOverride?: string): Promise<T> {
   if (!apiConfigured) throw new Error('API endpoint is not configured');
-  const token = getSyncToken().trim();
+  const token = (tokenOverride ?? getSyncToken()).trim();
   if (!token) throw new Error('先にSettingsで個人管理キーを保存してください');
   const response = await fetch(`${apiBaseUrl}${path}`, {
     ...init,
@@ -96,8 +96,8 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-export async function fetchBudget(userId = 'local-user') {
-  const result = await apiFetch<unknown>(`/api/budget?userId=${encodeURIComponent(userId)}`);
+export async function fetchBudget(userId = 'local-user', tokenOverride?: string) {
+  const result = await apiFetch<unknown>(`/api/budget?userId=${encodeURIComponent(userId)}`, undefined, tokenOverride);
   if (!isRecord(result)
     || !nonNegativeFinite(result.usedUsd)
     || !nonNegativeFinite(result.limitUsd)
