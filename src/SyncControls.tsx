@@ -15,30 +15,35 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
     const previous = getSyncToken().trim();
     const next = token.trim();
     if (!next) {
-      clearSyncToken();
-      clearRemoteStateVersion();
-      setStatus('個人管理キーを削除しました');
+      const tokenCleared = clearSyncToken();
+      const versionCleared = clearRemoteStateVersion();
+      setStatus(tokenCleared && versionCleared
+        ? '個人管理キーを削除しました'
+        : 'このセッションからキーを削除しましたが、ブラウザ保存領域の削除に失敗しました。再読み込み前にストレージ設定を確認してください。');
       return;
     }
     if (!apiConfigured) {
-      if (previous !== next) clearRemoteStateVersion();
-      setSyncToken(next);
-      setStatus('個人管理キーをこの端末に保存しました · Worker未接続');
+      const versionCleared = previous === next ? true : clearRemoteStateVersion();
+      const tokenPersisted = setSyncToken(next);
+      setStatus(tokenPersisted && versionCleared
+        ? '個人管理キーをこの端末に保存しました · Worker未接続'
+        : 'このセッションでは個人管理キーを使えますが、端末への永続保存に失敗しました · Worker未接続');
       return;
     }
 
     setBusy(true);
     setStatus('個人管理キーを確認中…');
-    // fetchBudget reads the shared control token, so stage the candidate key temporarily.
-    // If validation fails, restore the previously working key and keep its D1 version.
-    setSyncToken(next);
     try {
-      const budget = await fetchBudget();
-      if (previous !== next) clearRemoteStateVersion();
+      // Validate the candidate token directly. Do not stage an unverified replacement in
+      // localStorage and then attempt a rollback if the Worker rejects it.
+      const budget = await fetchBudget('local-user', next);
+      const versionCleared = previous === next ? true : clearRemoteStateVersion();
+      const tokenPersisted = setSyncToken(next);
       onRestore((current) => syncBudget(current, budget.usedUsd, budget.limitUsd));
-      setStatus('個人管理キーを保存し、Worker接続を確認しました');
+      setStatus(tokenPersisted && versionCleared
+        ? '個人管理キーを保存し、Worker接続を確認しました'
+        : 'Worker接続は確認できました。このセッションでは使えますが、キーまたはD1版情報の端末保存に失敗しました。');
     } catch (error) {
-      setSyncToken(previous);
       setToken(previous);
       const message = error instanceof Error ? error.message : '個人管理キーの確認に失敗しました';
       setStatus(`${message} · 変更は保存していません`);
@@ -54,8 +59,11 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
       const next = token.trim();
       const expectedVersion = previous === next ? getRemoteStateVersion() : null;
       const result = await uploadRemoteState(state, next, 'local-user', expectedVersion);
-      setSyncToken(next);
-      setStatus(`D1へ安全に保存 · ${new Date(result.updatedAt).toLocaleString('ja-JP')}`);
+      const tokenPersisted = setSyncToken(next);
+      const persistenceWarning = tokenPersisted && result.versionPersisted
+        ? ''
+        : ' · 保存は成功しましたが端末のキー/版情報を永続保存できません。再読み込み前にストレージ設定を確認してください';
+      setStatus(`D1へ安全に保存 · ${new Date(result.updatedAt).toLocaleString('ja-JP')}${persistenceWarning}`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : '同期アップロードに失敗しました');
     } finally {
@@ -68,15 +76,18 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
     try {
       const next = token.trim();
       const result = await downloadRemoteState(next);
-      setSyncToken(next);
+      const tokenPersisted = setSyncToken(next);
+      const persistenceWarning = tokenPersisted && result.versionPersisted
+        ? ''
+        : ' · このセッションでは利用できますが端末のキー/版情報を永続保存できません';
       if (!result.found || !result.state) {
-        setStatus('D1に保存済みデータはありません');
+        setStatus(`D1に保存済みデータはありません${persistenceWarning}`);
         return;
       }
       const restored = normalizeAppState(result.state);
       validateAppState(restored);
       onRestore(restored);
-      setStatus(`D1から検証して復元 · ${result.updatedAt ? new Date(result.updatedAt).toLocaleString('ja-JP') : '日時不明'}`);
+      setStatus(`D1から検証して復元 · ${result.updatedAt ? new Date(result.updatedAt).toLocaleString('ja-JP') : '日時不明'}${persistenceWarning}`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : '同期ダウンロードに失敗しました');
     } finally {
@@ -85,10 +96,12 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
   }
 
   function forget() {
-    clearSyncToken();
-    clearRemoteStateVersion();
+    const tokenCleared = clearSyncToken();
+    const versionCleared = clearRemoteStateVersion();
     setToken('');
-    setStatus('この端末の個人管理キーとD1同期バージョンを削除しました');
+    setStatus(tokenCleared && versionCleared
+      ? 'この端末の個人管理キーとD1同期バージョンを削除しました'
+      : 'このセッションではキーを忘れましたが、ブラウザ保存領域の削除に失敗しました。ストレージ設定を確認してください。');
   }
 
   return <section className="form-card sync-card">
