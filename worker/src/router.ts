@@ -37,6 +37,8 @@ interface StateSyncRequest {
   expectedUpdatedAt?: string | null;
 }
 
+const MAX_ROUTED_BODY_BYTES = 2_100_000;
+
 const ROUTER_CORS_PATHS = new Set([
   '/api/budget',
   '/api/ai/rank',
@@ -66,7 +68,7 @@ export default {
 
     if (ROUTER_CORS_PATHS.has(url.pathname)) {
       const userBoundary = await enforceSingleUserRequest(request, url);
-      if (!userBoundary.ok) return json({ error: userBoundary.reason }, 400, request, env);
+      if (!userBoundary.ok) return json({ error: userBoundary.reason }, userBoundary.status, request, env);
     }
 
     if (PROVIDER_COST_PATHS.has(url.pathname)) {
@@ -235,27 +237,41 @@ export default {
 async function enforceSingleUserRequest(request: Request, url: URL) {
   const queryUserId = url.searchParams.get('userId');
   if (queryUserId !== null && queryUserId.trim() !== 'local-user') {
-    return { ok: false as const, reason: 'This deployment only supports userId=local-user.' };
+    return { ok: false as const, status: 400, reason: 'This deployment only supports userId=local-user.' };
   }
 
   if (request.method === 'POST' || request.method === 'PUT') {
-    const rawBody = await request.clone().text().catch(() => '');
+    const declaredLength = Number(request.headers.get('content-length') || '0');
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_ROUTED_BODY_BYTES) {
+      return { ok: false as const, status: 413, reason: 'Request body is too large.' };
+    }
+
+    let rawBody = '';
+    try {
+      rawBody = await request.clone().text();
+    } catch {
+      return { ok: false as const, status: 400, reason: 'Request body could not be read.' };
+    }
+    if (new TextEncoder().encode(rawBody).byteLength > MAX_ROUTED_BODY_BYTES) {
+      return { ok: false as const, status: 413, reason: 'Request body is too large.' };
+    }
+
     if (rawBody.trim()) {
       let body: { userId?: unknown };
       try {
         body = JSON.parse(rawBody) as { userId?: unknown };
       } catch {
-        return { ok: false as const, reason: 'Request body must be valid JSON.' };
+        return { ok: false as const, status: 400, reason: 'Request body must be valid JSON.' };
       }
       if (Object.prototype.hasOwnProperty.call(body, 'userId') && body.userId != null) {
         if (typeof body.userId !== 'string' || body.userId.trim() !== 'local-user') {
-          return { ok: false as const, reason: 'This deployment only supports userId=local-user.' };
+          return { ok: false as const, status: 400, reason: 'This deployment only supports userId=local-user.' };
         }
       }
     }
   }
 
-  return { ok: true as const, reason: '' };
+  return { ok: true as const, status: 200, reason: '' };
 }
 
 async function authorizeSync(request: Request, env: Env) {
