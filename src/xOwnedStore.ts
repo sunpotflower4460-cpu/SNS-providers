@@ -6,6 +6,7 @@ const MAX_NEW_INBOUND_CANDIDATES = 40;
 
 export function applyOwnedXSyncWithDiscovery(state: AppState, result: XOwnedSyncResponse): AppState {
   let synced = applyOwnedXSync(state, result);
+  synced = reconcileSelfInputs(state, synced, result);
   synced = applyFullCycleFollowEvidence(synced, result);
   if (!result.enabled || !result.followers?.length) return synced;
 
@@ -54,6 +55,35 @@ export function applyOwnedXSyncWithDiscovery(state: AppState, result: XOwnedSync
   return additions.length
     ? { ...synced, candidates: [...additions, ...synced.candidates] }
     : synced;
+}
+
+function reconcileSelfInputs(original: AppState, synced: AppState, result: XOwnedSyncResponse): AppState {
+  if (!result.enabled || !result.profile) return synced;
+
+  // /users/me is always read for an enabled owned sync, so an empty description is an
+  // authoritative empty bio, not a signal to retain a stale local value.
+  const profileText = result.profile.description;
+  // A zero requested post allocation means posts were not read at all (budget/pacing),
+  // so preserve the prior text. If posts were actually requested and the result is empty,
+  // the empty list is authoritative and stale imported posts should be cleared.
+  const postsWereRead = (result.requested?.posts ?? 0) > 0;
+  const recentPostsText = postsWereRead
+    ? (result.posts || []).map((post) => post.text.trim()).filter(Boolean).join('\n\n---\n\n')
+    : original.selfProfile.recentPostsText;
+
+  const changed = profileText !== original.selfProfile.profileText
+    || recentPostsText !== original.selfProfile.recentPostsText;
+  if (!changed) return { ...synced, selfProfile: original.selfProfile };
+
+  // Content changed, so prior AI score/strategy/rewrite is stale. Keep only the fresh
+  // source material and require a new analysis before showing advice as current.
+  return {
+    ...synced,
+    selfProfile: {
+      profileText,
+      recentPostsText,
+    },
+  };
 }
 
 function applyFullCycleFollowEvidence(state: AppState, result: XOwnedSyncResponse): AppState {
