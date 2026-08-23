@@ -25,6 +25,7 @@ interface CandidateInput {
   tags?: string[];
   kind?: string;
   platform?: string;
+  currentMatch?: number;
   publicMetrics?: {
     followers?: number;
     following?: number;
@@ -36,6 +37,10 @@ interface CandidateInput {
   reason?: string;
   strategy?: string;
   engagementUrl?: string;
+  followedAt?: string;
+  followBack?: boolean | null;
+  lastInteractionAt?: string;
+  profileSyncedAt?: string;
 }
 
 interface RankRequest {
@@ -44,6 +49,7 @@ interface RankRequest {
   communicationDNA?: string;
   candidates: CandidateInput[];
   monthlyLimitUsd?: number;
+  paidAllowed?: boolean;
 }
 
 interface XEnrichRequest {
@@ -176,6 +182,7 @@ export default {
         validateRankRequest(body);
         const userId = body.userId || 'local-user';
         const budget = await budgetForRequest(env, userId, body.monthlyLimitUsd);
+        const paidAllowed = body.paidAllowed !== false;
 
         if (env.GROQ_API_KEY) {
           const paid = env.GROQ_BILLING_MODE === 'paid';
@@ -185,9 +192,9 @@ export default {
               await recordFreeUsage(env, userId, 'groq', 'rank_free', result.usage);
               return json({ provider: 'groq', paid: false, costUsd: 0, results: result.results }, 200, cors);
             } catch {
-              // Continue to the next provider or local scoring.
+              // Continue to the next allowed provider or local scoring.
             }
-          } else if (budget.ledgerAvailable) {
+          } else if (paidAllowed && budget.ledgerAvailable) {
             const rates = parseRates(env.GROQ_INPUT_PER_MILLION, env.GROQ_OUTPUT_PER_MILLION);
             const preflight = rates ? estimateMaxCost(body, rates) : Number.POSITIVE_INFINITY;
             if (rates && preflight <= budget.remainingUsd) {
@@ -202,7 +209,7 @@ export default {
           }
         }
 
-        if (env.DEEPSEEK_API_KEY && budget.ledgerAvailable && budget.remainingUsd > 0) {
+        if (paidAllowed && env.DEEPSEEK_API_KEY && budget.ledgerAvailable && budget.remainingUsd > 0) {
           const rates = parseRates(env.DEEPSEEK_INPUT_PER_MILLION, env.DEEPSEEK_OUTPUT_PER_MILLION);
           const preflight = rates ? estimateMaxCost(body, rates) : Number.POSITIVE_INFINITY;
           if (rates && preflight <= budget.remainingUsd) {
@@ -217,9 +224,11 @@ export default {
         }
 
         const results = localRank(body.mission, body.candidates);
-        const reason = budget.ledgerAvailable
-          ? 'Free providers unavailable, paid rates are not configured, or HARD LIMIT protected the budget.'
-          : 'Free providers unavailable and the budget ledger is unavailable, so all paid providers were blocked.';
+        const reason = !paidAllowed
+          ? 'Free-only ranking skipped all paid providers and used the best available free/local path.'
+          : budget.ledgerAvailable
+            ? 'Free providers unavailable, paid rates are not configured, or HARD LIMIT protected the budget.'
+            : 'Free providers unavailable and the budget ledger is unavailable, so all paid providers were blocked.';
         return json({ provider: 'local', paid: false, costUsd: 0, reason, results }, 200, cors);
       }
 
@@ -268,6 +277,7 @@ function validateRankRequest(body: RankRequest) {
   if (!body || typeof body.mission !== 'string' || !body.mission.trim()) throw new Error('mission is required');
   if (body.mission.length > 4000) throw new Error('mission is too long');
   if ((body.communicationDNA || '').length > 4000) throw new Error('communicationDNA is too long');
+  if (body.paidAllowed != null && typeof body.paidAllowed !== 'boolean') throw new Error('paidAllowed must be boolean');
   if (!Array.isArray(body.candidates) || body.candidates.length === 0) throw new Error('candidates are required');
   if (body.candidates.length > 50) throw new Error('rank accepts at most 50 candidates per batch');
   const stateBytes = new TextEncoder().encode(JSON.stringify(body)).byteLength;
@@ -463,6 +473,7 @@ function buildProviderMessages(body: RankRequest) {
           'Choose the best current action from follow, like, reply, dm, review, or unfollow_review.',
           'Recommend reply only when the supplied relationship stage or engagement URL shows a real interaction context. Do not turn a profile-only candidate into a reply.',
           'Recommend dm only for an already recognized/conversation/relationship-stage contact; do not recommend cold or premature DMs.',
+          'Use followedAt, followBack, lastInteractionAt and profileSyncedAt when present to avoid over-contacting recent relationships and to prefer genuinely fresh opportunities.',
           'Explain the strategic reason briefly in Japanese.',
           'For at most the five highest-value candidates where reply or dm is genuinely appropriate, include a short natural Japanese draft that follows communication_dna.',
           'Never use generic template praise, never invent facts or post content that is not in the supplied data, and omit draft when context is insufficient.',
@@ -566,19 +577,32 @@ function localRank(mission: string, candidates: CandidateInput[]) {
     const text = `${candidate.bio || ''} ${(candidate.tags || []).join(' ')} ${candidate.kind || ''}`;
     const terms = tokenize(text);
     const overlap = terms.filter((term) => missionTerms.includes(term)).length;
-    const match = Math.min(82, 42 + overlap * 8 + Math.min((candidate.tags || []).length * 2, 8));
+    const lexicalMatch = Math.min(82, 42 + overlap * 8 + Math.min((candidate.tags || []).length * 2, 8));
+    const priorMatch = Number.isFinite(candidate.currentMatch) ? Math.max(0, Math.min(100, Math.round(candidate.currentMatch!))) : 0;
+    const match = Math.max(lexicalMatch, priorMatch);
     const isSelf = candidate.kind === 'self_profile';
+    const stage = candidate.relationshipStage || 'discovered';
+    const profileHasSubstance = Boolean((candidate.bio || '').trim().length >= 24);
+    const followReady = !isSelf
+      && (stage === 'discovered' || stage === 'interested')
+      && !candidate.followedAt
+      && match >= 62
+      && profileHasSubstance;
     return {
       id: candidate.id,
       match,
       kind: candidate.kind || 'other',
-      recommendedAction: 'review',
+      recommendedAction: followReady ? 'follow' : 'review',
       reason: isSelf
         ? '無料ローカル判定ではプロフィール内容の共通語のみを確認しました。深い改善提案には無料LLMの設定が推奨です。'
-        : overlap > 0 ? 'Missionと共通する語やテーマがあるため、確認候補として残しました。' : '無料ローカル判定では確信度が低いため、人間の確認を優先します。',
+        : followReady
+          ? 'Mission探索で関連度が高く、公開プロフィールにも十分な文脈があるため、新しくつながる候補として残しました。'
+          : overlap > 0 ? 'Missionと共通する語やテーマがあるため、確認候補として残しました。' : '無料ローカル判定では確信度が低いため、人間の確認を優先します。',
       strategy: isSelf
         ? 'Missionが初見で伝わるか、作品への導線、最近の投稿テーマの偏りを本人が確認してください。'
-        : 'プロフィールや投稿内容を本人が確認してから、自然な交流方法を決めます。',
+        : followReady
+          ? '公式プロフィールを開き、現在の発信に違和感がなければフォローして関係づくりを始めます。自動フォローは行いません。'
+          : 'プロフィールや投稿内容を本人が確認してから、自然な交流方法を決めます。',
     };
   }).sort((a, b) => b.match - a.match);
 }
