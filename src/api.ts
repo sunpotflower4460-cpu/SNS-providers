@@ -112,7 +112,7 @@ export async function fetchBudget(userId = 'local-user', tokenOverride?: string)
 export async function discoverSocialCandidates(mission: Mission, userId = 'local-user') {
   const result = await apiFetch<unknown>('/api/discover/social', {
     method: 'POST',
-    body: JSON.stringify({ userId, mission: missionText(mission), maxPerPlatform: 12 }),
+    body: JSON.stringify({ userId, mission: missionText(mission), maxPerPlatform: 20 }),
   }, undefined, 60_000);
   if (!isRecord(result)
     || typeof result.enabled !== 'boolean'
@@ -164,6 +164,9 @@ export async function rankCandidates(mission: Mission, candidates: Candidate[], 
         reason: candidate.reason.slice(0, 800),
         strategy: candidate.strategy?.slice(0, 1000),
         engagementUrl: candidate.engagementUrl,
+        followedAt: candidate.followedAt,
+        lastInteractionAt: candidate.lastInteractionAt,
+        profileSyncedAt: candidate.profileSyncedAt,
       })),
     }),
   }, undefined, 120_000);
@@ -177,8 +180,15 @@ export async function rankCandidates(mission: Mission, candidates: Candidate[], 
     ...validated,
     results: validated.results.map((item) => {
       const candidate = selectedById.get(item.id)!;
+      const exactTargetRequired = item.recommendedAction === 'like' || item.recommendedAction === 'reply';
+      const missingExactTarget = exactTargetRequired && !candidate.engagementUrl;
       return {
         ...item,
+        recommendedAction: missingExactTarget ? 'review' : item.recommendedAction,
+        strategy: missingExactTarget
+          ? '具体的な投稿・会話URLがまだないため、いいね/返信先を推測せずプロフィール確認を優先します。次回、実投稿の接点が取れたら自動で実行候補へ上げます。'
+          : item.strategy,
+        draft: missingExactTarget ? undefined : item.draft,
         requestMissionKey,
         requestCandidateKey: candidateRequestKey(candidate),
       };
