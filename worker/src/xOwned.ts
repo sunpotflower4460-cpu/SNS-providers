@@ -1,5 +1,5 @@
 import { prepareFollowCycleTargets, updateFollowCycleEvidence, type TrackedXAccount } from './xFollowEvidence';
-import { getValidXAccessToken, type XOAuthEnv } from './xOAuth';
+import { getValidXAccessToken, xOAuthStatus, type XOAuthEnv } from './xOAuth';
 
 export interface XOwnedEnv extends XOAuthEnv {
   DEFAULT_MONTHLY_BUDGET_USD?: string;
@@ -75,9 +75,10 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
     return disabled('X owned-read sync is disabled until X_OWNED_READ_ELIGIBLE=true is explicitly configured.');
   }
 
-  // Even a cache hit is owned-account data and therefore requires a currently valid
-  // read-only OAuth connection. This prevents stale cached data from outliving disconnect.
-  const accessToken = await getValidXAccessToken(env, userId);
+  // Cached owned data still requires an existing OAuth connection, but serving it should
+  // not depend on a live token-refresh network call. Actual X reads validate/refresh below.
+  const oauthStatus = await xOAuthStatus(env, userId);
+  if (!oauthStatus.connected) throw new Error('X account is not connected');
   const cached = await loadFreshCache(env, userId, Boolean(body.force));
   if (cached) return { ...cached, source: 'cache', costUsd: 0 };
 
@@ -90,6 +91,10 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
   const budget = await budgetForRequest(env, userId, body.monthlyLimitUsd);
   if (!budget.ledgerAvailable) return disabled('Budget ledger is unavailable; paid X reads are disabled.');
   if (budget.remainingUsd < userReadRate) return disabled('HARD LIMIT leaves insufficient budget for the authenticated-user lookup.');
+
+  // Token lookup/refresh is not a paid owned-data read. Resolve it before reserving
+  // budget so a missing/corrupt OAuth connection cannot consume the monthly cap.
+  const accessToken = await getValidXAccessToken(env, userId);
 
   const requestedFollowers = clampInt(body.maxFollowers, 100, 0, 500);
   const requestedFollowing = clampInt(body.maxFollowing, 100, 0, 500);
