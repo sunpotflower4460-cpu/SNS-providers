@@ -64,6 +64,11 @@ export default {
       return new Response(null, { status: 204, headers: corsHeaders(request, env) });
     }
 
+    if (ROUTER_CORS_PATHS.has(url.pathname)) {
+      const userBoundary = await enforceSingleUserRequest(request, url);
+      if (!userBoundary.ok) return json({ error: userBoundary.reason }, 400, request, env);
+    }
+
     if (PROVIDER_COST_PATHS.has(url.pathname)) {
       const authorized = await authorizeSync(request, env);
       if (!authorized.ok) return json({ error: authorized.reason }, authorized.status, request, env);
@@ -214,7 +219,7 @@ export default {
         const maxPerPlatform = Math.max(1, Math.min(20, Number(body.maxPerPlatform || 12)));
         const result = await discoverSocialProfiles(body.mission, env, maxPerPlatform);
         if (result.enabled && result.credits > 0) {
-          await recordFreeSearchUsage(env, body.userId || 'local-user', result.credits);
+          await recordFreeSearchUsage(env, sanitizeUserId(body.userId || 'local-user'), result.credits);
         }
         return json(result, 200, request, env);
       } catch (error) {
@@ -226,6 +231,27 @@ export default {
     return (api as { fetch(request: Request, env: unknown): Promise<Response> }).fetch(request, env);
   },
 };
+
+async function enforceSingleUserRequest(request: Request, url: URL) {
+  const queryUserId = url.searchParams.get('userId');
+  if (queryUserId !== null && queryUserId.trim() !== 'local-user') {
+    return { ok: false as const, reason: 'This deployment only supports userId=local-user.' };
+  }
+
+  if (request.method === 'POST' || request.method === 'PUT') {
+    const contentType = request.headers.get('content-type') || '';
+    if (contentType.toLowerCase().includes('application/json')) {
+      const body = await request.clone().json<{ userId?: unknown }>().catch(() => null);
+      if (body && Object.prototype.hasOwnProperty.call(body, 'userId') && body.userId != null) {
+        if (typeof body.userId !== 'string' || body.userId.trim() !== 'local-user') {
+          return { ok: false as const, reason: 'This deployment only supports userId=local-user.' };
+        }
+      }
+    }
+  }
+
+  return { ok: true as const, reason: '' };
+}
 
 async function authorizeSync(request: Request, env: Env) {
   const expected = (env.SYNC_TOKEN_SHA256 || '').trim().toLowerCase();
@@ -253,7 +279,7 @@ function constantTimeEqual(a: string, b: string) {
 
 function sanitizeUserId(value: string) {
   const userId = value.trim();
-  if (!/^[A-Za-z0-9._-]{1,80}$/.test(userId)) throw new Error('invalid userId');
+  if (userId !== 'local-user') throw new Error('unsupported userId');
   return userId;
 }
 
