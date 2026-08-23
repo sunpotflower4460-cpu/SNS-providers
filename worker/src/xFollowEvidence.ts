@@ -56,8 +56,11 @@ export async function prepareFollowCycleTargets(
       ).bind(...args).run();
     }
   } catch {
-    // Evidence is optional. Any persistence failure must disable negative inference,
-    // never turn missing evidence into a no-follow-back result.
+    // Partial/stale target rows must never survive a failed cycle initialization. If we
+    // cannot invalidate them either, abort the sync rather than risk later negative proof.
+    if (!(await invalidateCycle(db, userId, cycle))) {
+      throw new Error('X follow evidence storage is unavailable');
+    }
   }
 }
 
@@ -85,9 +88,12 @@ export async function updateFollowCycleEvidence(
 
     if (newlySeen.length) {
       const placeholders = newlySeen.map(() => '?').join(',');
-      await db.prepare(
+      const updated = await db.prepare(
         `UPDATE x_follow_cycle_targets SET seen = 1 WHERE user_id = ? AND cycle = ? AND target_key IN (${placeholders})`
       ).bind(userId, cycle, ...newlySeen.map((target) => target.target_key)).run();
+      // A successful SQL statement that updates fewer rows than expected is also unsafe:
+      // a later final page could misclassify one of the missing writes as unseen.
+      if (updated.meta.changes !== newlySeen.length) throw new Error('incomplete follow evidence update');
     }
 
     if (nextToken) {
@@ -114,7 +120,22 @@ export async function updateFollowCycleEvidence(
       unseenKeys: completedRows.filter((row) => !row.seen).map((row) => row.target_key),
     };
   } catch {
+    // Once any page's positive evidence fails to persist, invalidate the entire cycle.
+    // Continuing with partially written rows could turn a person seen on that page into
+    // a false "not following back" result when the final page is reached.
+    if (!(await invalidateCycle(db, userId, cycle))) {
+      throw new Error('X follow evidence storage is unavailable');
+    }
     return null;
+  }
+}
+
+async function invalidateCycle(db: D1Database, userId: string, cycle: number) {
+  try {
+    await db.prepare('DELETE FROM x_follow_cycle_targets WHERE user_id = ? AND cycle = ?').bind(userId, cycle).run();
+    return true;
+  } catch {
+    return false;
   }
 }
 
