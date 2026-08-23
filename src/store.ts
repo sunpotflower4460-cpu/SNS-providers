@@ -292,7 +292,15 @@ export function recordInteraction(state: AppState, candidateId: string, action: 
         lastInteractionAt: now,
       };
     }
-    if (recordedAction === 'skipped') return { ...candidate, skipped: true };
+    if (recordedAction === 'skipped') {
+      return {
+        ...candidate,
+        skipped: true,
+        recommendedAction: 'review' as const,
+        draft: undefined,
+        lastInteractionAt: now,
+      };
+    }
     if (recordedAction === 'kept') {
       return {
         ...candidate,
@@ -332,6 +340,7 @@ function refreshRelationshipAdvice(state: AppState): AppState {
   const now = Date.now();
   const waitDays = Math.max(1, Math.min(180, state.relationshipPolicy.followBackReviewAfterDays));
   const candidates = state.candidates.map((rawCandidate) => {
+    if (rawCandidate.skipped) return rawCandidate;
     const candidate = normalizeLocalRelationshipAction(rawCandidate);
     if (!candidate.followedAt || candidate.followBack !== false) {
       if (candidate.followBack === true && candidate.recommendedAction === 'unfollow_review') {
@@ -404,15 +413,17 @@ function parseUsername(platform: Platform, value: string) {
     const url = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
     const host = url.hostname.replace(/^www\./, '').toLowerCase();
     const accepted = platform === 'x' ? ['x.com', 'twitter.com'] : ['instagram.com'];
-    if (accepted.includes(host)) return sanitizeUsername(url.pathname.split('/').filter(Boolean)[0] || '');
+    if (accepted.includes(host)) return sanitizeUsername(platform, url.pathname.split('/').filter(Boolean)[0] || '');
   } catch {
     // Plain handles are supported below.
   }
-  return sanitizeUsername(withoutAt);
+  return sanitizeUsername(platform, withoutAt);
 }
 
-function sanitizeUsername(value: string) {
-  return value.split(/[/?#]/)[0].replace(/[^a-zA-Z0-9._]/g, '').slice(0, 64);
+function sanitizeUsername(platform: Platform, value: string) {
+  const username = value.split(/[/?#]/)[0].replace(/^@/, '').trim();
+  if (platform === 'x') return /^[A-Za-z0-9_]{1,15}$/.test(username) ? username : '';
+  return /^[A-Za-z0-9._]{1,30}$/.test(username) ? username : '';
 }
 
 function clampScore(value: number) {
