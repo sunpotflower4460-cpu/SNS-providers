@@ -3,10 +3,10 @@ import { apiConfigured, fetchBudget } from './api';
 import { normalizeAppState, validateAppState } from './backup';
 import { clearRemoteStateVersion, clearSyncToken, downloadRemoteState, getRemoteStateVersion, getSyncToken, setSyncToken, uploadRemoteState } from './sync';
 import { syncBudget } from './store';
-import type { AppState } from './types';
+import type { AppState, AppStateUpdater } from './types';
 import './sync.css';
 
-export default function SyncControls({ state, onRestore }: { state: AppState; onRestore: (state: AppState) => void }) {
+export default function SyncControls({ state, onRestore }: { state: AppState; onRestore: AppStateUpdater }) {
   const [token, setToken] = useState(() => getSyncToken());
   const [status, setStatus] = useState(apiConfigured ? '未同期' : 'Worker未接続');
   const [busy, setBusy] = useState(false);
@@ -35,7 +35,7 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
     try {
       const budget = await fetchBudget();
       if (previous !== next) clearRemoteStateVersion();
-      onRestore(syncBudget(state, budget.usedUsd, budget.limitUsd));
+      onRestore((current) => syncBudget(current, budget.usedUsd, budget.limitUsd));
       setStatus('個人管理キーを保存し、Worker接続を確認しました');
     } catch (error) {
       setSyncToken(previous);
