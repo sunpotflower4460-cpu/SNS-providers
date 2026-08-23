@@ -1,4 +1,5 @@
 import { getSyncToken } from './controlToken';
+import { fetchWithTimeout } from './fetchWithTimeout';
 import { selectCandidatesForRanking } from './localFilter';
 import { candidateRequestKey, missionRequestKey, selfRequestKey } from './requestContext';
 import type { Candidate, Mission, PublicMetrics } from './types';
@@ -75,18 +76,18 @@ export interface DiscoveryResponse {
   reason?: string;
 }
 
-async function apiFetch<T>(path: string, init?: RequestInit, tokenOverride?: string): Promise<T> {
+async function apiFetch<T>(path: string, init?: RequestInit, tokenOverride?: string, timeoutMs = 120_000): Promise<T> {
   if (!apiConfigured) throw new Error('API endpoint is not configured');
   const token = (tokenOverride ?? getSyncToken()).trim();
   if (!token) throw new Error('先にSettingsで個人管理キーを保存してください');
-  const response = await fetch(`${apiBaseUrl}${path}`, {
+  const response = await fetchWithTimeout(`${apiBaseUrl}${path}`, {
     ...init,
     headers: {
       'content-type': 'application/json',
       authorization: `Bearer ${token}`,
       ...(init?.headers || {}),
     },
-  });
+  }, timeoutMs, 'Worker API');
   const body = await response.json().catch(() => null) as T | { error?: string } | null;
   if (!response.ok) {
     const message = body && typeof body === 'object' && 'error' in body && body.error ? body.error : `API returned ${response.status}`;
@@ -97,7 +98,7 @@ async function apiFetch<T>(path: string, init?: RequestInit, tokenOverride?: str
 }
 
 export async function fetchBudget(userId = 'local-user', tokenOverride?: string) {
-  const result = await apiFetch<unknown>(`/api/budget?userId=${encodeURIComponent(userId)}`, undefined, tokenOverride);
+  const result = await apiFetch<unknown>(`/api/budget?userId=${encodeURIComponent(userId)}`, undefined, tokenOverride, 30_000);
   if (!isRecord(result)
     || !nonNegativeFinite(result.usedUsd)
     || !nonNegativeFinite(result.limitUsd)
@@ -112,7 +113,7 @@ export async function discoverSocialCandidates(mission: Mission, userId = 'local
   const result = await apiFetch<unknown>('/api/discover/social', {
     method: 'POST',
     body: JSON.stringify({ userId, mission: missionText(mission), maxPerPlatform: 12 }),
-  });
+  }, undefined, 60_000);
   if (!isRecord(result)
     || typeof result.enabled !== 'boolean'
     || !boundedString(result.provider, 1, 80)
@@ -157,7 +158,7 @@ export async function rankCandidates(mission: Mission, candidates: Candidate[], 
         engagementUrl: candidate.engagementUrl,
       })),
     }),
-  });
+  }, undefined, 120_000);
   const validated = validateRankResponse(result);
   const selectedById = new Map(selected.map((candidate) => [candidate.id, candidate]));
   if (validated.results.some((item) => !selectedById.has(item.id))) {
@@ -196,7 +197,7 @@ export async function analyzeSelfProfile(mission: Mission, profileText: string, 
         tags: ['self-analysis'],
       }],
     }),
-  });
+  }, undefined, 120_000);
   const validated = validateRankResponse(result);
   if (validated.results.length !== 1 || validated.results[0].id !== '__self__') {
     throw new Error('AI self-analysis returned an invalid result identity');
@@ -217,7 +218,7 @@ export async function enrichXProfiles(candidates: Candidate[], monthlyLimitUsd: 
   const result = await apiFetch<unknown>('/api/x/enrich', {
     method: 'POST',
     body: JSON.stringify({ userId, usernames, monthlyLimitUsd }),
-  });
+  }, undefined, 60_000);
   if (!isRecord(result)
     || typeof result.enabled !== 'boolean'
     || !nonNegativeFinite(result.costUsd)
