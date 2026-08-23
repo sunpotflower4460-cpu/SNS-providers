@@ -1,5 +1,6 @@
 import { getSyncToken } from './controlToken';
 import { selectCandidatesForRanking } from './localFilter';
+import { candidateRequestKey, missionRequestKey, selfRequestKey } from './requestContext';
 import type { Candidate, Mission, PublicMetrics } from './types';
 
 const rawBase = import.meta.env.VITE_API_BASE_URL?.trim() || '';
@@ -24,6 +25,9 @@ export interface RankResult {
   reason?: string;
   draft?: string;
   strategy?: string;
+  requestMissionKey?: string;
+  requestCandidateKey?: string;
+  requestSelfKey?: string;
 }
 
 export interface RankResponse {
@@ -59,6 +63,7 @@ export interface DiscoveredProfileResult {
   snippet: string;
   sourceUrl: string;
   score: number;
+  requestMissionKey?: string;
 }
 
 export interface DiscoveryResponse {
@@ -118,7 +123,12 @@ export async function discoverSocialCandidates(mission: Mission, userId = 'local
     || !optionalString(result.reason, 2000)) {
     throw new Error('Discovery API returned an invalid success response');
   }
-  return result as unknown as DiscoveryResponse;
+  const validated = result as unknown as DiscoveryResponse;
+  const requestMissionKey = missionRequestKey(mission);
+  return {
+    ...validated,
+    profiles: validated.profiles.map((profile) => ({ ...profile, requestMissionKey })),
+  };
 }
 
 export async function rankCandidates(mission: Mission, candidates: Candidate[], monthlyLimitUsd: number, userId = 'local-user') {
@@ -148,7 +158,23 @@ export async function rankCandidates(mission: Mission, candidates: Candidate[], 
       })),
     }),
   });
-  return validateRankResponse(result);
+  const validated = validateRankResponse(result);
+  const selectedById = new Map(selected.map((candidate) => [candidate.id, candidate]));
+  if (validated.results.some((item) => !selectedById.has(item.id))) {
+    throw new Error('AI ranking returned a result for an unrequested candidate');
+  }
+  const requestMissionKey = missionRequestKey(mission);
+  return {
+    ...validated,
+    results: validated.results.map((item) => {
+      const candidate = selectedById.get(item.id)!;
+      return {
+        ...item,
+        requestMissionKey,
+        requestCandidateKey: candidateRequestKey(candidate),
+      };
+    }),
+  };
 }
 
 export async function analyzeSelfProfile(mission: Mission, profileText: string, recentPostsText: string, monthlyLimitUsd: number, userId = 'local-user') {
@@ -175,7 +201,14 @@ export async function analyzeSelfProfile(mission: Mission, profileText: string, 
   if (validated.results.length !== 1 || validated.results[0].id !== '__self__') {
     throw new Error('AI self-analysis returned an invalid result identity');
   }
-  return validated;
+  return {
+    ...validated,
+    results: validated.results.map((item) => ({
+      ...item,
+      requestMissionKey: missionRequestKey(mission),
+      requestSelfKey: selfRequestKey(profileText, recentPostsText),
+    })),
+  };
 }
 
 export async function enrichXProfiles(candidates: Candidate[], monthlyLimitUsd: number, userId = 'local-user') {
