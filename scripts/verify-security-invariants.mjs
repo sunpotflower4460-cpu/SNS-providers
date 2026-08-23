@@ -73,8 +73,8 @@ if (!backup.includes('secondaryGoals') || !backup.includes('monthlyLimitUsd: cla
 if (!syncControls.includes('normalizeAppState(result.state)') || !syncControls.includes('validateAppState(restored)')) {
   throw new Error('D1 restores can bypass AppState normalization/validation.');
 }
-if (!backup.includes('legacyDemoCandidates') || !store.includes('LEGACY_DEMO_CANDIDATES') || !store.includes('candidates: []')) {
-  throw new Error('Legacy demo candidates can leak back into a real user queue.');
+if (!backup.includes('legacyDemoCandidates') || !store.includes('normalizeAppState(state)') || !store.includes('candidates: Array.isArray(parsed.candidates)')) {
+  throw new Error('Persisted local state can bypass normalization or reintroduce legacy demo candidates.');
 }
 if (!store.includes("interaction.action === 'kept'") || !store.includes('advanceRelationshipStage') || !store.includes("target?.recommendedAction === 'unfollow_review'")) {
   throw new Error('Manual relationship outcomes no longer feed the conservative CRM progression/cleanup distinction.');
@@ -120,4 +120,4 @@ if (!xOAuth.includes('validateGrantedScopes(token.scope)') || !xOAuth.includes('
   throw new Error('X OAuth no longer fail-closes on unexpected or missing granted scopes.');
 }
 
-console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, protected X OAuth status, UTF-8 snapshot limit, account-bound X/Instagram caches, fully normalized JSON/D1 restores, no demo candidates, conservative CRM progression, valid manual X handles, canonical official-platform handoff, guarded social drafts + self-profile rewrite, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, requested+granted X scopes=${scopes.join(', ')}`);
+console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, protected X OAuth status, UTF-8 snapshot limit, account-bound X/Instagram caches, normalized local/JSON/D1 restores, no demo candidates, conservative CRM progression, valid manual X handles, canonical official-platform handoff, guarded social drafts + self-profile rewrite, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, requested+granted X scopes=${scopes.join(', ')}`);
