@@ -164,6 +164,7 @@ async function graphFetch<T>(url: string, token: string): Promise<T> {
     const detail = body && typeof body === 'object' && body.error?.message ? `: ${body.error.message.slice(0, 180)}` : '';
     throw new Error(`Instagram Graph API returned ${response.status}${detail}`);
   }
+  if (!body || typeof body !== 'object') throw new Error('Instagram Graph API returned an empty or invalid JSON response');
   return body as T;
 }
 
@@ -174,9 +175,10 @@ async function loadFreshCache(env: InstagramOwnedEnv, userId: string, force: boo
       .bind(userId)
       .first<{ snapshot_json: string; synced_at: string }>();
     if (!row) return null;
-    if (Date.now() - new Date(row.synced_at).getTime() > CACHE_TTL_MS) return null;
+    const syncedAtMs = new Date(row.synced_at).getTime();
+    if (!Number.isFinite(syncedAtMs) || syncedAtMs > Date.now() + 60_000 || Date.now() - syncedAtMs > CACHE_TTL_MS) return null;
     const snapshot = JSON.parse(row.snapshot_json) as Record<string, unknown>;
-    if (snapshot.accountId !== expectedAccountId) return null;
+    if (!snapshot || typeof snapshot !== 'object' || snapshot.accountId !== expectedAccountId) return null;
     return snapshot;
   } catch {
     return null;
@@ -215,7 +217,8 @@ function isLater(candidate?: string, current?: string | null) {
 }
 
 function sanitizeUsername(value: string) {
-  return value.trim().replace(/^@/, '').replace(/[^A-Za-z0-9._]/g, '').slice(0, 30);
+  const username = value.trim().replace(/^@/, '');
+  return /^[A-Za-z0-9._]{1,30}$/.test(username) ? username : '';
 }
 
 function sanitizeUserId(value: string) {
