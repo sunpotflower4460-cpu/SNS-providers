@@ -6,8 +6,13 @@ const store = await readFile(new URL('../src/store.ts', import.meta.url), 'utf8'
 const backup = await readFile(new URL('../src/backup.ts', import.meta.url), 'utf8');
 const discoveryStore = await readFile(new URL('../src/discoveryStore.ts', import.meta.url), 'utf8');
 const requestContext = await readFile(new URL('../src/requestContext.ts', import.meta.url), 'utf8');
+const fetchTimeout = await readFile(new URL('../src/fetchWithTimeout.ts', import.meta.url), 'utf8');
+const syncClient = await readFile(new URL('../src/sync.ts', import.meta.url), 'utf8');
+const xAccount = await readFile(new URL('../src/xAccount.ts', import.meta.url), 'utf8');
+const instagramAccount = await readFile(new URL('../src/instagramAccount.ts', import.meta.url), 'utf8');
 const xAccountControls = await readFile(new URL('../src/XAccountControls.tsx', import.meta.url), 'utf8');
 const providerApi = await readFile(new URL('../worker/src/index.ts', import.meta.url), 'utf8');
+const router = await readFile(new URL('../worker/src/router.ts', import.meta.url), 'utf8');
 const xOwned = await readFile(new URL('../worker/src/xOwned.ts', import.meta.url), 'utf8');
 const instagramOwned = await readFile(new URL('../worker/src/instagramOwned.ts', import.meta.url), 'utf8');
 
@@ -48,6 +53,31 @@ requireAll(api, [
   'returned.some((username) => !requested.has(username))',
   'new Set(returned).size !== returned.length',
 ], 'X enrichment success payloads can escape their requested handle set or disabled boundary.');
+
+requireAll(fetchTimeout, [
+  'const controller = new AbortController();',
+  'let timedOut = false;',
+  'controller.abort();',
+  '通信状態を確認して再試行してください。',
+  "upstreamSignal?.removeEventListener('abort', relayAbort)",
+], 'Frontend network calls can become unbounded or leak abort listeners.');
+
+requireAll(api, [
+  'fetchWithTimeout',
+  '30_000',
+  '60_000',
+  '120_000',
+], 'Provider-facing frontend calls lost their bounded timeout tiers.');
+requireAll(syncClient, ['fetchWithTimeout', '45_000', "'D1同期'"], 'D1 sync can wait indefinitely.');
+requireAll(xAccount, ['fetchWithTimeout', '30_000', '90_000', "'X連携'"], 'X account operations can wait indefinitely.');
+requireAll(instagramAccount, ['fetchWithTimeout', '90_000', "'Instagram同期'"], 'Instagram sync can wait indefinitely.');
+
+requireAll(router, [
+  'const MAX_ROUTED_BODY_BYTES = 2_100_000;',
+  "request.headers.get('content-length')",
+  'new TextEncoder().encode(rawBody).byteLength > MAX_ROUTED_BODY_BYTES',
+  "status: 413, reason: 'Request body is too large.'",
+], 'Routed POST/PUT bodies can be read and parsed without an early byte cap.');
 
 requireAll(store, [
   'result.requestMissionKey && result.requestMissionKey !== currentMissionKey',
@@ -124,6 +154,23 @@ requireAll(xAccountControls, [
   'generation === requestGeneration',
 ], 'An older X OAuth status request can overwrite a newer control-token status result.');
 
+requireAll(xAccount, [
+  'value.followers.length > 500',
+  'value.following.length > 500',
+  'value.posts.length > 50',
+  'if (!value.complete) return value.seenKeys.length === 0 && value.unseenKeys.length === 0;',
+  'allKeys.length === value.targetCount',
+  "value.source === 'cache' && value.costUsd !== 0",
+], 'Owned-X client validation can accept oversized, inconsistent follow evidence or billable cache responses.');
+
+requireAll(instagramAccount, [
+  'value.engagers.length > 80',
+  'value.externalCostUsd === 0',
+  'parts.length === 1',
+  'validInstagramMediaUrl',
+  'boundedNonNegativeInteger(value.commentEvents, 600)',
+], 'Instagram client validation can accept oversized/disabled data or non-profile/non-media URLs.');
+
 requireAll(providerApi, [
   'new TextEncoder().encode(JSON.stringify(body)).byteLength',
   'const messages = buildProviderMessages(body);',
@@ -157,4 +204,4 @@ requireAll(instagramOwned, [
   'Instagram Graph API returned an empty or invalid JSON response',
 ], 'Instagram owned sync can trust malformed/future cache state, mutate invalid usernames, or accept invalid successful JSON.');
 
-console.log('Request-context invariants OK: stale async results are discarded, UI writes merge into current state, X enrichment is request-bound with future-safe 24-hour miss backoff, persistence failures stay visible, malformed success/cache payloads fail closed, and paid LLM preflight remains byte-conservative.');
+console.log('Request-context invariants OK: stale async results are discarded, routed bodies/timeouts are bounded, UI writes merge into current state, X enrichment is request-bound with future-safe backoff, X/Instagram payload bounds fail closed, persistence failures stay visible, and paid LLM preflight remains byte-conservative.');
