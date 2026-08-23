@@ -33,9 +33,14 @@ function App() {
   const [enrichingX, setEnrichingX] = useState(false);
   const [analyzingSelf, setAnalyzingSelf] = useState(false);
   const [apiNote, setApiNote] = useState(apiConfigured ? 'API接続待機' : 'ローカルモード');
+  const [persistenceError, setPersistenceError] = useState('');
   const localDay = useLocalDayKey();
+  const statusNote = persistenceError || apiNote;
 
-  useEffect(() => saveState(state), [state]);
+  useEffect(() => {
+    const saved = saveState(state);
+    setPersistenceError(saved.ok ? '' : saved.reason);
+  }, [state]);
 
   useEffect(() => {
     if (!apiConfigured) return;
@@ -137,11 +142,12 @@ function App() {
     const cutoff = Date.now() - 24 * 60 * 60 * 1000;
     const targets = state.candidates.filter((candidate) => {
       if (candidate.platform !== 'x' || candidate.skipped) return false;
-      if (!candidate.profileSyncedAt) return true;
-      return new Date(candidate.profileSyncedAt).getTime() < cutoff;
+      const lastAttempt = candidate.profileSyncAttemptedAt || candidate.profileSyncedAt;
+      if (!lastAttempt) return true;
+      return new Date(lastAttempt).getTime() < cutoff;
     }).slice(0, 100);
     if (!targets.length) {
-      setApiNote('X候補は24時間以内に同期済みです');
+      setApiNote('X候補は24時間以内に確認済みです');
       return;
     }
 
@@ -153,8 +159,9 @@ function App() {
         setApiNote(result.reason || 'Xプロフィール補完は現在無効です');
         return;
       }
-      setState((current) => applyXProfiles(current, result.profiles, result.costUsd));
-      setApiNote(`X公式情報 ${result.profiles.length}件補完 · $${result.costUsd.toFixed(4)}`);
+      const attemptedUsernames = targets.map((candidate) => candidate.username);
+      setState((current) => applyXProfiles(current, result.profiles, attemptedUsernames, result.costUsd));
+      setApiNote(`X公式情報 ${result.profiles.length}/${targets.length}件取得 · $${result.costUsd.toFixed(4)}`);
     } catch (error) {
       setApiNote(error instanceof Error ? `X補完失敗: ${error.message}` : 'Xプロフィール補完に失敗しました');
     } finally {
@@ -193,14 +200,14 @@ function App() {
         <div className="brand-mark">S</div>
         <div className="topbar-copy">
           <strong>Social Mission</strong>
-          <span>{apiNote}</span>
+          <span>{statusNote}</span>
         </div>
         <BudgetPill state={state} />
       </header>
 
       <main className="page">
         {tab === 'today' && <Today state={state} doneToday={doneToday} onOpen={onOpen} onTab={setTab} />}
-        {tab === 'discover' && <Discover state={state} candidates={active} onOpen={onOpen} onChange={setState} onDiscover={discoverCandidates} onRerank={rerankCandidates} onEnrichX={enrichXCandidates} discovering={discovering} ranking={ranking} enrichingX={enrichingX} apiNote={apiNote} />}
+        {tab === 'discover' && <Discover state={state} candidates={active} onOpen={onOpen} onChange={setState} onDiscover={discoverCandidates} onRerank={rerankCandidates} onEnrichX={enrichXCandidates} discovering={discovering} ranking={ranking} enrichingX={enrichingX} apiNote={statusNote} />}
         {tab === 'relations' && <Relations state={state} onOpen={onOpen} onChange={setState} />}
         {tab === 'me' && <Me state={state} onAnalyze={analyzeMe} analyzing={analyzingSelf} />}
         {tab === 'settings' && <Settings state={state} onChange={setState} />}
