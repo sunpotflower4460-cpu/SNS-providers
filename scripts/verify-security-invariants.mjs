@@ -20,6 +20,7 @@ const syncControls = await readFile(new URL('../src/SyncControls.tsx', import.me
 const app = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8');
 const store = await readFile(new URL('../src/store.ts', import.meta.url), 'utf8');
 const social = await readFile(new URL('../src/social.ts', import.meta.url), 'utf8');
+const dbSchema = await readFile(new URL('../db/schema.sql', import.meta.url), 'utf8');
 
 const protectedProviderPaths = [
   '/api/budget',
@@ -75,6 +76,15 @@ if (!providerApi.includes("markReservationUncertain(env, reservationId, 'user_re
 }
 if (providerApi.includes('DELETE FROM budget_ledger WHERE id = ?')) {
   throw new Error('A paid-provider failure path can delete an existing budget reservation.');
+}
+if (!dbSchema.includes('cost_usd REAL NOT NULL DEFAULT 0 CHECK(cost_usd >= 0)')
+  || !dbSchema.includes('input_units INTEGER NOT NULL DEFAULT 0 CHECK(input_units >= 0)')
+  || !dbSchema.includes('output_units INTEGER NOT NULL DEFAULT 0 CHECK(output_units >= 0)')
+  || !dbSchema.includes('cache_hit INTEGER NOT NULL DEFAULT 0 CHECK(cache_hit IN (0,1))')
+  || !dbSchema.includes('expires_at TEXT NOT NULL')
+  || !dbSchema.includes('followers_cycle INTEGER NOT NULL DEFAULT 0 CHECK(followers_cycle >= 0)')
+  || !dbSchema.includes('following_cycle INTEGER NOT NULL DEFAULT 0 CHECK(following_cycle >= 0)')) {
+  throw new Error('D1 schema no longer enforces non-negative budget/paging values or required OAuth expiry.');
 }
 
 const ownedTokenIndex = xOwned.indexOf('const accessToken = await getValidXAccessToken(env, userId);');
@@ -149,7 +159,7 @@ if (!backupControls.includes('latestStateRef.current = state')
   throw new Error('Async settings/X/Instagram completions can overwrite newer local state with a stale request-time snapshot.');
 }
 
-if (!store.includes("interaction.action === 'kept'") || !store.includes('advanceRelationshipStage') || !store.includes("target?.recommendedAction === 'unfollow_review'")) {
+if (!store.includes("interaction.action === 'kept'") || !store.includes('advanceRelationshipStage') || !store.includes("target.recommendedAction === 'unfollow_review'")) {
   throw new Error('Manual relationship outcomes no longer feed the conservative CRM progression/cleanup distinction.');
 }
 if (!store.includes('if (rawCandidate.skipped) return rawCandidate;') || !store.includes("recommendedAction: 'review' as const")) {
@@ -162,7 +172,7 @@ if (!store.includes("candidate.recommendedAction === 'follow' && candidate.follo
   || !store.includes("candidate.recommendedAction === 'unfollow_review' && !candidate.followedAt")) {
   throw new Error('Local relationship normalization can surface impossible follow/unfollow actions.');
 }
-if (!store.includes("const cleanupRemove = action === 'skipped' && target?.recommendedAction === 'unfollow_review';")
+if (!store.includes("const cleanupRemove = action === 'skipped' && target.recommendedAction === 'unfollow_review';")
   || !store.includes('followedAt: cleanupRemove ? undefined : candidate.followedAt')
   || !store.includes('followBack: cleanupRemove ? null : candidate.followBack')) {
   throw new Error('Manual unfollow completion can leave stale followed/follow-back state behind.');
@@ -246,4 +256,4 @@ if (!/DELETE FROM x_oauth_tokens[\s\S]{0,500}?try \{[\s\S]{0,250}?clearOwnedXDer
   throw new Error('X disconnect can report failure after the authoritative token row was already deleted.');
 }
 
-console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, single-user namespace enforcement, protected X OAuth status, UTF-8 + monotonic validated D1 snapshot versions, rollback-safe control-token changes, account-bound X/Instagram caches, local-OAuth-before-paid-X reservation, fresh-event-only candidate revival, normalized+deduplicated local/JSON/D1 restores, restore-aware Settings, async latest-state merges, conservative CRM progression, first-observed X follows, explicit manual reactivation, cleared manual unfollows, valid X identifiers, canonical official-platform handoff, guarded social drafts + self-profile rewrite, validated provider/X success payloads, full-pool AI prefiltering, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, strict stored/session OAuth validation, requested+granted X scopes=${scopes.join(', ')}`);
+console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, single-user namespace enforcement, protected X OAuth status, UTF-8 + monotonic validated D1 snapshot versions, DB-level non-negative HARD LIMIT constraints, rollback-safe control-token changes, account-bound X/Instagram caches, local-OAuth-before-paid-X reservation, fresh-event-only candidate revival, normalized+deduplicated local/JSON/D1 restores, restore-aware Settings, async latest-state merges, conservative CRM progression, first-observed X follows, explicit manual reactivation, cleared manual unfollows, valid X identifiers, canonical official-platform handoff, guarded social drafts + self-profile rewrite, validated provider/X success payloads, full-pool AI prefiltering, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, strict stored/session OAuth validation, requested+granted X scopes=${scopes.join(', ')}`);
