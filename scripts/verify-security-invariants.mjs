@@ -183,7 +183,7 @@ if (!store.includes('if (!existing.skipped) return state;') || !store.includes('
 if (!app.includes("!candidate.skipped && candidate.stage !== 'discovered'")) {
   throw new Error('Dismissed/unfollowed candidates can remain visible as actively tracked Relations.');
 }
-if (!store.includes("if (platform === 'x') return /^[A-Za-z0-9_]{1,15}$/.test(username) ? username : '';")) {
+if (!store.includes("return /^[A-Za-z0-9_]{1,15}$/.test(username) ? username : '';")) {
   throw new Error('Manual X candidate input is no longer constrained to valid X handle shape.');
 }
 if (!xFollowEvidence.includes("return /^[A-Za-z0-9_]{1,15}$/.test(username) ? username : '';")) {
