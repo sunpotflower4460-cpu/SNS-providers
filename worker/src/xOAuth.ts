@@ -117,8 +117,15 @@ export async function getValidXAccessToken(env: XOAuthEnv, userId = 'local-user'
 }
 
 export async function disconnectXOAuth(env: XOAuthEnv, userId = 'local-user') {
+  // Token deletion is the authoritative disconnect. Derived-cache cleanup is hygiene only:
+  // owned-cache reads now require a connected token record, so a cleanup failure must not
+  // report "disconnect failed" after the credential has already been removed.
   await env.DB.prepare('DELETE FROM x_oauth_tokens WHERE user_id = ?').bind(userId).run();
-  await clearOwnedXDerivedState(env, userId);
+  try {
+    await clearOwnedXDerivedState(env, userId);
+  } catch {
+    // Stale derived rows are unreachable while disconnected and will be cleared on reconnect.
+  }
   return { ok: true };
 }
 
