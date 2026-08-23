@@ -1,5 +1,5 @@
 import { recordInteraction } from './store';
-import type { AppState, Candidate, Interaction } from './types';
+import type { AppState, Candidate, Interaction, RecommendedAction } from './types';
 
 export type ResultSheetAction = 'followed' | 'skipped' | 'later' | 'kept';
 
@@ -19,13 +19,13 @@ export function resolveVisibleResult(
   if (!current || current.skipped) return state;
 
   const visibleCleanup = visibleCandidate.recommendedAction === 'unfollow_review';
-  const contextualAction = visibleCleanup
+  const contextualAction: RecommendedAction = visibleCleanup
     ? 'unfollow_review'
     : current.recommendedAction === 'unfollow_review'
       ? 'review'
       : current.recommendedAction;
 
-  const contextualState = contextualAction === current.recommendedAction
+  const contextualState: AppState = contextualAction === current.recommendedAction
     ? state
     : {
         ...state,
