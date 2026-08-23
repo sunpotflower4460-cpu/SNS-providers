@@ -1,4 +1,5 @@
-const CACHE = 'social-mission-v5';
+const CACHE_PREFIX = 'social-mission-';
+const CACHE = `${CACHE_PREFIX}v6`;
 const SCOPE_URL = new URL('./', self.registration.scope);
 const ROOT = SCOPE_URL.pathname;
 const CORE = [
@@ -18,7 +19,11 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key))))
+    caches.keys().then((keys) => Promise.all(
+      keys
+        .filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE)
+        .map((key) => caches.delete(key))
+    ))
   );
   self.clients.claim();
 });
