@@ -92,6 +92,8 @@ export default {
     }
 
     if (request.method === 'GET' && url.pathname === '/api/x/oauth/status') {
+      const authorized = await authorizeSync(request, env);
+      if (!authorized.ok) return json({ error: authorized.reason }, authorized.status, request, env);
       try {
         const userId = sanitizeUserId(url.searchParams.get('userId') || 'local-user');
         return json(await xOAuthStatus(env, userId), 200, request, env);
@@ -170,7 +172,7 @@ export default {
           }
 
           const stateJson = JSON.stringify(body.state);
-          if (stateJson.length > 2_000_000) return json({ error: 'state snapshot is too large' }, 413, request, env);
+          if (new TextEncoder().encode(stateJson).byteLength > 2_000_000) return json({ error: 'state snapshot is too large' }, 413, request, env);
           const updatedAt = new Date().toISOString();
 
           if (body.expectedUpdatedAt === null) {
