@@ -127,7 +127,9 @@ function interleaveByGoal(
   const buckets = {
     conversation: relationshipItems.filter((item) => ['reply', 'dm'].includes(item.action)).slice(0, limits.conversation),
     connect: relationshipItems.filter((item) => item.action === 'follow').slice(0, limits.connect),
-    light: relationshipItems.filter((item) => ['like', 'review'].includes(item.action)).slice(0, limits.light),
+    // Review means the app still lacks enough evidence to choose the action. Keep those
+    // candidates in Discover instead of putting a human decision back into Today.
+    light: relationshipItems.filter((item) => item.action === 'like').slice(0, limits.light),
     cleanup: relationshipItems.filter((item) => item.action === 'unfollow_review').slice(0, limits.cleanup),
   };
   const order = [buckets.conversation, buckets.connect, buckets.light, selfItems, buckets.cleanup];
