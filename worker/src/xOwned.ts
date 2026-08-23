@@ -236,7 +236,9 @@ async function fetchPostsPage(accessToken: string, userId: string, maxResults: n
 async function xFetch<T>(url: string, accessToken: string): Promise<T> {
   const response = await fetch(url, { headers: { authorization: `Bearer ${accessToken}` } });
   if (!response.ok) throw new Error(`X API returned ${response.status}`);
-  return response.json<T>();
+  const body = await response.json().catch(() => null) as T | null;
+  if (!body || typeof body !== 'object') throw new Error('X API returned an empty or invalid JSON response');
+  return body;
 }
 
 function normalizeUser(user: XUser) {
@@ -304,10 +306,10 @@ async function loadPaging(env: XOwnedEnv, userId: string): Promise<PagingState> 
       following_cycle: number;
     }>();
     return {
-      followersCursor: row?.followers_cursor || null,
-      followingCursor: row?.following_cursor || null,
-      followersCycle: Number(row?.followers_cycle || 0),
-      followingCycle: Number(row?.following_cycle || 0),
+      followersCursor: safeCursor(row?.followers_cursor),
+      followingCursor: safeCursor(row?.following_cursor),
+      followersCycle: safeCycle(row?.followers_cycle),
+      followingCycle: safeCycle(row?.following_cycle),
     };
   } catch {
     return { followersCursor: null, followingCursor: null, followersCycle: 0, followingCycle: 0 };
@@ -334,7 +336,7 @@ async function savePaging(env: XOwnedEnv, userId: string, paging: PagingState) {
       new Date().toISOString(),
     ).run();
   } catch {
-    // Paging persistence failure safely falls back to the first page next time.
+    // Paging persistence failure safely falls back to the stored/initial cursor next time.
   }
 }
 
@@ -345,8 +347,11 @@ async function loadFreshCache(env: XOwnedEnv, userId: string, force: boolean) {
       .bind(userId)
       .first<{ snapshot_json: string; synced_at: string }>();
     if (!row) return null;
-    if (Date.now() - new Date(row.synced_at).getTime() > CACHE_TTL_MS) return null;
-    return JSON.parse(row.snapshot_json) as Record<string, unknown>;
+    const syncedAtMs = new Date(row.synced_at).getTime();
+    if (!Number.isFinite(syncedAtMs) || syncedAtMs > Date.now() + 60_000 || Date.now() - syncedAtMs > CACHE_TTL_MS) return null;
+    const snapshot = JSON.parse(row.snapshot_json) as unknown;
+    if (!isRecord(snapshot) || snapshot.enabled !== true || !isRecord(snapshot.profile)) return null;
+    return snapshot;
   } catch {
     return null;
   }
@@ -444,6 +449,19 @@ function parsePositiveNumber(value?: string) {
 function clampInt(value: number | undefined, fallback: number, min: number, max: number) {
   const parsed = Number.isFinite(value) ? Math.floor(value!) : fallback;
   return Math.max(min, Math.min(max, parsed));
+}
+
+function safeCursor(value: unknown) {
+  return typeof value === 'string' && value.length > 0 && value.length <= 2048 ? value : null;
+}
+
+function safeCycle(value: unknown) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function sanitizeUserId(value: string) {
