@@ -5,6 +5,7 @@ const app = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8');
 const store = await readFile(new URL('../src/store.ts', import.meta.url), 'utf8');
 const discoveryStore = await readFile(new URL('../src/discoveryStore.ts', import.meta.url), 'utf8');
 const requestContext = await readFile(new URL('../src/requestContext.ts', import.meta.url), 'utf8');
+const providerApi = await readFile(new URL('../worker/src/index.ts', import.meta.url), 'utf8');
 
 function requireAll(source, fragments, message) {
   if (!fragments.every((fragment) => source.includes(fragment))) throw new Error(message);
@@ -68,4 +69,18 @@ requireAll(store, [
   'const recentPostsText = postsWereRead ? fetchedPostsText : state.selfProfile.recentPostsText;',
 ], 'Official X empty bio/zero-post semantics can regress to stale local profile text.');
 
-console.log('Request-context invariants OK: stale async AI/discovery/self-analysis results are discarded, UI writes merge into current state, malformed success payloads fail closed, incurred cost remains accounted, and empty X profile data is authoritative.');
+requireAll(providerApi, [
+  'new TextEncoder().encode(JSON.stringify(body)).byteLength',
+  'const messages = buildProviderMessages(body);',
+  'const inputBytes = new TextEncoder().encode(messages.system).byteLength',
+  'PAID_INPUT_BYTE_TOKEN_MULTIPLIER = 2',
+  'PAID_INPUT_FRAMING_TOKENS = 4096',
+  'return reservedUsd;',
+  'calculateCost(result.usage, rates, preflightUsd)',
+], 'Paid LLM HARD LIMIT preflight can underestimate multibyte prompts or shrink an unknown-usage reservation.');
+
+requireAll(providerApi, [
+  "return /^[A-Za-z0-9_]{1,15}$/.test(username) ? username : '';",
+], 'X enrichment can silently mutate an invalid handle into a different account name.');
+
+console.log('Request-context invariants OK: stale async results are discarded, UI writes merge into current state, malformed success payloads fail closed, X empty values are authoritative, and paid LLM preflight remains byte-conservative with unknown-usage reservations preserved.');
