@@ -74,7 +74,8 @@ export interface XOwnedSyncResponse {
 
 export async function fetchXOAuthStatus(userId = 'local-user') {
   if (!apiConfigured) return { configured: false, connected: false, scopes: [], expiresAt: null, updatedAt: null, refreshable: false } satisfies XOAuthStatus;
-  return request<XOAuthStatus>(`/api/x/oauth/status?userId=${encodeURIComponent(userId)}`);
+  const token = requiredControlToken();
+  return request<XOAuthStatus>(`/api/x/oauth/status?userId=${encodeURIComponent(userId)}`, undefined, token);
 }
 
 export async function startXOAuth() {
