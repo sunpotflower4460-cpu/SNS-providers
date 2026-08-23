@@ -96,11 +96,14 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
   const worstCaseCost = userReadRate + (allocation.followers + allocation.following + allocation.posts) * ownedReadRate;
   const paging = await loadPaging(env, userId);
 
+  // Token lookup/refresh is not a paid owned-data read. Resolve it before reserving
+  // budget so a missing/corrupt OAuth connection cannot consume the monthly cap.
+  const accessToken = await getValidXAccessToken(env, userId);
+
   const reservationId = await reserveBudget(env, userId, worstCaseCost, budget.effectiveLimit);
   if (!reservationId) return disabled('HARD LIMIT changed before the X sync budget could be reserved.');
 
   try {
-    const accessToken = await getValidXAccessToken(env, userId);
     const profile = await fetchMe(accessToken);
     if (!profile) throw new Error('X /2/users/me returned no user');
 
@@ -185,8 +188,9 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
     await saveCache(env, userId, result);
     return result;
   } catch (error) {
-    // Keep the conservative reservation on an uncertain network failure. X may have
-    // already billed resources before the error surfaced, so over-counting is safer.
+    // Once a paid X data request has started, retain the conservative reservation:
+    // transport/JSON failures do not prove the provider did not bill the read.
+    await markReservationUncertain(env, reservationId);
     const message = error instanceof Error ? error.message : 'Owned X sync failed';
     throw new Error(message);
   }
@@ -404,6 +408,16 @@ async function finalizeReservation(env: XOwnedEnv, reservationId: string, actual
   await env.DB.prepare(
     'UPDATE budget_ledger SET operation = ?, cost_usd = ?, input_units = ? WHERE id = ?'
   ).bind('owned_sync', actualCostUsd, resources, reservationId).run();
+}
+
+async function markReservationUncertain(env: XOwnedEnv, reservationId: string) {
+  try {
+    await env.DB.prepare('UPDATE budget_ledger SET operation = ? WHERE id = ?')
+      .bind('owned_sync_uncertain', reservationId)
+      .run();
+  } catch {
+    // Preserve the original conservative reservation if even the marker update fails.
+  }
 }
 
 function configuredLimit(env: XOwnedEnv) {
