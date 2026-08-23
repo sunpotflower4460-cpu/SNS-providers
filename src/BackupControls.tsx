@@ -13,11 +13,12 @@ export default function BackupControls({ state, onRestore }: { state: AppState; 
   latestStateRef.current = state;
   const [status, setStatus] = useState('');
 
-  // Settings currently exposes a plain state callback. Adapt nested async controls to a
-  // functional updater against the latest rendered state so network completions cannot
-  // overwrite edits made while their request was in flight.
+  // Settings currently exposes a plain state callback. Adapt nested controls to a
+  // functional updater and advance the ref immediately, not only on the next render.
+  // This serializes two async completions that land in the same render window.
   const updateState: AppStateUpdater = (value) => {
     const next = typeof value === 'function' ? value(latestStateRef.current) : value;
+    latestStateRef.current = next;
     onRestore(next);
   };
 
@@ -25,7 +26,7 @@ export default function BackupControls({ state, onRestore }: { state: AppState; 
     if (!file) return;
     try {
       const restored = await readBackup(file);
-      onRestore(restored);
+      updateState(restored);
       setStatus('復元しました');
     } catch (error) {
       setStatus(error instanceof Error ? error.message : '復元に失敗しました');
@@ -36,7 +37,7 @@ export default function BackupControls({ state, onRestore }: { state: AppState; 
 
   return <>
     <InstallControls />
-    <WorkloadControls state={state} onChange={onRestore} />
+    <WorkloadControls state={state} onChange={(next) => updateState(next)} />
     <SyncControls state={state} onRestore={updateState} />
     <XAccountControls state={state} onChange={updateState} />
     <InstagramAccountControls state={state} onChange={updateState} />
