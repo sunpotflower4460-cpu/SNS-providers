@@ -177,14 +177,25 @@ function validOwnedSyncResponse(value: unknown): value is XOwnedSyncResponse {
   }
   if (value.source === 'disabled' || !validOwnedUser(value.profile)) return false;
   if (value.source === 'cache' && value.costUsd !== 0) return false;
-  if (value.followers != null && (!Array.isArray(value.followers) || value.followers.length > 500 || !value.followers.every(validOwnedUser))) return false;
-  if (value.following != null && (!Array.isArray(value.following) || value.following.length > 500 || !value.following.every(validOwnedUser))) return false;
-  if (value.posts != null && (!Array.isArray(value.posts) || value.posts.length > 50 || !value.posts.every(validOwnedPost))) return false;
-  if (value.coverage != null && !validCoverage(value.coverage)) return false;
+  if (typeof value.syncedAt !== 'string' || !validPastishIso(value.syncedAt)) return false;
+  if (!Array.isArray(value.followers) || value.followers.length > 500 || !value.followers.every(validOwnedUser) || !uniqueUsers(value.followers)) return false;
+  if (!Array.isArray(value.following) || value.following.length > 500 || !value.following.every(validOwnedUser) || !uniqueUsers(value.following)) return false;
+  if (!Array.isArray(value.posts) || value.posts.length > 50 || !value.posts.every(validOwnedPost) || !uniqueIds(value.posts)) return false;
+  if (!validCoverage(value.coverage) || !validRequested(value.requested) || !validPacing(value.pacing)) return false;
   if (value.followEvidence != null && !validFollowEvidence(value.followEvidence)) return false;
-  if (value.requested != null && !validRequested(value.requested)) return false;
-  if (value.pacing != null && !validPacing(value.pacing)) return false;
-  if (value.syncedAt != null && (typeof value.syncedAt !== 'string' || !validIso(value.syncedAt))) return false;
+
+  const coverage = value.coverage as Record<string, unknown>;
+  const followersCoverage = coverage.followers as Record<string, unknown>;
+  const followingCoverage = coverage.following as Record<string, unknown>;
+  const postsCoverage = coverage.posts as Record<string, unknown>;
+  const requested = value.requested as Record<string, unknown>;
+  if (followersCoverage.fetched !== value.followers.length
+    || followingCoverage.fetched !== value.following.length
+    || postsCoverage.fetched !== value.posts.length
+    || (requested.followers as number) < value.followers.length
+    || (requested.following as number) < value.following.length
+    || (requested.posts as number) < value.posts.length) return false;
+
   return true;
 }
 
@@ -276,6 +287,22 @@ function validMetrics(value: unknown): value is PublicMetrics {
     && (value.listed == null || nonNegativeFinite(value.listed));
 }
 
+function uniqueUsers(users: XOwnedUser[]) {
+  const ids = new Set<string>();
+  const usernames = new Set<string>();
+  for (const user of users) {
+    const username = user.username.toLowerCase();
+    if (ids.has(user.id) || usernames.has(username)) return false;
+    ids.add(user.id);
+    usernames.add(username);
+  }
+  return true;
+}
+
+function uniqueIds(items: Array<{ id: string }>) {
+  return new Set(items.map((item) => item.id)).size === items.length;
+}
+
 function validAuthorizeUrl(value: string) {
   try {
     const url = new URL(value);
@@ -300,6 +327,11 @@ function nullableIso(value: unknown) {
 
 function validIso(value: string) {
   return Number.isFinite(new Date(value).getTime());
+}
+
+function validPastishIso(value: string) {
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) && time <= Date.now() + 5 * 60 * 1000;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
