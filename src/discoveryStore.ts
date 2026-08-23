@@ -1,12 +1,18 @@
 import type { DiscoveredProfileResult } from './api';
+import { missionRequestKey } from './requestContext';
 import type { AppState, Candidate } from './types';
 import './discovery.css';
 
 export function mergeDiscoveredProfiles(state: AppState, profiles: DiscoveredProfileResult[]): AppState {
+  const currentMissionKey = missionRequestKey(state.mission);
   const existing = new Set(state.candidates.map((candidate) => `${candidate.platform}:${candidate.username.toLowerCase()}`));
   const additions: Candidate[] = [];
 
   for (const profile of profiles) {
+    // Discovery is mission-dependent. If the user changed Mission while the network
+    // request was in flight, silently discard the stale suggestions instead of mixing
+    // candidates from the previous strategy into the current pool.
+    if (profile.requestMissionKey && profile.requestMissionKey !== currentMissionKey) continue;
     const key = `${profile.platform}:${profile.username.toLowerCase()}`;
     if (existing.has(key)) continue;
     existing.add(key);
