@@ -37,6 +37,7 @@ export interface Candidate {
   verified?: boolean;
   publicMetrics?: PublicMetrics;
   profileSyncedAt?: string;
+  profileSyncAttemptedAt?: string;
   kind: CandidateKind;
   match: number;
   relationshipScore: number;
