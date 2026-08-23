@@ -1,5 +1,6 @@
 import type { RankResult, XProfileResult } from './api';
 import { normalizeAppState } from './backup';
+import { candidateRequestKey, missionRequestKey } from './requestContext';
 import type { XOwnedSyncResponse } from './xAccount';
 import type { AppState, Candidate, Interaction, Mission, Platform, RecommendedAction, RelationshipPolicy } from './types';
 
@@ -10,7 +11,7 @@ const defaultState: AppState = {
     text: 'アーティスト活動を促進するためにつながりやファン、フォロワーを増やしたい。数だけではなく、音楽を好きになってくれる人や仲間、将来のコラボにつながる関係を育てたい。',
     primaryGoal: 'ファンと良質なつながりを増やす',
     secondaryGoals: ['アーティスト仲間', 'クリエイターとのコラボ', '認知拡大'],
-    communicationDNA: '親しみやすく、営業臭を出さない。相手の投稿内容に具体的に触れ、本当に興味を持った部分から自然な会話を始める。'
+    communicationDNA: '親しみやすく、営業臭を出さない。相手の投稿内容に具体的に触れ、本当に興味を持った部分から自然な会話を始める。天然な会話を始める。'
   },
   candidates: [],
   interactions: [],
@@ -92,7 +93,15 @@ export function updateSelfProfileInputs(state: AppState, profileText: string, re
 }
 
 export function applySelfAnalysis(state: AppState, result: RankResult | undefined, costUsd = 0): AppState {
-  if (!result) return state;
+  const budget = {
+    ...state.budget,
+    usedUsd: Math.max(0, state.budget.usedUsd + Math.max(0, costUsd)),
+    llmUsd: Math.max(0, state.budget.llmUsd + Math.max(0, costUsd)),
+  };
+  if (!result) return { ...state, budget };
+  if (result.requestMissionKey && result.requestMissionKey !== missionRequestKey(state.mission)) {
+    return { ...state, budget };
+  }
   return {
     ...state,
     selfProfile: {
@@ -103,11 +112,7 @@ export function applySelfAnalysis(state: AppState, result: RankResult | undefine
       profileRewrite: result.draft?.trim() || undefined,
       analyzedAt: new Date().toISOString(),
     },
-    budget: {
-      ...state.budget,
-      usedUsd: Math.max(0, state.budget.usedUsd + Math.max(0, costUsd)),
-      llmUsd: Math.max(0, state.budget.llmUsd + Math.max(0, costUsd)),
-    },
+    budget,
   };
 }
 
@@ -169,7 +174,9 @@ export function applyXProfiles(state: AppState, profiles: XProfileResult[], cost
       ...candidate,
       platformUserId: profile.id,
       displayName: profile.name || candidate.displayName,
-      bio: profile.description || candidate.bio,
+      // Empty descriptions are authoritative: retaining the old bio after the user
+      // removed it on X would feed stale profile text into later ranking decisions.
+      bio: profile.description,
       verified: profile.verified,
       publicMetrics: profile.publicMetrics,
       profileSyncedAt: syncedAt,
@@ -213,15 +220,21 @@ export function applyOwnedXSync(state: AppState, result: XOwnedSyncResponse): Ap
       followBack,
       platformUserId: relatedProfile?.id || candidate.platformUserId,
       displayName: relatedProfile?.name || candidate.displayName,
-      bio: relatedProfile?.description || candidate.bio,
+      bio: relatedProfile ? relatedProfile.description : candidate.bio,
       verified: relatedProfile ? relatedProfile.verified : candidate.verified,
       publicMetrics: relatedProfile?.publicMetrics || candidate.publicMetrics,
       profileSyncedAt: relatedProfile ? syncedAt : candidate.profileSyncedAt,
     };
   });
 
-  const profileText = result.profile.description || state.selfProfile.profileText;
-  const recentPostsText = posts.map((post) => post.text.trim()).filter(Boolean).join('\n\n---\n\n') || state.selfProfile.recentPostsText;
+  // The authenticated profile endpoint was always read, so an empty description is a
+  // real value. Posts are different: budget pacing may skip the posts endpoint entirely.
+  // Only replace recentPostsText when this sync actually requested posts; if it did and
+  // X returned zero posts, clearing the previous text is the correct representation.
+  const profileText = result.profile.description;
+  const postsWereRead = (result.requested?.posts ?? 0) > 0;
+  const fetchedPostsText = posts.map((post) => post.text.trim()).filter(Boolean).join('\n\n---\n\n');
+  const recentPostsText = postsWereRead ? fetchedPostsText : state.selfProfile.recentPostsText;
   const selfInputsChanged = profileText !== state.selfProfile.profileText || recentPostsText !== state.selfProfile.recentPostsText;
 
   return refreshRelationshipAdvice({
@@ -253,10 +266,17 @@ export function applyOwnedXSync(state: AppState, result: XOwnedSyncResponse): Ap
 }
 
 export function applyRankResults(state: AppState, results: RankResult[], costUsd = 0): AppState {
+  const currentMissionKey = missionRequestKey(state.mission);
   const byId = new Map(results.map((result) => [result.id, result]));
   const candidates = state.candidates.map((candidate) => {
     const result = byId.get(candidate.id);
     if (!result) return candidate;
+    // The API result belongs to the exact Mission/candidate snapshot sent at request time.
+    // A user edit, official profile refresh, relationship-stage change, or Mission change
+    // while the request is in flight makes that recommendation stale. Drop only the stale
+    // recommendation; the cost is still accounted below because the provider work occurred.
+    if (result.requestMissionKey && result.requestMissionKey !== currentMissionKey) return candidate;
+    if (result.requestCandidateKey && result.requestCandidateKey !== candidateRequestKey(candidate)) return candidate;
     const recommendedAction = isRecommendedAction(result.recommendedAction) ? result.recommendedAction : candidate.recommendedAction;
     return {
       ...candidate,
