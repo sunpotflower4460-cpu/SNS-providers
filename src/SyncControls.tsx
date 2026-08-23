@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { apiConfigured } from './api';
+import { apiConfigured, fetchBudget } from './api';
 import { normalizeAppState, validateAppState } from './backup';
 import { clearRemoteStateVersion, clearSyncToken, downloadRemoteState, getSyncToken, setSyncToken, uploadRemoteState } from './sync';
+import { syncBudget } from './store';
 import type { AppState } from './types';
 import './sync.css';
 
@@ -10,12 +11,31 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
   const [status, setStatus] = useState(apiConfigured ? '未同期' : 'Worker未接続');
   const [busy, setBusy] = useState(false);
 
-  function saveToken() {
+  async function saveToken() {
     const previous = getSyncToken().trim();
     const next = token.trim();
     if (previous !== next) clearRemoteStateVersion();
     setSyncToken(token);
-    setStatus(next ? '個人管理キーをこの端末に保存しました' : '個人管理キーを削除しました');
+    if (!next) {
+      setStatus('個人管理キーを削除しました');
+      return;
+    }
+    if (!apiConfigured) {
+      setStatus('個人管理キーをこの端末に保存しました · Worker未接続');
+      return;
+    }
+
+    setBusy(true);
+    setStatus('個人管理キーを確認中…');
+    try {
+      const budget = await fetchBudget();
+      onRestore(syncBudget(state, budget.usedUsd, budget.limitUsd));
+      setStatus('個人管理キーを保存し、Worker接続を確認しました');
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '個人管理キーの確認に失敗しました');
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function upload() {
