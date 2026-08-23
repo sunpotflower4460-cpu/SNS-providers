@@ -13,12 +13,16 @@ export function mergeDiscoveredProfiles(state: AppState, profiles: DiscoveredPro
     // request was in flight, silently discard the stale suggestions instead of mixing
     // candidates from the previous strategy into the current pool.
     if (profile.requestMissionKey && profile.requestMissionKey !== currentMissionKey) continue;
-    const key = `${profile.platform}:${profile.username.toLowerCase()}`;
+    const normalizedUsername = profile.username.toLowerCase();
+    const key = `${profile.platform}:${normalizedUsername}`;
     if (existing.has(key)) continue;
     existing.add(key);
     const engagementUrl = canonicalEngagementUrl(profile.platform, profile.sourceUrl);
     additions.push({
-      id: `${profile.platform}-${crypto.randomUUID()}`,
+      // Web discovery is merged once before ranking and again into the latest state after
+      // the network result returns. A stable identity keeps the ranking result attached to
+      // the same person across both merges instead of generating a second random UUID.
+      id: `web-${profile.platform}-${normalizedUsername}`,
       platform: profile.platform,
       username: profile.username,
       displayName: profile.title || profile.username,
