@@ -138,7 +138,8 @@ function sanitizeKey(value: string) {
 }
 
 function sanitizeUsername(value: string) {
-  return value.trim().replace(/^@/, '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 50);
+  const username = value.trim().replace(/^@/, '');
+  return /^[A-Za-z0-9_]{1,15}$/.test(username) ? username : '';
 }
 
 function sanitizePlatformUserId(value: string) {
