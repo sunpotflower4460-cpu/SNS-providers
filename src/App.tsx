@@ -372,7 +372,7 @@ function CandidateCard({ candidate, onOpen, onLater, featured = false }: { candi
 }
 
 function Relations({ state, onOpen, onChange }: { state: AppState; onOpen: (c: Candidate) => void; onChange: (state: AppState) => void }) {
-  const following = state.candidates.filter((candidate) => candidate.stage !== 'discovered');
+  const following = state.candidates.filter((candidate) => !candidate.skipped && candidate.stage !== 'discovered');
   const cleanup = following.filter((candidate) => candidate.recommendedAction === 'unfollow_review');
   return <>
     <PageHeading eyebrow="RELATIONS" title="関係を育てる" text="フォロー数ではなく、関係の深まりと整理タイミングを覚えておきます。" />
