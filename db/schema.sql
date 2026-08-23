@@ -32,18 +32,18 @@ CREATE TABLE IF NOT EXISTS candidates (
   bio TEXT NOT NULL DEFAULT '',
   profile_url TEXT NOT NULL,
   kind TEXT NOT NULL DEFAULT 'other',
-  mission_match INTEGER NOT NULL DEFAULT 0,
-  relationship_score INTEGER NOT NULL DEFAULT 0,
+  mission_match INTEGER NOT NULL DEFAULT 0 CHECK(mission_match BETWEEN 0 AND 100),
+  relationship_score INTEGER NOT NULL DEFAULT 0 CHECK(relationship_score BETWEEN 0 AND 100),
   stage TEXT NOT NULL DEFAULT 'discovered',
   reason TEXT NOT NULL DEFAULT '',
   tags_json TEXT NOT NULL DEFAULT '[]',
   recommended_action TEXT NOT NULL DEFAULT 'review',
   followed_at TEXT,
-  follow_back INTEGER,
+  follow_back INTEGER CHECK(follow_back IS NULL OR follow_back IN (0,1)),
   last_interaction_at TEXT,
   source TEXT NOT NULL DEFAULT 'manual',
   source_fingerprint TEXT,
-  skipped INTEGER NOT NULL DEFAULT 0,
+  skipped INTEGER NOT NULL DEFAULT 0 CHECK(skipped IN (0,1)),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   UNIQUE(user_id, platform, username)
@@ -88,10 +88,10 @@ CREATE TABLE IF NOT EXISTS budget_ledger (
   user_id TEXT NOT NULL,
   provider TEXT NOT NULL,
   operation TEXT NOT NULL,
-  cost_usd REAL NOT NULL DEFAULT 0,
-  input_units INTEGER NOT NULL DEFAULT 0,
-  output_units INTEGER NOT NULL DEFAULT 0,
-  cache_hit INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL NOT NULL DEFAULT 0 CHECK(cost_usd >= 0),
+  input_units INTEGER NOT NULL DEFAULT 0 CHECK(input_units >= 0),
+  output_units INTEGER NOT NULL DEFAULT 0 CHECK(output_units >= 0),
+  cache_hit INTEGER NOT NULL DEFAULT 0 CHECK(cache_hit IN (0,1)),
   occurred_at TEXT NOT NULL
 );
 
@@ -111,7 +111,7 @@ CREATE TABLE IF NOT EXISTS x_oauth_tokens (
   user_id TEXT PRIMARY KEY,
   access_token_enc TEXT NOT NULL,
   refresh_token_enc TEXT,
-  expires_at TEXT,
+  expires_at TEXT NOT NULL,
   scope TEXT NOT NULL DEFAULT '',
   updated_at TEXT NOT NULL
 );
@@ -126,14 +126,14 @@ CREATE TABLE IF NOT EXISTS x_owned_paging (
   user_id TEXT PRIMARY KEY,
   followers_cursor TEXT,
   following_cursor TEXT,
-  followers_cycle INTEGER NOT NULL DEFAULT 0,
-  following_cycle INTEGER NOT NULL DEFAULT 0,
+  followers_cycle INTEGER NOT NULL DEFAULT 0 CHECK(followers_cycle >= 0),
+  following_cycle INTEGER NOT NULL DEFAULT 0 CHECK(following_cycle >= 0),
   updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS x_follow_cycle_targets (
   user_id TEXT NOT NULL,
-  cycle INTEGER NOT NULL,
+  cycle INTEGER NOT NULL CHECK(cycle >= 0),
   target_key TEXT NOT NULL,
   platform_user_id TEXT,
   username TEXT NOT NULL,
