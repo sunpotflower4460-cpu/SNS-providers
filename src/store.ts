@@ -5,6 +5,8 @@ import type { XOwnedSyncResponse } from './xAccount';
 import type { AppState, Candidate, Interaction, Mission, Platform, RecommendedAction, RelationshipPolicy } from './types';
 
 const KEY = 'sns-providers:v1';
+const X_RESERVED_PATHS = new Set(['home', 'explore', 'notifications', 'messages', 'search', 'i', 'settings', 'compose', 'intent']);
+const INSTAGRAM_RESERVED_PATHS = new Set(['p', 'reel', 'reels', 'stories', 'explore', 'accounts', 'direct', 'about', 'developer']);
 
 const defaultState: AppState = {
   mission: {
@@ -295,8 +297,12 @@ export function applyRankResults(state: AppState, results: RankResult[], costUsd
 export function recordInteraction(state: AppState, candidateId: string, action: Interaction['action']): AppState {
   const now = new Date().toISOString();
   const target = state.candidates.find((candidate) => candidate.id === candidateId);
-  const cleanupKeep = action === 'kept' && target?.recommendedAction === 'unfollow_review';
-  const cleanupRemove = action === 'skipped' && target?.recommendedAction === 'unfollow_review';
+  // Result sheets can stay open while another sync/restore changes the candidate pool.
+  // Never create an orphan interaction for a candidate that no longer exists or has
+  // already been dismissed by a newer state transition.
+  if (!target || target.skipped) return state;
+  const cleanupKeep = action === 'kept' && target.recommendedAction === 'unfollow_review';
+  const cleanupRemove = action === 'skipped' && target.recommendedAction === 'unfollow_review';
   const recordedAction: Interaction['action'] = cleanupKeep ? 'review' : action;
   const priorEngagements = state.interactions.filter((interaction) => interaction.candidateId === candidateId && interaction.action === 'kept').length;
   const interactions = [{ id: crypto.randomUUID(), candidateId, action: recordedAction, at: now }, ...state.interactions];
@@ -451,7 +457,17 @@ function parseUsername(platform: Platform, value: string) {
     const url = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
     const host = url.hostname.replace(/^www\./, '').toLowerCase();
     const accepted = platform === 'x' ? ['x.com', 'twitter.com'] : ['instagram.com'];
-    if (accepted.includes(host)) return sanitizeUsername(platform, url.pathname.split('/').filter(Boolean)[0] || '');
+    if (accepted.includes(host)) {
+      const parts = url.pathname.split('/').filter(Boolean);
+      const first = parts[0] || '';
+      if (!first) return '';
+      const lowered = first.toLowerCase();
+      if (platform === 'x' && X_RESERVED_PATHS.has(lowered)) return '';
+      // Instagram post/reel/story URLs do not contain the profile owner as the first
+      // segment, so accepting them as a profile would create fake @p/@reel candidates.
+      if (platform === 'instagram' && (INSTAGRAM_RESERVED_PATHS.has(lowered) || parts.length !== 1)) return '';
+      return sanitizeUsername(platform, first);
+    }
   } catch {
     // Plain handles are supported below.
   }
@@ -460,7 +476,12 @@ function parseUsername(platform: Platform, value: string) {
 
 function sanitizeUsername(platform: Platform, value: string) {
   const username = value.split(/[/?#]/)[0].replace(/^@/, '').trim();
-  if (platform === 'x') return /^[A-Za-z0-9_]{1,15}$/.test(username) ? username : '';
+  const lowered = username.toLowerCase();
+  if (platform === 'x') {
+    if (X_RESERVED_PATHS.has(lowered)) return '';
+    return /^[A-Za-z0-9_]{1,15}$/.test(username) ? username : '';
+  }
+  if (INSTAGRAM_RESERVED_PATHS.has(lowered)) return '';
   return /^[A-Za-z0-9._]{1,30}$/.test(username) ? username : '';
 }
 
