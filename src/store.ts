@@ -125,7 +125,20 @@ export function syncBudget(state: AppState, usedUsd: number, serverLimitUsd: num
 export function addCandidateFromReference(state: AppState, platform: Platform, rawReference: string): AppState {
   const username = parseUsername(platform, rawReference);
   if (!username) return state;
-  if (state.candidates.some((candidate) => candidate.platform === platform && candidate.username.toLowerCase() === username.toLowerCase())) return state;
+  const existing = state.candidates.find((candidate) => candidate.platform === platform && candidate.username.toLowerCase() === username.toLowerCase());
+  if (existing) {
+    if (!existing.skipped) return state;
+    const candidates = state.candidates.map((candidate) => candidate.id === existing.id ? {
+      ...candidate,
+      skipped: false,
+      snoozedUntil: undefined,
+      recommendedAction: 'review' as const,
+      draft: undefined,
+      reason: '以前に見送った候補を、手動操作で再び候補へ戻しました。',
+      strategy: '過去の関係履歴は残したまま、現在のプロフィールと発信を確認して次の交流を判断します。',
+    } : candidate);
+    return refreshRelationshipAdvice({ ...state, candidates });
+  }
 
   const candidate: Candidate = {
     id: `${platform}-${crypto.randomUUID()}`,
@@ -270,6 +283,7 @@ export function recordInteraction(state: AppState, candidateId: string, action: 
   const now = new Date().toISOString();
   const target = state.candidates.find((candidate) => candidate.id === candidateId);
   const cleanupKeep = action === 'kept' && target?.recommendedAction === 'unfollow_review';
+  const cleanupRemove = action === 'skipped' && target?.recommendedAction === 'unfollow_review';
   const recordedAction: Interaction['action'] = cleanupKeep ? 'review' : action;
   const priorEngagements = state.interactions.filter((interaction) => interaction.candidateId === candidateId && interaction.action === 'kept').length;
   const interactions = [{ id: crypto.randomUUID(), candidateId, action: recordedAction, at: now }, ...state.interactions];
@@ -290,9 +304,14 @@ export function recordInteraction(state: AppState, candidateId: string, action: 
       return {
         ...candidate,
         skipped: true,
+        followedAt: cleanupRemove ? undefined : candidate.followedAt,
+        followBack: cleanupRemove ? null : candidate.followBack,
         recommendedAction: 'review' as const,
         draft: undefined,
         lastInteractionAt: now,
+        strategy: cleanupRemove
+          ? '公式SNS側でフォロー解除した記録を反映しました。過去の関係履歴は保持します。'
+          : candidate.strategy,
       };
     }
     if (recordedAction === 'kept') {
