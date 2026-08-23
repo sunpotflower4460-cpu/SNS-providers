@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiConfigured } from './api';
+import { CONTROL_TOKEN_CHANGED_EVENT } from './controlToken';
 import { applyOwnedXSyncWithDiscovery } from './xOwnedStore';
 import { disconnectXOAuth, fetchXOAuthStatus, startXOAuth, syncOwnedXData, type XOAuthStatus } from './xAccount';
 import type { AppState } from './types';
@@ -23,19 +24,31 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
   useEffect(() => {
     if (!apiConfigured) return;
     let cancelled = false;
-    fetchXOAuthStatus()
-      .then((next) => {
-        if (cancelled) return;
-        setStatus(next);
-        setNote(next.connected ? '読み取り専用で接続済み' : next.configured ? '接続できます' : 'Worker側のX OAuth設定が未完了です');
-      })
-      .catch((error) => {
-        if (!cancelled) setNote(error instanceof Error ? error.message : '接続状態の確認に失敗しました');
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => { cancelled = true; };
+
+    const refreshStatus = () => {
+      setLoading(true);
+      fetchXOAuthStatus()
+        .then((next) => {
+          if (cancelled) return;
+          setStatus(next);
+          setNote(next.connected ? '読み取り専用で接続済み' : next.configured ? '接続できます' : 'Worker側のX OAuth設定が未完了です');
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          setStatus(emptyStatus);
+          setNote(error instanceof Error ? error.message : '接続状態の確認に失敗しました');
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    };
+
+    refreshStatus();
+    window.addEventListener(CONTROL_TOKEN_CHANGED_EVENT, refreshStatus);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(CONTROL_TOKEN_CHANGED_EVENT, refreshStatus);
+    };
   }, []);
 
   async function connect() {
