@@ -17,6 +17,7 @@ export function candidateRequestKey(candidate: Candidate) {
     candidate.tags.slice(0, 20),
     candidate.kind,
     candidate.platform,
+    candidate.match,
     candidate.publicMetrics || null,
     candidate.stage,
     candidate.relationshipScore,
