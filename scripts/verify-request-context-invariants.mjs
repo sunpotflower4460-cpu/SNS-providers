@@ -89,9 +89,11 @@ requireAll(store, [
 
 requireAll(app, [
   'candidate.profileSyncAttemptedAt || candidate.profileSyncedAt',
+  'const futureSkewLimit = now + 5 * 60 * 1000;',
+  'lastAttemptMs > futureSkewLimit',
   'const attemptedUsernames = targets.map((candidate) => candidate.username);',
   'applyXProfiles(current, result.profiles, attemptedUsernames, result.costUsd)',
-], 'X enrichment misses can be retried immediately instead of observing the 24-hour attempt backoff.');
+], 'X enrichment misses can be retried immediately or suppressed indefinitely by a future timestamp.');
 
 requireAll(store, [
   'profileSyncAttemptedAt: attemptedAt',
@@ -155,4 +157,4 @@ requireAll(instagramOwned, [
   'Instagram Graph API returned an empty or invalid JSON response',
 ], 'Instagram owned sync can trust malformed/future cache state, mutate invalid usernames, or accept invalid successful JSON.');
 
-console.log('Request-context invariants OK: stale async results are discarded, UI writes merge into current state, X enrichment is request-bound with 24-hour miss backoff, persistence failures stay visible, malformed success/cache payloads fail closed, and paid LLM preflight remains byte-conservative.');
+console.log('Request-context invariants OK: stale async results are discarded, UI writes merge into current state, X enrichment is request-bound with future-safe 24-hour miss backoff, persistence failures stay visible, malformed success/cache payloads fail closed, and paid LLM preflight remains byte-conservative.');
