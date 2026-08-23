@@ -6,6 +6,8 @@ const store = await readFile(new URL('../src/store.ts', import.meta.url), 'utf8'
 const discoveryStore = await readFile(new URL('../src/discoveryStore.ts', import.meta.url), 'utf8');
 const requestContext = await readFile(new URL('../src/requestContext.ts', import.meta.url), 'utf8');
 const providerApi = await readFile(new URL('../worker/src/index.ts', import.meta.url), 'utf8');
+const xOwned = await readFile(new URL('../worker/src/xOwned.ts', import.meta.url), 'utf8');
+const instagramOwned = await readFile(new URL('../worker/src/instagramOwned.ts', import.meta.url), 'utf8');
 
 function requireAll(source, fragments, message) {
   if (!fragments.every((fragment) => source.includes(fragment))) throw new Error(message);
@@ -83,4 +85,23 @@ requireAll(providerApi, [
   "return /^[A-Za-z0-9_]{1,15}$/.test(username) ? username : '';",
 ], 'X enrichment can silently mutate an invalid handle into a different account name.');
 
-console.log('Request-context invariants OK: stale async results are discarded, UI writes merge into current state, malformed success payloads fail closed, X empty values are authoritative, and paid LLM preflight remains byte-conservative with unknown-usage reservations preserved.');
+requireAll(xOwned, [
+  'const syncedAtMs = new Date(row.synced_at).getTime();',
+  '!Number.isFinite(syncedAtMs)',
+  'syncedAtMs > Date.now() + 60_000',
+  'snapshot.enabled !== true',
+  'safeCursor(row?.followers_cursor)',
+  'safeCycle(row?.followers_cycle)',
+  'X API returned an empty or invalid JSON response',
+], 'Owned-X can trust malformed/future cache state, corrupted paging state, or invalid successful JSON.');
+
+requireAll(instagramOwned, [
+  'const syncedAtMs = new Date(row.synced_at).getTime();',
+  '!Number.isFinite(syncedAtMs)',
+  'syncedAtMs > Date.now() + 60_000',
+  'snapshot.accountId !== expectedAccountId',
+  "return /^[A-Za-z0-9._]{1,30}$/.test(username) ? username : '';",
+  'Instagram Graph API returned an empty or invalid JSON response',
+], 'Instagram owned sync can trust malformed/future cache state, mutate invalid usernames, or accept invalid successful JSON.');
+
+console.log('Request-context invariants OK: stale async results are discarded, UI writes merge into current state, malformed success/cache payloads fail closed, X empty values are authoritative, and paid LLM preflight remains byte-conservative with unknown-usage reservations preserved.');
