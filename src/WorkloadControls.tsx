@@ -20,6 +20,9 @@ export default function WorkloadControls({ state, onChange }: Props) {
   const suggestion = suggestWorkload(state);
   const remainingBudget = Math.max(0, state.budget.monthlyLimitUsd - state.budget.usedUsd);
   const highMatch = state.candidates.filter((candidate) => !candidate.skipped && candidate.match >= 75).length;
+  const supply = actionableSupply(state);
+  const relationshipTarget = Math.max(0, values.total - values.self);
+  const shortage = Math.max(0, relationshipTarget - supply.actionable);
 
   function apply(next: WorkloadValues) {
     const relationshipPolicy: RelationshipPolicy = {
@@ -42,7 +45,9 @@ export default function WorkloadControls({ state, onChange }: Props) {
 
     <div className="workload-advisor">
       <div><span>AI目安</span><strong>{suggestion.total} actions</strong></div>
-      <p>Mission Match 75+ が {highMatch}人 · 月予算残り ${remainingBudget.toFixed(2)}。現在実際に処理できる候補数と予算余力から作業量を提案しています。</p>
+      <p>Mission Match 75+ が {highMatch}人 · 実行先まで決まっている候補 {supply.actionable}件 · 月予算残り ${remainingBudget.toFixed(2)}。reviewだけの候補は実行可能数に含めていません。</p>
+      {shortage > 0 && <p><strong>候補供給が{shortage}件不足しています。</strong> DiscoverのMission探索とAI再評価で、具体的なfollow/like/reply/DM候補を補充する必要があります。</p>}
+      {supply.reviewOnly > 0 && <p>{supply.reviewOnly}件はまだ「確認」止まりです。具体的な投稿接点や関係情報が取れるまで、実行候補として水増ししません。</p>}
       <button className="secondary-button" onClick={() => apply(suggestion)}>おすすめ値を適用</button>
     </div>
 
@@ -82,12 +87,30 @@ function valuesFromPolicy(policy: RelationshipPolicy): WorkloadValues {
   };
 }
 
+function actionableSupply(state: AppState) {
+  const highMatch = state.candidates.filter((candidate) => !candidate.skipped && candidate.match >= 75);
+  let actionable = 0;
+  let reviewOnly = 0;
+  for (const candidate of highMatch) {
+    if (candidate.recommendedAction === 'follow'
+      || candidate.recommendedAction === 'dm'
+      || candidate.recommendedAction === 'unfollow_review'
+      || ((candidate.recommendedAction === 'like' || candidate.recommendedAction === 'reply') && Boolean(candidate.engagementUrl))) {
+      actionable += 1;
+    } else {
+      reviewOnly += 1;
+    }
+  }
+  return { actionable, reviewOnly };
+}
+
 function suggestWorkload(state: AppState): WorkloadValues {
   const candidates = state.candidates.filter((candidate) => !candidate.skipped);
   const highMatch = candidates.filter((candidate) => candidate.match >= 75);
   const strongFollow = highMatch.filter((candidate) => candidate.recommendedAction === 'follow').length;
-  const conversations = highMatch.filter((candidate) => candidate.recommendedAction === 'reply' || candidate.recommendedAction === 'dm').length;
-  const light = highMatch.filter((candidate) => candidate.recommendedAction === 'like' || candidate.recommendedAction === 'review').length;
+  const conversations = highMatch.filter((candidate) => candidate.recommendedAction === 'dm'
+    || (candidate.recommendedAction === 'reply' && Boolean(candidate.engagementUrl))).length;
+  const light = highMatch.filter((candidate) => candidate.recommendedAction === 'like' && Boolean(candidate.engagementUrl)).length;
   const cleanup = candidates.filter((candidate) => candidate.recommendedAction === 'unfollow_review').length;
 
   const limit = state.budget.monthlyLimitUsd;
