@@ -1,3 +1,5 @@
+import { fetchWithTimeout } from './fetchWithTimeout';
+
 export interface XOAuthEnv {
   DB: D1Database;
   X_CLIENT_ID?: string;
@@ -222,16 +224,18 @@ async function refreshAccessToken(env: XOAuthEnv, refreshToken: string) {
 
 async function tokenRequest(env: XOAuthEnv, form: URLSearchParams, operation: string) {
   const credentials = btoa(`${env.X_CLIENT_ID!.trim()}:${env.X_CLIENT_SECRET!.trim()}`);
-  const response = await fetch('https://api.x.com/2/oauth2/token', {
+  const response = await fetchWithTimeout('https://api.x.com/2/oauth2/token', {
     method: 'POST',
     headers: {
       authorization: `Basic ${credentials}`,
       'content-type': 'application/x-www-form-urlencoded',
     },
     body: form.toString(),
-  });
+  }, 20_000, `X OAuth ${operation}`);
   if (!response.ok) throw new Error(`X OAuth ${operation} returned ${response.status}`);
-  return response.json<XTokenResponse>();
+  const body = await response.json().catch(() => null) as XTokenResponse | null;
+  if (!body || typeof body !== 'object') throw new Error(`X OAuth ${operation} returned invalid JSON`);
+  return body;
 }
 
 async function encryptToken(env: XOAuthEnv, plaintext: string) {
