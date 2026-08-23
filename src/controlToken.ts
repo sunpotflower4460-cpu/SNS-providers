@@ -1,16 +1,16 @@
 const TOKEN_KEY = 'sns-providers:sync-token';
 export const CONTROL_TOKEN_CHANGED_EVENT = 'sns-providers:control-token-changed';
 
-let memoryToken: string | null = null;
-let memoryInitialized = false;
+let memoryToken = '';
+let memoryAuthoritative = false;
 
 export function getSyncToken() {
-  if (memoryInitialized) return memoryToken || '';
-  memoryInitialized = true;
+  if (memoryAuthoritative) return memoryToken;
   try {
     memoryToken = localStorage.getItem(TOKEN_KEY) || '';
   } catch {
-    memoryToken = '';
+    // If storage is temporarily unreadable, preserve the most recently known in-memory
+    // value. When no value has ever been set this naturally remains empty.
   }
   return memoryToken;
 }
@@ -18,14 +18,15 @@ export function getSyncToken() {
 export function setSyncToken(token: string) {
   const normalized = token.trim();
   memoryToken = normalized;
-  memoryInitialized = true;
   let persisted = true;
   try {
     if (!normalized) localStorage.removeItem(TOKEN_KEY);
     else localStorage.setItem(TOKEN_KEY, normalized);
+    memoryAuthoritative = false;
   } catch {
     // Keep the validated token available for this browser session even when persistent
-    // storage is blocked/full. Callers receive false so they can warn that reload loses it.
+    // storage is blocked/full. While in this mode, do not let a stale disk value replace it.
+    memoryAuthoritative = true;
     persisted = false;
   }
   notifyControlTokenChanged();
@@ -34,13 +35,14 @@ export function setSyncToken(token: string) {
 
 export function clearSyncToken() {
   memoryToken = '';
-  memoryInitialized = true;
   let persisted = true;
   try {
     localStorage.removeItem(TOKEN_KEY);
+    memoryAuthoritative = false;
   } catch {
-    // Memory is cleared immediately, but the caller must warn that an old persisted value
-    // may still exist and can reappear after a reload if browser storage becomes readable.
+    // Memory is cleared immediately. Prefer it over a stale persisted value for the rest
+    // of this session; the caller warns that reload may expose the old disk value again.
+    memoryAuthoritative = true;
     persisted = false;
   }
   notifyControlTokenChanged();
