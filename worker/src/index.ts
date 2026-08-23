@@ -1,3 +1,5 @@
+import { fetchWithTimeout } from './fetchWithTimeout';
+
 interface Env {
   DB: D1Database;
   GROQ_API_KEY?: string;
@@ -281,11 +283,12 @@ async function fetchXProfiles(usernames: string[], bearerToken: string) {
     usernames: usernames.join(','),
     'user.fields': 'created_at,description,public_metrics,verified',
   });
-  const response = await fetch(`https://api.x.com/2/users/by?${params.toString()}`, {
+  const response = await fetchWithTimeout(`https://api.x.com/2/users/by?${params.toString()}`, {
     headers: { authorization: `Bearer ${bearerToken}` },
-  });
+  }, 30_000, 'X profile enrichment');
   if (!response.ok) throw new Error(`X API returned ${response.status}`);
-  const data = await response.json<{ data?: XUser[]; errors?: unknown[] }>();
+  const data = await response.json().catch(() => null) as { data?: XUser[]; errors?: unknown[] } | null;
+  if (!data || typeof data !== 'object') throw new Error('X API returned an empty or invalid JSON response');
   return (data.data || []).map((profile) => ({
     id: profile.id,
     name: profile.name,
@@ -456,7 +459,7 @@ async function rankWithProvider(provider: 'groq' | 'deepseek', body: RankRequest
   const model = isGroq ? (env.GROQ_MODEL || 'openai/gpt-oss-20b') : (env.DEEPSEEK_MODEL || 'deepseek-chat');
   const messages = buildProviderMessages(body);
 
-  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
+  const response = await fetchWithTimeout(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST',
     headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
     body: JSON.stringify({
@@ -469,10 +472,11 @@ async function rankWithProvider(provider: 'groq' | 'deepseek', body: RankRequest
         { role: 'user', content: messages.user },
       ],
     }),
-  });
+  }, 75_000, `${provider} ranking`);
 
   if (!response.ok) throw new Error(`${provider} returned ${response.status}`);
-  const data = await response.json<{ choices?: Array<{ message?: { content?: string } }>; usage?: Usage }>();
+  const data = await response.json().catch(() => null) as { choices?: Array<{ message?: { content?: string } }>; usage?: Usage } | null;
+  if (!data || typeof data !== 'object') throw new Error(`${provider} returned invalid JSON`);
   const content = data.choices?.[0]?.message?.content;
   if (!content) throw new Error(`${provider} returned no content`);
   const parsed = JSON.parse(content) as { results?: unknown[] };
