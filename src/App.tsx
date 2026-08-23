@@ -139,12 +139,16 @@ function App() {
       setApiNote('Worker URLを設定するとX公式プロフィール補完が使えます');
       return;
     }
-    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const cutoff = now - 24 * 60 * 60 * 1000;
+    const futureSkewLimit = now + 5 * 60 * 1000;
     const targets = state.candidates.filter((candidate) => {
       if (candidate.platform !== 'x' || candidate.skipped) return false;
       const lastAttempt = candidate.profileSyncAttemptedAt || candidate.profileSyncedAt;
       if (!lastAttempt) return true;
-      return new Date(lastAttempt).getTime() < cutoff;
+      const lastAttemptMs = new Date(lastAttempt).getTime();
+      if (!Number.isFinite(lastAttemptMs) || lastAttemptMs > futureSkewLimit) return true;
+      return lastAttemptMs < cutoff;
     }).slice(0, 100);
     if (!targets.length) {
       setApiNote('X候補は24時間以内に確認済みです');
