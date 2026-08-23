@@ -1,6 +1,6 @@
 import type { RankResult, XProfileResult } from './api';
 import { normalizeAppState } from './backup';
-import { candidateRequestKey, missionRequestKey } from './requestContext';
+import { candidateRequestKey, missionRequestKey, selfRequestKey } from './requestContext';
 import type { XOwnedSyncResponse } from './xAccount';
 import type { AppState, Candidate, Interaction, Mission, Platform, RecommendedAction, RelationshipPolicy } from './types';
 
@@ -102,6 +102,9 @@ export function applySelfAnalysis(state: AppState, result: RankResult | undefine
   if (result.requestMissionKey && result.requestMissionKey !== missionRequestKey(state.mission)) {
     return { ...state, budget };
   }
+  if (result.requestSelfKey && result.requestSelfKey !== selfRequestKey(state.selfProfile.profileText, state.selfProfile.recentPostsText)) {
+    return { ...state, budget };
+  }
   return {
     ...state,
     selfProfile: {
@@ -174,8 +177,6 @@ export function applyXProfiles(state: AppState, profiles: XProfileResult[], cost
       ...candidate,
       platformUserId: profile.id,
       displayName: profile.name || candidate.displayName,
-      // Empty descriptions are authoritative: retaining the old bio after the user
-      // removed it on X would feed stale profile text into later ranking decisions.
       bio: profile.description,
       verified: profile.verified,
       publicMetrics: profile.publicMetrics,
@@ -227,10 +228,6 @@ export function applyOwnedXSync(state: AppState, result: XOwnedSyncResponse): Ap
     };
   });
 
-  // The authenticated profile endpoint was always read, so an empty description is a
-  // real value. Posts are different: budget pacing may skip the posts endpoint entirely.
-  // Only replace recentPostsText when this sync actually requested posts; if it did and
-  // X returned zero posts, clearing the previous text is the correct representation.
   const profileText = result.profile.description;
   const postsWereRead = (result.requested?.posts ?? 0) > 0;
   const fetchedPostsText = posts.map((post) => post.text.trim()).filter(Boolean).join('\n\n---\n\n');
@@ -271,10 +268,6 @@ export function applyRankResults(state: AppState, results: RankResult[], costUsd
   const candidates = state.candidates.map((candidate) => {
     const result = byId.get(candidate.id);
     if (!result) return candidate;
-    // The API result belongs to the exact Mission/candidate snapshot sent at request time.
-    // A user edit, official profile refresh, relationship-stage change, or Mission change
-    // while the request is in flight makes that recommendation stale. Drop only the stale
-    // recommendation; the cost is still accounted below because the provider work occurred.
     if (result.requestMissionKey && result.requestMissionKey !== currentMissionKey) return candidate;
     if (result.requestCandidateKey && result.requestCandidateKey !== candidateRequestKey(candidate)) return candidate;
     const recommendedAction = isRecommendedAction(result.recommendedAction) ? result.recommendedAction : candidate.recommendedAction;
