@@ -136,5 +136,6 @@ async function request<T>(path: string, init?: RequestInit, token?: string): Pro
     const message = body && typeof body === 'object' && 'error' in body && body.error ? body.error : `X account API returned ${response.status}`;
     throw new Error(message);
   }
+  if (body == null) throw new Error('X account API returned an empty or invalid JSON response');
   return body as T;
 }
