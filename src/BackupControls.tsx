@@ -5,9 +5,9 @@ import InstagramAccountControls from './InstagramAccountControls';
 import SyncControls from './SyncControls';
 import WorkloadControls from './WorkloadControls';
 import XAccountControls from './XAccountControls';
-import type { AppState } from './types';
+import type { AppState, AppStateUpdater } from './types';
 
-export default function BackupControls({ state, onRestore }: { state: AppState; onRestore: (state: AppState) => void }) {
+export default function BackupControls({ state, onRestore }: { state: AppState; onRestore: AppStateUpdater }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState('');
 
