@@ -45,7 +45,7 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
         draft: recommendedAction === 'reply' ? existing.draft : undefined,
         platformUserId: engager.id || existing.platformUserId,
         profileSyncedAt: syncedAt,
-        lastInteractionAt: engager.lastCommentAt || existing.lastInteractionAt,
+        lastInteractionAt: latestIso(existing.lastInteractionAt, engager.lastCommentAt),
         tags: [...new Set([...existing.tags, 'inbound', 'commenter'])],
       });
       continue;
@@ -69,7 +69,7 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
       strategy,
       tags: ['inbound', 'commenter'],
       recommendedAction,
-      lastInteractionAt: engager.lastCommentAt || syncedAt,
+      lastInteractionAt: latestIso(undefined, engager.lastCommentAt) || syncedAt,
     });
   }
 
@@ -95,6 +95,15 @@ function isFreshCommentAfterDismissal(candidate: Candidate, incomingAt: string |
     .filter(Number.isFinite);
   if (!baselines.length) return false;
   return incoming > Math.max(...baselines);
+}
+
+function latestIso(current?: string, incoming?: string | null) {
+  const currentMs = current ? new Date(current).getTime() : Number.NaN;
+  const incomingMs = incoming ? new Date(incoming).getTime() : Number.NaN;
+  if (Number.isFinite(currentMs) && Number.isFinite(incomingMs)) return incomingMs > currentMs ? incoming! : current!;
+  if (Number.isFinite(incomingMs)) return incoming!;
+  if (Number.isFinite(currentMs)) return current!;
+  return undefined;
 }
 
 function promoteStage(stage: Candidate['stage']): Candidate['stage'] {
