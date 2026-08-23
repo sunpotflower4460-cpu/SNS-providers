@@ -107,7 +107,7 @@ export function normalizeAppState(state: AppState): AppState {
       summary: safeText(state?.selfProfile?.summary, 3000) || undefined,
       strategy: safeText(state?.selfProfile?.strategy, 5000) || undefined,
       profileRewrite: safeText(state?.selfProfile?.profileRewrite, 3000) || undefined,
-      analyzedAt: validOptionalIso(state?.selfProfile?.analyzedAt),
+      analyzedAt: validPastishOptionalIso(state?.selfProfile?.analyzedAt),
     },
     xAccount: normalizeXAccount(state?.xAccount),
     instagramAccount: normalizeInstagramAccount(state?.instagramAccount),
@@ -159,8 +159,8 @@ function normalizeCandidate(raw: Candidate): Candidate | null {
     platformUserId: safeText(raw.platformUserId, 100) || undefined,
     verified: Boolean(raw.verified),
     publicMetrics: normalizeMetrics(raw.publicMetrics),
-    profileSyncedAt: validOptionalIso(raw.profileSyncedAt),
-    profileSyncAttemptedAt: validOptionalIso(raw.profileSyncAttemptedAt),
+    profileSyncedAt: validPastishOptionalIso(raw.profileSyncedAt),
+    profileSyncAttemptedAt: validPastishOptionalIso(raw.profileSyncAttemptedAt),
     kind: allowedKinds.has(raw.kind) ? raw.kind : 'other',
     match: clampScore(raw.match),
     relationshipScore: clampScore(raw.relationshipScore),
@@ -170,9 +170,9 @@ function normalizeCandidate(raw: Candidate): Candidate | null {
     tags: Array.isArray(raw.tags) ? raw.tags.map((tag) => safeText(tag, 80)).filter(Boolean).slice(0, 30) : [],
     recommendedAction: allowedActions.has(raw.recommendedAction) ? raw.recommendedAction : 'review',
     draft: safeText(raw.draft, 2400) || undefined,
-    followedAt: validOptionalIso(raw.followedAt),
+    followedAt: validPastishOptionalIso(raw.followedAt),
     followBack: typeof raw.followBack === 'boolean' ? raw.followBack : null,
-    lastInteractionAt: validOptionalIso(raw.lastInteractionAt),
+    lastInteractionAt: validPastishOptionalIso(raw.lastInteractionAt),
     skipped: Boolean(raw.skipped),
     snoozedUntil: validOptionalIso(raw.snoozedUntil),
   } as Candidate;
@@ -183,7 +183,7 @@ function normalizeInteraction(raw: Interaction): Interaction | null {
   const id = safeText(raw.id, 180);
   const candidateId = safeText(raw.candidateId, 180);
   const action = typeof raw.action === 'string' && allowedInteractionActions.has(raw.action) ? raw.action : '';
-  const at = validOptionalIso(raw.at);
+  const at = validPastishOptionalIso(raw.at);
   if (!id || !candidateId || !action || !at) return null;
   return {
     id,
@@ -216,7 +216,7 @@ function normalizeXAccount(account: AppState['xAccount'] | undefined): AppState[
     displayName: safeText(account.displayName, 180) || undefined,
     verified: typeof account.verified === 'boolean' ? account.verified : undefined,
     publicMetrics: normalizeMetrics(account.publicMetrics),
-    lastSyncedAt: validOptionalIso(account.lastSyncedAt),
+    lastSyncedAt: validPastishOptionalIso(account.lastSyncedAt),
     followerSampleCount: optionalNonNegativeInt(account.followerSampleCount),
     followingSampleCount: optionalNonNegativeInt(account.followingSampleCount),
     recentPostCount: optionalNonNegativeInt(account.recentPostCount),
@@ -234,7 +234,7 @@ function normalizeXAccount(account: AppState['xAccount'] | undefined): AppState[
 function normalizeInstagramAccount(account: AppState['instagramAccount']): AppState['instagramAccount'] {
   if (!account || typeof account !== 'object') return undefined;
   return {
-    lastSyncedAt: validOptionalIso(account.lastSyncedAt),
+    lastSyncedAt: validPastishOptionalIso(account.lastSyncedAt),
     mediaScanned: optionalNonNegativeInt(account.mediaScanned),
     commentEvents: optionalNonNegativeInt(account.commentEvents),
     engagerCount: optionalNonNegativeInt(account.engagerCount),
@@ -249,13 +249,26 @@ function sanitizeUsername(platform: Candidate['platform'], value: unknown) {
 }
 
 function safeSocialUrl(platform: Candidate['platform'], value?: string) {
-  if (!value || typeof value !== 'string') return undefined;
+  if (!value || typeof value !== 'string' || value.length > 2000) return undefined;
   try {
     const url = new URL(value);
     if (url.protocol !== 'https:') return undefined;
     const host = url.hostname.replace(/^www\./, '').toLowerCase();
-    const allowedHosts = platform === 'x' ? new Set(['x.com', 'twitter.com']) : new Set(['instagram.com']);
-    return allowedHosts.has(host) ? url.toString() : undefined;
+    const parts = url.pathname.split('/').filter(Boolean);
+    if (platform === 'x') {
+      if (host !== 'x.com' && host !== 'twitter.com') return undefined;
+      const [username, statusSegment, postId] = parts;
+      if (parts.length < 3
+        || !/^[A-Za-z0-9_]{1,15}$/.test(username || '')
+        || statusSegment !== 'status'
+        || !/^\d{1,30}$/.test(postId || '')) return undefined;
+      return `https://x.com/${username}/status/${postId}`;
+    }
+    if (host !== 'instagram.com') return undefined;
+    const [kind, shortcode] = parts;
+    if (!['p', 'reel', 'reels', 'tv'].includes((kind || '').toLowerCase())
+      || !/^[A-Za-z0-9_-]{1,100}$/.test(shortcode || '')) return undefined;
+    return `https://www.instagram.com/${kind.toLowerCase()}/${shortcode}/`;
   } catch {
     return undefined;
   }
@@ -334,4 +347,12 @@ function validOptionalIso(value?: string) {
   if (!value || typeof value !== 'string') return undefined;
   const time = new Date(value).getTime();
   return Number.isFinite(time) ? new Date(time).toISOString() : undefined;
+}
+
+function validPastishOptionalIso(value?: string) {
+  if (!value || typeof value !== 'string') return undefined;
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) && time <= Date.now() + 5 * 60 * 1000
+    ? new Date(time).toISOString()
+    : undefined;
 }
