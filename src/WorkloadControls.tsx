@@ -23,6 +23,7 @@ export default function WorkloadControls({ state, onChange }: Props) {
   const supply = actionableSupply(state);
   const relationshipTarget = Math.max(0, values.total - values.self);
   const shortage = Math.max(0, relationshipTarget - supply.actionable);
+  const autoReplenishEnabled = state.relationshipPolicy.autoReplenishEnabled !== false;
 
   function apply(next: WorkloadValues) {
     const relationshipPolicy: RelationshipPolicy = {
@@ -37,6 +38,16 @@ export default function WorkloadControls({ state, onChange }: Props) {
     onChange({ ...state, relationshipPolicy });
   }
 
+  function setAutoReplenish(enabled: boolean) {
+    onChange({
+      ...state,
+      relationshipPolicy: {
+        ...state.relationshipPolicy,
+        autoReplenishEnabled: enabled,
+      },
+    });
+  }
+
   return <section className="form-card workload-card">
     <div className="field-title">
       <div><strong>1日の交流ワークロード</strong><span>候補の質を保ちながら、自分が処理する量を決める</span></div>
@@ -46,15 +57,20 @@ export default function WorkloadControls({ state, onChange }: Props) {
     <div className="workload-advisor">
       <div><span>AI目安</span><strong>{suggestion.total} actions</strong></div>
       <p>Mission Match 75+ が {highMatch}人 · 実行先まで決まっている候補 {supply.actionable}件 · 月予算残り ${remainingBudget.toFixed(2)}。reviewだけの候補は実行可能数に含めていません。</p>
-      {shortage > 0 && <p><strong>候補供給が{shortage}件不足しています。</strong> DiscoverのMission探索とAI再評価で、具体的なfollow/like/reply/DM候補を補充する必要があります。</p>}
+      {shortage > 0 && <p><strong>候補供給が{shortage}件不足しています。</strong> 自動補充がONなら、Todayの実行可能キューが目標の70%未満になったときに無料探索と無料/ローカル評価を1日1回まで試します。</p>}
       {supply.reviewOnly > 0 && <p>{supply.reviewOnly}件はまだ「確認」止まりです。具体的な投稿接点や関係情報が取れるまで、実行候補として水増ししません。</p>}
       <button className="secondary-button" onClick={() => apply(suggestion)}>おすすめ値を適用</button>
     </div>
 
+    <label className="auto-replenish-toggle">
+      <span><strong>候補を自動補充</strong><small>不足時のみ。無料Tavily探索＋無料/ローカル評価。自動処理から有料LLM・有料X readは呼びません。</small></span>
+      <input type="checkbox" checked={autoReplenishEnabled} onChange={(event) => setAutoReplenish(event.target.checked)} />
+    </label>
+
     <WorkloadSlider label="総キュー" value={values.total} min={1} max={150} hint="今日Todayに並べる最大件数" onChange={(total) => apply({ ...values, total })} />
     <WorkloadSlider label="新しくつながる" value={values.connect} min={0} max={120} hint="フォロー候補の作業量" onChange={(connect) => apply({ ...values, connect })} />
     <WorkloadSlider label="会話" value={values.conversation} min={0} max={30} hint="返信・DM候補" onChange={(conversation) => apply({ ...values, conversation })} />
-    <WorkloadSlider label="軽い交流" value={values.light} min={0} max={30} hint="投稿確認・いいね候補" onChange={(light) => apply({ ...values, light })} />
+    <WorkloadSlider label="軽い交流" value={values.light} min={0} max={30} hint="具体的な投稿へのいいね候補" onChange={(light) => apply({ ...values, light })} />
     <WorkloadSlider label="フォロー整理" value={values.cleanup} min={0} max={30} hint="継続・解除を確認する候補" onChange={(cleanup) => apply({ ...values, cleanup })} />
     <WorkloadSlider label="自分改善" value={values.self} min={0} max={5} hint="プロフィール・投稿改善" onChange={(self) => apply({ ...values, self })} />
 
