@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import { installDialogBehavior } from './dialogBehavior';
+import { installStatusPresentation } from './statusPresentation';
 import './styles.css';
 import './integration.css';
 import './ux.css';
@@ -15,6 +16,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 );
 
 installDialogBehavior();
+installStatusPresentation();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
