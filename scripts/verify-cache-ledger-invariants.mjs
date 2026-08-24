@@ -15,7 +15,17 @@ requireAll(xOwned, [
   'DELETE FROM x_owned_snapshots WHERE user_id = ?',
   'const { start, end } = utcMonthWindow();',
   'occurred_at >= ? AND occurred_at < ?',
-], 'Owned-X cache validation/eviction or bounded UTC-month budget accounting regressed.');
+  'validRawXUser(response.data)',
+  'response.data.every(validRawXUser)',
+  'response.data.every(validRawXPost)',
+  'safeCursor(nextToken) === null',
+], 'Owned-X cache/raw-payload validation, eviction, or bounded UTC-month budget accounting regressed.');
+
+const rawValidationIndex = xOwned.indexOf('Only now is it safe to shrink the conservative reservation');
+const finalizeOwnedIndex = xOwned.indexOf('await finalizeReservation(env, reservationId, actualCost', rawValidationIndex);
+if (rawValidationIndex < 0 || finalizeOwnedIndex < 0 || rawValidationIndex > finalizeOwnedIndex) {
+  throw new Error('Owned-X can shrink the worst-case reservation before raw paid provider payload validation completes.');
+}
 
 requireAll(instagramOwned, [
   'validInstagramSnapshot(result, instagramUserId)',
@@ -44,4 +54,4 @@ if (unboundedMonthQuery.test(xOwned) || unboundedMonthQuery.test(providerApi)) {
   throw new Error('A paid-budget query appears to have a lower month bound without an upper month bound.');
 }
 
-console.log('Cache/ledger invariants OK: malformed X/Instagram snapshots are rejected and evicted, newly produced snapshots are validated before caching, paid budget totals/reservations are bounded to the active UTC month, and materially changed official X profiles invalidate stale follow advice before it can remain in Today.');
+console.log('Cache/ledger invariants OK: malformed X/Instagram snapshots are rejected and evicted, raw paid owned-X payloads are validated before reservation shrink, newly produced snapshots are validated before caching, paid budget totals/reservations are bounded to the active UTC month, and materially changed official X profiles invalidate stale follow advice before it can remain in Today.');
