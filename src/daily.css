@@ -13,19 +13,28 @@
   border-style: dashed;
   text-align: center;
 }
-.queue-complete-icon {
+.queue-complete-icon,
+.queue-wait-icon {
   width: 42px;
   height: 42px;
   display: grid;
   place-items: center;
   margin-bottom: 4px;
   border-radius: 14px;
+  font-weight: 900;
+}
+.queue-complete-icon {
   color: #06120e;
   background: #72dfbd;
-  font-weight: 900;
+}
+.queue-wait-icon {
+  color: #91a1b4;
+  border: 1px solid rgba(255,255,255,.09);
+  background: rgba(255,255,255,.035);
 }
 .daily-queue.empty h3 { margin: 4px 0 2px; font-size: 17px; }
 .daily-queue.empty p { max-width: 42ch; margin: 0; color: #8796a8; font-size: 11px; line-height: 1.6; }
+.empty-action { min-width: min(280px, 100%); margin-top: 9px; }
 .daily-queue-head { display: flex; justify-content: space-between; align-items: end; gap: 12px; }
 .daily-queue-head h2 { margin: 4px 0 0; font-size: 19px; letter-spacing: -.025em; }
 .queue-count {
@@ -37,25 +46,6 @@
   background: rgba(255,255,255,.03);
   font-size: 10px;
 }
-.queue-summary {
-  display: grid;
-  grid-template-columns: repeat(4,1fr);
-  gap: 6px;
-  margin: 14px 0;
-}
-.queue-summary span {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  padding: 8px 4px;
-  border: 1px solid rgba(255,255,255,.055);
-  border-radius: 11px;
-  color: #7f8ea2;
-  background: rgba(0,0,0,.08);
-  font-size: 9px;
-}
-.queue-summary b { color: #dce5ef; font-size: 14px; }
 .next-action-card {
   width: 100%;
   display: grid;
@@ -63,6 +53,7 @@
   grid-template-rows: auto 1fr;
   gap: 8px 12px;
   align-items: center;
+  margin-top: 14px;
   padding: 16px;
   border: 1px solid rgba(114,223,189,.18);
   border-radius: 18px;
@@ -76,7 +67,7 @@
   color: #72dfbd;
   font-size: 9px;
   font-weight: 800;
-  letter-spacing: .09em;
+  letter-spacing: .06em;
 }
 .next-action-card.cleanup .next-action-order { color: #ffc27c; }
 .next-action-icon {
@@ -94,12 +85,21 @@
 .next-action-copy { min-width: 0; display: grid; gap: 3px; }
 .next-action-copy small { color: #72dfbd; font-size: 10px; font-weight: 700; }
 .next-action-card.cleanup .next-action-copy small { color: #ffc27c; }
-.next-action-copy strong { font-size: 15px; line-height: 1.35; }
+.next-action-copy strong {
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: 15px;
+  line-height: 1.35;
+}
 .next-action-copy p {
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  overflow-wrap: anywhere;
   margin: 1px 0 0;
   color: #8f9fb2;
   font-size: 10px;
@@ -109,14 +109,18 @@
   align-self: stretch;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 5px;
+  max-width: 170px;
   padding-left: 12px;
   border-left: 1px solid rgba(255,255,255,.07);
   color: #c8d3df;
   font-size: 11px;
   font-weight: 700;
+  line-height: 1.35;
+  text-align: right;
 }
-.next-action-cta b { font-size: 20px; font-weight: 400; }
+.next-action-cta b { flex: none; font-size: 20px; font-weight: 400; }
 .queue-list-block { margin-top: 15px; }
 .queue-list-label { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin: 0 2px 8px; }
 .queue-list-label span { color: #c3ceda; font-size: 11px; font-weight: 700; }
@@ -159,9 +163,19 @@
   .daily-queue { padding: 15px; }
   .next-action-card { grid-template-columns: 40px minmax(0,1fr); }
   .next-action-icon { width: 40px; height: 40px; }
-  .next-action-cta { grid-column: 1 / -1; justify-content: flex-end; min-height: 34px; padding: 8px 0 0; border-top: 1px solid rgba(255,255,255,.06); border-left: 0; }
+  .next-action-cta {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+    max-width: none;
+    min-height: 36px;
+    padding: 9px 0 0;
+    border-top: 1px solid rgba(255,255,255,.06);
+    border-left: 0;
+    text-align: right;
+  }
 }
 @media (max-width: 380px) {
-  .queue-summary { grid-template-columns: repeat(2,1fr); }
+  .daily-queue-head { align-items: flex-start; }
+  .daily-queue-head h2 { max-width: 13ch; }
   .queue-list-label small { display: none; }
 }
