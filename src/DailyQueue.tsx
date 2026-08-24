@@ -8,6 +8,7 @@ interface Props {
   state: AppState;
   onOpenCandidate: (candidate: Candidate) => void;
   onOpenMe: () => void;
+  onOpenDiscover: () => void;
 }
 
 const actionIcon: Record<string, string> = {
@@ -30,11 +31,12 @@ const actionLabel: Record<string, string> = {
   self_improve: '自分を改善',
 };
 
-export default function DailyQueue({ state, onOpenCandidate, onOpenMe }: Props) {
+export default function DailyQueue({ state, onOpenCandidate, onOpenMe, onOpenDiscover }: Props) {
   const localDay = useLocalDayKey();
   const items = useMemo(() => buildDailyQueue(state), [state, localDay]);
   const summary = useMemo(() => queueSummary(items), [items]);
   const candidateById = useMemo(() => new Map(state.candidates.map((candidate) => [candidate.id, candidate])), [state.candidates]);
+  const activeCandidateCount = state.candidates.filter((candidate) => !candidate.skipped).length;
 
   function openItem(item: (typeof items)[number]) {
     const candidate = item.candidateId ? candidateById.get(item.candidateId) : undefined;
@@ -42,12 +44,23 @@ export default function DailyQueue({ state, onOpenCandidate, onOpenMe }: Props) 
     else onOpenMe();
   }
 
+  if (!items.length && activeCandidateCount === 0) {
+    return <section className="daily-queue empty onboarding-empty">
+      <div className="queue-complete-icon">＋</div>
+      <span className="section-kicker">最初の一歩</span>
+      <h3>まず、つながる候補を見つけましょう</h3>
+      <p>Missionを基準に候補を探すと、誰に何をするかがTodayへ自動で並びます。</p>
+      <button className="primary-button empty-action" onClick={onOpenDiscover}>候補を探す</button>
+    </section>;
+  }
+
   if (!items.length) {
     return <section className="daily-queue empty">
       <div className="queue-complete-icon">✓</div>
       <span className="section-kicker">今日のおすすめ</span>
-      <h3>今日の分は完了です</h3>
-      <p>追加の判断は必要ありません。新しい接点が入るか、明日になるとMissionに沿って組み直します。</p>
+      <h3>今日すぐやることはありません</h3>
+      <p>今日の分を終えたか、今ある候補にはまだ実行できる具体的な行動がありません。無理に行動を増やす必要はありません。</p>
+      <button className="secondary-button empty-action" onClick={onOpenDiscover}>候補を確認する</button>
     </section>;
   }
 
