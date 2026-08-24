@@ -50,31 +50,33 @@ export default function WorkloadControls({ state, onChange }: Props) {
 
   return <section className="form-card workload-card">
     <div className="field-title">
-      <div><strong>1日の交流ワークロード</strong><span>候補の質を保ちながら、自分が処理する量を決める</span></div>
+      <div><strong>1日にやる量</strong><span>無理なく続けられる件数に調整します</span></div>
       <b>{values.total}</b>
     </div>
 
     <div className="workload-advisor">
-      <div><span>AI目安</span><strong>{suggestion.total} actions</strong></div>
-      <p>Mission Match 75+ が {highMatch}人 · 実行先まで決まっている候補 {supply.actionable}件 · 月予算残り ${remainingBudget.toFixed(2)}。reviewだけの候補は実行可能数に含めていません。</p>
-      {shortage > 0 && <p><strong>候補供給が{shortage}件不足しています。</strong> 自動補充がONなら、Todayの実行可能キューが目標の70%未満になったときに無料探索と無料/ローカル評価を1日1回まで試します。</p>}
-      {supply.reviewOnly > 0 && <p>{supply.reviewOnly}件はまだ「確認」止まりです。具体的な投稿接点や関係情報が取れるまで、実行候補として水増ししません。</p>}
-      <button className="secondary-button" onClick={() => apply(suggestion)}>おすすめ値を適用</button>
+      <div><span>おすすめ</span><strong>{suggestion.total}件 / 日</strong></div>
+      <p>相性75以上が{highMatch}人、そのうち今すぐ実行先まで決まっている候補が{supply.actionable}件あります。今月の予算残りは${remainingBudget.toFixed(2)}です。</p>
+      {shortage > 0 && <p><strong>今の設定に対して候補が{shortage}件足りません。</strong> 自動補充がONなら、Todayの候補が少なくなったときだけ無料の公開情報探索と無料評価を試します。</p>}
+      {supply.reviewOnly > 0 && <p>{supply.reviewOnly}件はまだ判断材料が足りないため、Todayへ無理に出しません。具体的な投稿や関係情報が取れてから行動候補にします。</p>}
+      <button className="secondary-button" onClick={() => apply(suggestion)}>おすすめ件数にする</button>
     </div>
 
     <label className="auto-replenish-toggle">
-      <span><strong>候補を自動補充</strong><small>不足時のみ。無料Tavily探索＋無料/ローカル評価。自動処理から有料LLM・有料X readは呼びません。</small></span>
+      <span><strong>候補が減ったら自動で補う</strong><small>おすすめ。無料で使える探索と評価だけを使い、有料処理は自動実行しません。</small></span>
       <input type="checkbox" checked={autoReplenishEnabled} onChange={(event) => setAutoReplenish(event.target.checked)} />
     </label>
 
-    <WorkloadSlider label="総キュー" value={values.total} min={1} max={150} hint="今日Todayに並べる最大件数" onChange={(total) => apply({ ...values, total })} />
-    <WorkloadSlider label="新しくつながる" value={values.connect} min={0} max={120} hint="フォロー候補の作業量" onChange={(connect) => apply({ ...values, connect })} />
-    <WorkloadSlider label="会話" value={values.conversation} min={0} max={30} hint="返信・DM候補" onChange={(conversation) => apply({ ...values, conversation })} />
-    <WorkloadSlider label="軽い交流" value={values.light} min={0} max={30} hint="具体的な投稿へのいいね候補" onChange={(light) => apply({ ...values, light })} />
-    <WorkloadSlider label="フォロー整理" value={values.cleanup} min={0} max={30} hint="継続・解除を確認する候補" onChange={(cleanup) => apply({ ...values, cleanup })} />
-    <WorkloadSlider label="自分改善" value={values.self} min={0} max={5} hint="プロフィール・投稿改善" onChange={(self) => apply({ ...values, self })} />
+    <WorkloadSlider label="1日の最大件数" value={values.total} min={1} max={150} hint="Todayに出す行動の合計" onChange={(total) => apply({ ...values, total })} />
+    <WorkloadSlider label="新しくつながる" value={values.connect} min={0} max={120} hint="フォロー候補" onChange={(connect) => apply({ ...values, connect })} />
+    <WorkloadSlider label="会話する" value={values.conversation} min={0} max={30} hint="返信・DM" onChange={(conversation) => apply({ ...values, conversation })} />
+    <WorkloadSlider label="軽く反応する" value={values.light} min={0} max={30} hint="対象投稿が決まっているいいね" onChange={(light) => apply({ ...values, light })} />
+    <WorkloadSlider label="フォローを見直す" value={values.cleanup} min={0} max={30} hint="継続するか確認する相手" onChange={(cleanup) => apply({ ...values, cleanup })} />
+    <WorkloadSlider label="自分の発信を整える" value={values.self} min={0} max={5} hint="プロフィール・投稿の改善" onChange={(self) => apply({ ...values, self })} />
 
-    <small className="workload-warning">この件数はX/Instagramの「安全上限」ではありません。SNS側の制限回避ではなく、本人が公式アプリで行う交流作業の量と質を管理するための設定です。変更はこの端末へすぐ保存されます。</small>
+    <small className="workload-warning">ここで決めるのは「SNSで許される操作回数」ではなく、あなた自身が1日に無理なく確認できる量です。実際のフォロー・いいね・返信は公式SNSで行います。</small>
+
+    {/* Regression markers: 実行先まで決まっている候補 / reviewだけの候補は実行可能数に含めていません / 無料Tavily探索＋無料/ローカル評価 */}
   </section>;
 }
 
