@@ -191,6 +191,7 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
         globalRemainingUsd: budget.remainingUsd,
       },
     };
+    if (!validOwnedSnapshot(result)) throw new Error('Owned X sync produced an invalid snapshot');
     await saveCache(env, userId, result);
     return result;
   } catch (error) {
@@ -351,10 +352,21 @@ async function loadFreshCache(env: XOwnedEnv, userId: string, force: boolean) {
     const syncedAtMs = new Date(row.synced_at).getTime();
     if (!Number.isFinite(syncedAtMs) || syncedAtMs > Date.now() + 60_000 || Date.now() - syncedAtMs > CACHE_TTL_MS) return null;
     const snapshot = JSON.parse(row.snapshot_json) as unknown;
-    if (!isRecord(snapshot) || snapshot.enabled !== true || !isRecord(snapshot.profile)) return null;
+    if (!validOwnedSnapshot(snapshot)) {
+      await deleteCache(env, userId);
+      return null;
+    }
     return snapshot;
   } catch {
     return null;
+  }
+}
+
+async function deleteCache(env: XOwnedEnv, userId: string) {
+  try {
+    await env.DB.prepare('DELETE FROM x_owned_snapshots WHERE user_id = ?').bind(userId).run();
+  } catch {
+    // Invalid cache is ignored even if cleanup cannot be persisted.
   }
 }
 
@@ -385,12 +397,10 @@ async function budgetForRequest(env: XOwnedEnv, userId: string, requestedLimitUs
 
 async function monthUsage(env: XOwnedEnv, userId: string): Promise<BudgetSnapshot> {
   try {
-    const start = new Date();
-    start.setUTCDate(1);
-    start.setUTCHours(0, 0, 0, 0);
+    const { start, end } = utcMonthWindow();
     const row = await env.DB.prepare(
-      'SELECT COALESCE(SUM(cost_usd), 0) AS used FROM budget_ledger WHERE user_id = ? AND occurred_at >= ?'
-    ).bind(userId, start.toISOString()).first<{ used: number }>();
+      'SELECT COALESCE(SUM(cost_usd), 0) AS used FROM budget_ledger WHERE user_id = ? AND occurred_at >= ? AND occurred_at < ?'
+    ).bind(userId, start, end).first<{ used: number }>();
     return { usedUsd: Number(row?.used || 0), available: true };
   } catch {
     return { usedUsd: 0, available: false };
@@ -399,16 +409,14 @@ async function monthUsage(env: XOwnedEnv, userId: string): Promise<BudgetSnapsho
 
 async function reserveBudget(env: XOwnedEnv, userId: string, amountUsd: number, effectiveLimit: number) {
   const id = crypto.randomUUID();
-  const start = new Date();
-  start.setUTCDate(1);
-  start.setUTCHours(0, 0, 0, 0);
+  const { start, end } = utcMonthWindow();
   const now = new Date().toISOString();
   try {
     const result = await env.DB.prepare(
       `INSERT INTO budget_ledger (id, user_id, provider, operation, cost_usd, input_units, output_units, cache_hit, occurred_at)
        SELECT ?, ?, 'x', 'owned_sync_reservation', ?, 0, 0, 0, ?
-       WHERE COALESCE((SELECT SUM(cost_usd) FROM budget_ledger WHERE user_id = ? AND occurred_at >= ?), 0) + ? <= ?`
-    ).bind(id, userId, amountUsd, now, userId, start.toISOString(), amountUsd, effectiveLimit).run();
+       WHERE COALESCE((SELECT SUM(cost_usd) FROM budget_ledger WHERE user_id = ? AND occurred_at >= ? AND occurred_at < ?), 0) + ? <= ?`
+    ).bind(id, userId, amountUsd, now, userId, start, end, amountUsd, effectiveLimit).run();
     return result.meta.changes > 0 ? id : null;
   } catch {
     return null;
@@ -436,10 +444,191 @@ function configuredLimit(env: XOwnedEnv) {
   return Number.isFinite(parsed) ? Math.max(0, parsed) : 3;
 }
 
+function utcMonthWindow() {
+  const now = new Date();
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  return { start: start.toISOString(), end: end.toISOString() };
+}
+
 function daysRemainingInUtcMonth() {
   const now = new Date();
   const lastDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).getUTCDate();
   return Math.max(1, lastDay - now.getUTCDate() + 1);
+}
+
+function validOwnedSnapshot(value: unknown) {
+  if (!isRecord(value)
+    || value.enabled !== true
+    || value.source !== 'x'
+    || !nonNegativeFinite(value.costUsd)
+    || typeof value.syncedAt !== 'string'
+    || !validPastishIso(value.syncedAt)
+    || !validOwnedUser(value.profile)
+    || !Array.isArray(value.followers)
+    || value.followers.length > 500
+    || !value.followers.every(validOwnedUser)
+    || !uniqueUsers(value.followers)
+    || !Array.isArray(value.following)
+    || value.following.length > 500
+    || !value.following.every(validOwnedUser)
+    || !uniqueUsers(value.following)
+    || !Array.isArray(value.posts)
+    || value.posts.length > 50
+    || !value.posts.every(validOwnedPost)
+    || !uniqueIds(value.posts)
+    || !validCoverage(value.coverage)
+    || !validRequested(value.requested)
+    || !validPacing(value.pacing)) return false;
+  if (value.followEvidence != null && !validFollowEvidence(value.followEvidence)) return false;
+
+  const coverage = value.coverage as Record<string, unknown>;
+  const followersCoverage = coverage.followers as Record<string, unknown>;
+  const followingCoverage = coverage.following as Record<string, unknown>;
+  const postsCoverage = coverage.posts as Record<string, unknown>;
+  const requested = value.requested as Record<string, unknown>;
+  return followersCoverage.fetched === value.followers.length
+    && followingCoverage.fetched === value.following.length
+    && postsCoverage.fetched === value.posts.length
+    && (requested.followers as number) >= value.followers.length
+    && (requested.following as number) >= value.following.length
+    && (requested.posts as number) >= value.posts.length;
+}
+
+function validOwnedUser(value: unknown) {
+  return isRecord(value)
+    && typeof value.id === 'string'
+    && /^\d{1,30}$/.test(value.id)
+    && typeof value.username === 'string'
+    && /^[A-Za-z0-9_]{1,15}$/.test(value.username)
+    && typeof value.name === 'string'
+    && value.name.length <= 300
+    && typeof value.description === 'string'
+    && value.description.length <= 5000
+    && typeof value.verified === 'boolean'
+    && (value.profileImageUrl == null || (typeof value.profileImageUrl === 'string' && validHttpsUrl(value.profileImageUrl)))
+    && validMetrics(value.publicMetrics);
+}
+
+function validOwnedPost(value: unknown) {
+  return isRecord(value)
+    && typeof value.id === 'string'
+    && /^\d{1,30}$/.test(value.id)
+    && typeof value.text === 'string'
+    && value.text.length <= 30_000
+    && (value.createdAt == null || (typeof value.createdAt === 'string' && validIso(value.createdAt)))
+    && isRecord(value.publicMetrics)
+    && nonNegativeFinite(value.publicMetrics.likes)
+    && nonNegativeFinite(value.publicMetrics.replies)
+    && nonNegativeFinite(value.publicMetrics.reposts)
+    && nonNegativeFinite(value.publicMetrics.quotes);
+}
+
+function validCoverage(value: unknown) {
+  return isRecord(value)
+    && validCoverageSlice(value.followers, 500)
+    && validCoverageSlice(value.following, 500)
+    && isRecord(value.posts)
+    && boundedNonNegativeInteger(value.posts.fetched, 50)
+    && typeof value.posts.complete === 'boolean';
+}
+
+function validCoverageSlice(value: unknown, maxFetched: number) {
+  return isRecord(value)
+    && boundedNonNegativeInteger(value.fetched, maxFetched)
+    && typeof value.complete === 'boolean'
+    && (value.cycle == null || boundedNonNegativeInteger(value.cycle, 1_000_000))
+    && (value.rotated == null || typeof value.rotated === 'boolean');
+}
+
+function validRequested(value: unknown) {
+  return isRecord(value)
+    && boundedNonNegativeInteger(value.followers, 500)
+    && boundedNonNegativeInteger(value.following, 500)
+    && boundedNonNegativeInteger(value.posts, 50);
+}
+
+function validPacing(value: unknown) {
+  return isRecord(value)
+    && boundedPositiveInteger(value.daysRemaining, 31)
+    && nonNegativeFinite(value.pacedCapUsd)
+    && nonNegativeFinite(value.globalRemainingUsd);
+}
+
+function validFollowEvidence(value: unknown) {
+  if (!isRecord(value)
+    || typeof value.complete !== 'boolean'
+    || !boundedNonNegativeInteger(value.cycle, 1_000_000)
+    || !boundedNonNegativeInteger(value.targetCount, 500)
+    || !Array.isArray(value.seenKeys)
+    || !Array.isArray(value.unseenKeys)
+    || value.seenKeys.length > 500
+    || value.unseenKeys.length > 500
+    || !value.seenKeys.every(validEvidenceKey)
+    || !value.unseenKeys.every(validEvidenceKey)) return false;
+  if (!value.complete) return value.seenKeys.length === 0 && value.unseenKeys.length === 0;
+  const allKeys = [...value.seenKeys, ...value.unseenKeys];
+  return allKeys.length === value.targetCount && new Set(allKeys).size === allKeys.length;
+}
+
+function validEvidenceKey(value: unknown) {
+  return typeof value === 'string' && /^[A-Za-z0-9._:-]{1,160}$/.test(value);
+}
+
+function validMetrics(value: unknown) {
+  return isRecord(value)
+    && nonNegativeFinite(value.followers)
+    && nonNegativeFinite(value.following)
+    && nonNegativeFinite(value.posts)
+    && (value.listed == null || nonNegativeFinite(value.listed));
+}
+
+function uniqueUsers(users: unknown[]) {
+  const ids = new Set<string>();
+  const usernames = new Set<string>();
+  for (const user of users) {
+    if (!isRecord(user) || typeof user.id !== 'string' || typeof user.username !== 'string') return false;
+    const username = user.username.toLowerCase();
+    if (ids.has(user.id) || usernames.has(username)) return false;
+    ids.add(user.id);
+    usernames.add(username);
+  }
+  return true;
+}
+
+function uniqueIds(items: unknown[]) {
+  const ids = items.map((item) => isRecord(item) && typeof item.id === 'string' ? item.id : '');
+  return ids.every(Boolean) && new Set(ids).size === ids.length;
+}
+
+function validHttpsUrl(value: string) {
+  if (value.length > 2000) return false;
+  try {
+    return new URL(value).protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function validIso(value: string) {
+  return Number.isFinite(new Date(value).getTime());
+}
+
+function validPastishIso(value: string) {
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) && time <= Date.now() + 5 * 60 * 1000;
+}
+
+function nonNegativeFinite(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function boundedNonNegativeInteger(value: unknown, max: number) {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= max;
+}
+
+function boundedPositiveInteger(value: unknown, max: number) {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= max;
 }
 
 function parsePositiveNumber(value?: string) {
