@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 const xOwned = await readFile(new URL('../worker/src/xOwned.ts', import.meta.url), 'utf8');
 const instagramOwned = await readFile(new URL('../worker/src/instagramOwned.ts', import.meta.url), 'utf8');
 const providerApi = await readFile(new URL('../worker/src/index.ts', import.meta.url), 'utf8');
+const store = await readFile(new URL('../src/store.ts', import.meta.url), 'utf8');
 
 function requireAll(source, fragments, message) {
   if (!fragments.every((fragment) => source.includes(fragment))) throw new Error(message);
@@ -30,9 +31,17 @@ requireAll(providerApi, [
   'new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1))',
 ], 'General provider/LLM budget accounting can again include future-month ledger rows.');
 
+requireAll(store, [
+  'const profileContextChanged = candidate.bio !== profile.description',
+  'const staleFollowAdvice = profileContextChanged',
+  "candidate.recommendedAction === 'follow'",
+  "recommendedAction: staleFollowAdvice ? 'review' as const : candidate.recommendedAction",
+  '古い推薦のままTodayには出しません。',
+], 'A materially changed official X profile can leave an obsolete follow recommendation actionable in Today.');
+
 const unboundedMonthQuery = /budget_ledger[^\n]{0,220}occurred_at >= \?(?![^\n]{0,120}occurred_at < \?)/;
 if (unboundedMonthQuery.test(xOwned) || unboundedMonthQuery.test(providerApi)) {
   throw new Error('A paid-budget query appears to have a lower month bound without an upper month bound.');
 }
 
-console.log('Cache/ledger invariants OK: malformed X/Instagram snapshots are rejected and evicted, newly produced snapshots are validated before caching, and paid budget totals/reservations are bounded to the active UTC month.');
+console.log('Cache/ledger invariants OK: malformed X/Instagram snapshots are rejected and evicted, newly produced snapshots are validated before caching, paid budget totals/reservations are bounded to the active UTC month, and materially changed official X profiles invalidate stale follow advice before it can remain in Today.');
