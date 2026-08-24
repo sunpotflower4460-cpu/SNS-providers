@@ -12,6 +12,8 @@ export default function BackupControls({ state, onRestore }: { state: AppState; 
   const latestStateRef = useRef(state);
   latestStateRef.current = state;
   const [status, setStatus] = useState('');
+  const [pendingRestore, setPendingRestore] = useState<AppState | null>(null);
+  const [pendingFileName, setPendingFileName] = useState('');
 
   // Settings currently exposes a plain state callback. Adapt nested controls to a
   // functional updater and advance the ref immediately, not only on the next render.
@@ -22,17 +24,34 @@ export default function BackupControls({ state, onRestore }: { state: AppState; 
     onRestore(next);
   };
 
-  async function restore(file?: File) {
+  async function prepareRestore(file?: File) {
     if (!file) return;
     try {
       const restored = await readBackup(file);
-      updateState(restored);
-      setStatus('復元しました');
+      setPendingRestore(restored);
+      setPendingFileName(file.name);
+      setStatus('バックアップを確認しました。復元するまで現在のデータは変わりません。');
     } catch (error) {
+      setPendingRestore(null);
+      setPendingFileName('');
       setStatus(error instanceof Error ? error.message : '復元に失敗しました');
     } finally {
       if (inputRef.current) inputRef.current.value = '';
     }
+  }
+
+  function confirmRestore() {
+    if (!pendingRestore) return;
+    updateState(pendingRestore);
+    setPendingRestore(null);
+    setPendingFileName('');
+    setStatus('バックアップから復元しました');
+  }
+
+  function cancelRestore() {
+    setPendingRestore(null);
+    setPendingFileName('');
+    setStatus('復元をキャンセルしました。現在のデータはそのままです。');
   }
 
   return <div className="settings-groups">
@@ -69,8 +88,17 @@ export default function BackupControls({ state, onRestore }: { state: AppState; 
             <button className="secondary-button" onClick={() => { downloadBackup(state); setStatus('バックアップを書き出しました'); }}>バックアップを書き出す</button>
             <button className="secondary-button" onClick={() => inputRef.current?.click()}>バックアップを復元</button>
           </div>
-          <input ref={inputRef} className="visually-hidden" type="file" accept="application/json,.json" onChange={(event) => restore(event.target.files?.[0])} />
-          <small>{status || 'APIキー・SNSパスワード・個人管理キーはバックアップに含まれません。'}</small>
+          <input ref={inputRef} className="visually-hidden" type="file" accept="application/json,.json" onChange={(event) => prepareRestore(event.target.files?.[0])} />
+
+          {pendingRestore && <div className="restore-confirm" role="alert">
+            <div><strong>現在のデータを置き換えます</strong><span>{pendingFileName || '選択したバックアップ'}を復元すると、今のMission・候補・関係・設定がバックアップ内容へ変わります。</span></div>
+            <div className="restore-confirm-actions">
+              <button className="secondary-button" onClick={cancelRestore}>キャンセル</button>
+              <button className="primary-button" onClick={confirmRestore}>この内容で復元</button>
+            </div>
+          </div>}
+
+          <small aria-live="polite">{status || 'APIキー・SNSパスワード・個人管理キーはバックアップに含まれません。'}</small>
         </section>
       </div>
     </details>
