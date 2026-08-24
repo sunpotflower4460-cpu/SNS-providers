@@ -327,12 +327,10 @@ async function fetchXProfiles(usernames: string[], bearerToken: string) {
 
 async function monthUsage(env: Env, userId: string): Promise<BudgetSnapshot> {
   try {
-    const start = new Date();
-    start.setUTCDate(1);
-    start.setUTCHours(0, 0, 0, 0);
+    const { start, end } = utcMonthWindow();
     const row = await env.DB.prepare(
-      'SELECT COALESCE(SUM(cost_usd), 0) AS used FROM budget_ledger WHERE user_id = ? AND occurred_at >= ?'
-    ).bind(userId, start.toISOString()).first<{ used: number }>();
+      'SELECT COALESCE(SUM(cost_usd), 0) AS used FROM budget_ledger WHERE user_id = ? AND occurred_at >= ? AND occurred_at < ?'
+    ).bind(userId, start, end).first<{ used: number }>();
     return { usedUsd: Number(row?.used || 0), available: true };
   } catch {
     return { usedUsd: 0, available: false };
@@ -342,20 +340,25 @@ async function monthUsage(env: Env, userId: string): Promise<BudgetSnapshot> {
 async function reserveBudget(env: Env, userId: string, provider: string, operation: string, amountUsd: number, effectiveLimit: number) {
   if (amountUsd <= 0) return null;
   const id = crypto.randomUUID();
-  const start = new Date();
-  start.setUTCDate(1);
-  start.setUTCHours(0, 0, 0, 0);
+  const { start, end } = utcMonthWindow();
   const now = new Date().toISOString();
   try {
     const result = await env.DB.prepare(
       `INSERT INTO budget_ledger (id, user_id, provider, operation, cost_usd, input_units, output_units, cache_hit, occurred_at)
        SELECT ?, ?, ?, ?, ?, 0, 0, 0, ?
-       WHERE COALESCE((SELECT SUM(cost_usd) FROM budget_ledger WHERE user_id = ? AND occurred_at >= ?), 0) + ? <= ?`
-    ).bind(id, userId, provider, operation, amountUsd, now, userId, start.toISOString(), amountUsd, effectiveLimit).run();
+       WHERE COALESCE((SELECT SUM(cost_usd) FROM budget_ledger WHERE user_id = ? AND occurred_at >= ? AND occurred_at < ?), 0) + ? <= ?`
+    ).bind(id, userId, provider, operation, amountUsd, now, userId, start, end, amountUsd, effectiveLimit).run();
     return result.meta.changes > 0 ? id : null;
   } catch {
     return null;
   }
+}
+
+function utcMonthWindow() {
+  const now = new Date();
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  return { start: start.toISOString(), end: end.toISOString() };
 }
 
 async function finalizeReservation(env: Env, reservationId: string, operation: string, actualCostUsd: number, usage?: Usage) {
