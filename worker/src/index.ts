@@ -165,13 +165,15 @@ export default {
         }
 
         try {
+          // fetchXProfiles validates raw identity/schema/count coherence against the exact
+          // requested handle set before this conservative reservation is ever shrunk.
           const profiles = await fetchXProfiles(usernames, env.X_BEARER_TOKEN);
           const costUsd = profiles.length * unitCost;
           await finalizeReservation(env, reservationId, 'user_read', costUsd, { prompt_tokens: profiles.length });
           return json({ enabled: true, costUsd, profiles }, 200, cors);
         } catch (error) {
           // The request may already have reached X and become billable before a network,
-          // response, or parsing failure surfaced. Keep the conservative reservation.
+          // response, validation, or parsing failure surfaced. Keep the conservative reservation.
           await markReservationUncertain(env, reservationId, 'user_read_uncertain');
           throw error;
         }
@@ -307,9 +309,27 @@ async function fetchXProfiles(usernames: string[], bearerToken: string) {
     headers: { authorization: `Bearer ${bearerToken}` },
   }, 30_000, 'X profile enrichment');
   if (!response.ok) throw new Error(`X API returned ${response.status}`);
-  const data = await response.json().catch(() => null) as { data?: XUser[]; errors?: unknown[] } | null;
-  if (!data || typeof data !== 'object') throw new Error('X API returned an empty or invalid JSON response');
-  return (data.data || []).map((profile) => ({
+  const payload = await response.json().catch(() => null) as unknown;
+  if (!isRecord(payload)) throw new Error('X API returned an empty or invalid JSON response');
+  if (payload.data != null && !Array.isArray(payload.data)) throw new Error('X API returned malformed profile data');
+  const rawProfiles = (payload.data || []) as unknown[];
+  if (rawProfiles.length > usernames.length) throw new Error('X API returned more profiles than requested');
+
+  const requested = new Set(usernames.map((username) => username.toLowerCase()));
+  const seenIds = new Set<string>();
+  const seenUsernames = new Set<string>();
+  const profiles: XUser[] = [];
+  for (const raw of rawProfiles) {
+    if (!validRawXProfile(raw)) throw new Error('X API returned a malformed profile');
+    const username = raw.username.toLowerCase();
+    if (!requested.has(username)) throw new Error('X API returned an unrequested profile');
+    if (seenIds.has(raw.id) || seenUsernames.has(username)) throw new Error('X API returned duplicate profile identity');
+    seenIds.add(raw.id);
+    seenUsernames.add(username);
+    profiles.push(raw);
+  }
+
+  return profiles.map((profile) => ({
     id: profile.id,
     name: profile.name,
     username: profile.username,
@@ -323,6 +343,25 @@ async function fetchXProfiles(usernames: string[], bearerToken: string) {
       listed: profile.public_metrics?.listed_count || 0,
     },
   }));
+}
+
+function validRawXProfile(value: unknown): value is XUser {
+  if (!isRecord(value)
+    || typeof value.id !== 'string'
+    || !/^\d{1,30}$/.test(value.id)
+    || typeof value.username !== 'string'
+    || !/^[A-Za-z0-9_]{1,15}$/.test(value.username)
+    || typeof value.name !== 'string'
+    || value.name.length > 300
+    || (value.description != null && (typeof value.description !== 'string' || value.description.length > 5000))
+    || (value.verified != null && typeof value.verified !== 'boolean')
+    || (value.created_at != null && (typeof value.created_at !== 'string' || !validPastishIso(value.created_at)))) return false;
+  if (value.public_metrics == null) return true;
+  return isRecord(value.public_metrics)
+    && optionalNonNegativeFinite(value.public_metrics.followers_count)
+    && optionalNonNegativeFinite(value.public_metrics.following_count)
+    && optionalNonNegativeFinite(value.public_metrics.tweet_count)
+    && optionalNonNegativeFinite(value.public_metrics.listed_count);
 }
 
 async function monthUsage(env: Env, userId: string): Promise<BudgetSnapshot> {
@@ -612,4 +651,17 @@ function localRank(mission: string, candidates: CandidateInput[]) {
 
 function tokenize(value: string) {
   return [...new Set(value.toLowerCase().split(/[\s、。,.!！?？/|#:_-]+/).map((part) => part.trim()).filter((part) => part.length >= 2))];
+}
+
+function validPastishIso(value: string) {
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) && time <= Date.now() + 5 * 60 * 1000;
+}
+
+function optionalNonNegativeFinite(value: unknown) {
+  return value == null || (typeof value === 'number' && Number.isFinite(value) && value >= 0);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
