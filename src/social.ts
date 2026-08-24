@@ -16,7 +16,30 @@ export function openCandidate(candidate: Candidate) {
 }
 
 export async function copyDraft(text: string) {
-  await navigator.clipboard.writeText(text);
+  const button = document.activeElement instanceof HTMLButtonElement ? document.activeElement : null;
+  const originalLabel = button?.textContent || 'コピー';
+  try {
+    await navigator.clipboard.writeText(text);
+    showCopyFeedback(button, originalLabel, 'コピーしました', 'success');
+  } catch {
+    showCopyFeedback(button, originalLabel, 'コピーできませんでした', 'error');
+  }
+}
+
+function showCopyFeedback(button: HTMLButtonElement | null, originalLabel: string, message: string, state: 'success' | 'error') {
+  if (!button || !button.isConnected) return;
+  const generation = String(Date.now());
+  button.dataset.copyGeneration = generation;
+  button.dataset.copyState = state;
+  button.textContent = message;
+  button.setAttribute('aria-live', 'polite');
+  window.setTimeout(() => {
+    if (!button.isConnected || button.dataset.copyGeneration !== generation) return;
+    button.textContent = originalLabel;
+    delete button.dataset.copyGeneration;
+    delete button.dataset.copyState;
+    button.removeAttribute('aria-live');
+  }, 1_800);
 }
 
 export function platformLabel(platform: Candidate['platform']) {
