@@ -183,7 +183,7 @@ async function loadFreshCache(env: InstagramOwnedEnv, userId: string, force: boo
     const syncedAtMs = new Date(row.synced_at).getTime();
     if (!Number.isFinite(syncedAtMs) || syncedAtMs > Date.now() + 60_000 || Date.now() - syncedAtMs > CACHE_TTL_MS) return null;
     const snapshot = JSON.parse(row.snapshot_json) as unknown;
-    if (!validInstagramSnapshot(snapshot, expectedAccountId)) {
+    if (!isRecord(snapshot) || snapshot.accountId !== expectedAccountId || !validInstagramSnapshot(snapshot, expectedAccountId)) {
       await deleteCache(env, userId);
       return null;
     }
