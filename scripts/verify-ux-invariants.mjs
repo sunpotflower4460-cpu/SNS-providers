@@ -5,6 +5,7 @@ const daily = await readFile(new URL('../src/DailyQueue.tsx', import.meta.url), 
 const backup = await readFile(new URL('../src/BackupControls.tsx', import.meta.url), 'utf8');
 const social = await readFile(new URL('../src/social.ts', import.meta.url), 'utf8');
 const ux = await readFile(new URL('../src/ux.css', import.meta.url), 'utf8');
+const devicePolish = await readFile(new URL('../src/devicePolish.css', import.meta.url), 'utf8');
 
 function requireAll(source, fragments, message) {
   if (!fragments.every((fragment) => source.includes(fragment))) throw new Error(message);
@@ -20,18 +21,22 @@ requireAll(app, [
 ], 'Main navigation can regress to mixed-language or lose current-page semantics.');
 
 requireAll(daily, [
-  '上から順に進めればOK',
+  'まず、この1件から',
+  '次にやること',
   'next-action-card',
   'next-action-cta',
+  'nextActionCta(first.action, firstCandidate)',
   'その次',
-], 'Today no longer presents one clear next action before secondary queue items.');
+], 'Today no longer presents one clear, action-specific next step before secondary queue items.');
 
 requireAll(daily, [
   'activeCandidateCount === 0',
   'まず、つながる候補を見つけましょう',
+  'completedToday',
+  '今日のおすすめは完了です',
+  '今は実行できる候補がありません',
   'onOpenDiscover',
-  '候補を探す',
-], 'First-use Today can again look complete or distract from the required candidate-discovery step.');
+], 'Today empty states can again confuse first use, completed work, and insufficient actionable evidence.');
 
 requireAll(app, [
   "const hasCandidates = state.candidates.some((candidate) => !candidate.skipped);",
@@ -82,4 +87,13 @@ requireAll(ux, [
   '.candidate-details',
 ], 'Clarity/touch-target styling can regress below the intended hierarchy.');
 
-console.log('UX invariants OK: Japanese primary navigation, truthful first-use guidance, one-next-action Today flow, progressive disclosure, action-specific outcomes, advanced-settings grouping, exact actionable handoff, and touch-target hierarchy are preserved.');
+requireAll(devicePolish, [
+  '.status-line i',
+  'overflow-wrap: anywhere;',
+  '.insight-card > div:last-child > span',
+  'max-height: min(88dvh, 720px);',
+  'overscroll-behavior: contain;',
+  '@media (orientation: landscape) and (max-height: 600px)',
+], 'Real-device overflow, result-sheet viewport safety, neutral status semantics, or Japanese-only insight presentation regressed.');
+
+console.log('UX invariants OK: Japanese primary navigation, truthful first-use/completion states, action-specific one-next-step Today flow, progressive disclosure, action-specific outcomes, advanced-settings grouping, exact actionable handoff, touch-target hierarchy, and real-device overflow/sheet safety are preserved.');
