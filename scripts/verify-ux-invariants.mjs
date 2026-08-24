@@ -6,8 +6,11 @@ const backup = await readFile(new URL('../src/BackupControls.tsx', import.meta.u
 const social = await readFile(new URL('../src/social.ts', import.meta.url), 'utf8');
 const dialogBehavior = await readFile(new URL('../src/dialogBehavior.ts', import.meta.url), 'utf8');
 const main = await readFile(new URL('../src/main.tsx', import.meta.url), 'utf8');
+const syncControls = await readFile(new URL('../src/SyncControls.tsx', import.meta.url), 'utf8');
+const workloadControls = await readFile(new URL('../src/WorkloadControls.tsx', import.meta.url), 'utf8');
 const ux = await readFile(new URL('../src/ux.css', import.meta.url), 'utf8');
 const devicePolish = await readFile(new URL('../src/devicePolish.css', import.meta.url), 'utf8');
+const accessibility = await readFile(new URL('../src/accessibility.css', import.meta.url), 'utf8');
 const syncCss = await readFile(new URL('../src/sync.css', import.meta.url), 'utf8');
 const workloadCss = await readFile(new URL('../src/workload.css', import.meta.url), 'utf8');
 const xAccountCss = await readFile(new URL('../src/xAccount.css', import.meta.url), 'utf8');
@@ -127,6 +130,21 @@ requireAll(backup, [
   'バックアップ',
 ], 'Advanced settings can regress to an always-expanded wall of controls.');
 
+requireAll(workloadControls, [
+  'まずは合計だけ決めればOKです',
+  'おすすめの判断材料を見る',
+  '<details className="workload-breakdown">',
+  '内訳を細かく調整',
+  '候補が減ったら自動で補う',
+], 'Workload settings can regress to exposing recommendation internals and every category slider at once.');
+
+requireAll(syncControls, [
+  'const [showToken, setShowToken] = useState(false);',
+  "type={showToken ? 'text' : 'password'}",
+  "aria-label={showToken ? '個人管理キーを隠す' : '個人管理キーを表示'}",
+  'aria-live="polite"',
+], 'Cloud-sync key entry can regress to unverifiable masked input or silent operation status.');
+
 requireAll(ux, [
   '.primary-button,',
   'min-height: 48px;',
@@ -149,18 +167,32 @@ requireAll(devicePolish, [
 ], 'Real-device overflow, progressive reveal, copy feedback styling, result-sheet safety, neutral status semantics, or Japanese insight presentation regressed.');
 
 requireAll(syncCss, [
+  '.secret-field',
+  '.secret-field button[aria-pressed="true"]',
   '.sync-footer small',
   'font-size: 10px;',
   '@media (max-width: 520px)',
   '.sync-actions { grid-template-columns: 1fr; }',
-], 'Cloud-sync details can regress to tiny text or cramped two-column phone actions.');
+], 'Cloud-sync details can regress to hidden-input friction, tiny text, or cramped two-column phone actions.');
 
 requireAll(workloadCss, [
-  '.workload-advisor p',
-  'font-size: 11px;',
+  '.workload-details',
+  '.workload-breakdown',
+  '.workload-breakdown-body',
   '.auto-replenish-toggle input { width: 22px; height: 22px;',
   '.workload-warning',
-], 'Advanced workload controls can regress to demo-sized labels or undersized toggles.');
+], 'Advanced workload controls can regress to an undifferentiated wall of controls or undersized toggles.');
+
+requireAll(accessibility, [
+  'scroll-margin-block: 110px;',
+  '@media (max-width: 640px)',
+  'font-size: 16px !important;',
+  'input[type="range"]::-webkit-slider-thumb',
+  'width: 28px;',
+  '@media (prefers-reduced-motion: reduce)',
+  '@media (prefers-contrast: more)',
+  '@media (forced-colors: active)',
+], 'Mobile keyboard ergonomics, slider touch size, reduced motion, or contrast accessibility regressed.');
 
 for (const [name, source] of [
   ['sync', syncCss],
@@ -173,4 +205,4 @@ for (const [name, source] of [
   }
 }
 
-console.log('UX invariants OK: Japanese navigation, truthful Today states, action-specific next steps, progressive candidate reveal, accessible selection states, action-specific outcomes, keyboard-safe dialogs, clipboard feedback, urgent relation ordering, save feedback, truthful budget display, readable advanced settings, and real-device viewport safety are preserved.');
+console.log('UX invariants OK: Japanese navigation, truthful Today states, action-specific next steps, progressive candidate reveal, accessible selection states, action-specific outcomes, keyboard-safe dialogs, clipboard feedback, urgent relation ordering, save feedback, truthful budget display, progressive workload tuning, verifiable sync-key entry, mobile input ergonomics, readable advanced settings, and real-device viewport safety are preserved.');
