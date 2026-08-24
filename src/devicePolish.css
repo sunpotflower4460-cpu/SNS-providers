@@ -44,6 +44,19 @@ body,
   white-space: nowrap;
 }
 
+.field-title span {
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.stage-pill {
+  font-size: 10px;
+}
+
+.relation-score small {
+  font-size: 9px;
+}
+
 .candidate-actions button,
 .discovery-button,
 .next-action-card,
