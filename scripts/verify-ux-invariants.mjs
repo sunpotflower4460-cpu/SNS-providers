@@ -6,6 +6,10 @@ const backup = await readFile(new URL('../src/BackupControls.tsx', import.meta.u
 const social = await readFile(new URL('../src/social.ts', import.meta.url), 'utf8');
 const ux = await readFile(new URL('../src/ux.css', import.meta.url), 'utf8');
 const devicePolish = await readFile(new URL('../src/devicePolish.css', import.meta.url), 'utf8');
+const syncCss = await readFile(new URL('../src/sync.css', import.meta.url), 'utf8');
+const workloadCss = await readFile(new URL('../src/workload.css', import.meta.url), 'utf8');
+const xAccountCss = await readFile(new URL('../src/xAccount.css', import.meta.url), 'utf8');
+const instagramCss = await readFile(new URL('../src/instagramAccount.css', import.meta.url), 'utf8');
 
 function requireAll(source, fragments, message) {
   if (!fragments.every((fragment) => source.includes(fragment))) throw new Error(message);
@@ -96,4 +100,29 @@ requireAll(devicePolish, [
   '@media (orientation: landscape) and (max-height: 600px)',
 ], 'Real-device overflow, result-sheet viewport safety, neutral status semantics, or Japanese-only insight presentation regressed.');
 
-console.log('UX invariants OK: Japanese primary navigation, truthful first-use/completion states, action-specific one-next-step Today flow, progressive disclosure, action-specific outcomes, advanced-settings grouping, exact actionable handoff, touch-target hierarchy, and real-device overflow/sheet safety are preserved.');
+requireAll(syncCss, [
+  '.sync-footer small',
+  'font-size: 10px;',
+  '@media (max-width: 520px)',
+  '.sync-actions { grid-template-columns: 1fr; }',
+], 'Cloud-sync details can regress to tiny text or cramped two-column phone actions.');
+
+requireAll(workloadCss, [
+  '.workload-advisor p',
+  'font-size: 11px;',
+  '.auto-replenish-toggle input { width: 22px; height: 22px;',
+  '.workload-warning',
+], 'Advanced workload controls can regress to demo-sized labels or undersized toggles.');
+
+for (const [name, source] of [
+  ['sync', syncCss],
+  ['workload', workloadCss],
+  ['X connection', xAccountCss],
+  ['Instagram connection', instagramCss],
+]) {
+  if (source.includes('font-size: 7px') || source.includes('font-size: 8px')) {
+    throw new Error(`${name} advanced settings regressed to unreadably small 7–8px text.`);
+  }
+}
+
+console.log('UX invariants OK: Japanese primary navigation, truthful first-use/completion states, action-specific one-next-step Today flow, progressive disclosure, action-specific outcomes, advanced-settings grouping, exact actionable handoff, touch-target hierarchy, real-device overflow/sheet safety, and readable advanced settings are preserved.');
