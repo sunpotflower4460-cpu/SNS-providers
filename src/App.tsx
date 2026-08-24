@@ -8,7 +8,7 @@ import { mergeDiscoveredProfiles } from './discoveryStore';
 import { resolveVisibleResult } from './resultResolution';
 import { addCandidateFromReference, applyRankResults, applySelfAnalysis, applyXProfiles, loadState, saveState, setFollowBackStatus, syncBudget, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
 import { copyDraft, openCandidate, platformLabel } from './social';
-import type { AppState, AppStateUpdater, Candidate, Mission, Platform } from './types';
+import type { AppState, AppStateUpdater, Candidate, Platform } from './types';
 import { useLocalDayKey } from './useLocalDay';
 
 type Tab = 'today' | 'discover' | 'relations' | 'me' | 'settings';
@@ -337,7 +337,7 @@ function Today({ state, doneToday, onOpen, onTab }: {
   const summary = queueSummary(queue);
   const configuredLimit = Math.max(1, state.relationshipPolicy.dailyQueueLimit ?? 30);
   const plannedTotal = Math.min(configuredLimit, doneToday + queue.length);
-  const progress = plannedTotal > 0 ? Math.min(100, Math.round((doneToday / plannedTotal) * 100)) : 100;
+  const progress = plannedTotal > 0 ? Math.min(100, Math.round((doneToday / plannedTotal) * 100)) : 0;
 
   return <>
     <section className="mission-card">
@@ -357,7 +357,7 @@ function Today({ state, doneToday, onOpen, onTab }: {
       </div>
     </section>
 
-    <DailyQueue state={state} onOpenCandidate={onOpen} onOpenMe={() => onTab('me')} />
+    <DailyQueue state={state} onOpenCandidate={onOpen} onOpenMe={() => onTab('me')} onOpenDiscover={() => onTab('discover')} />
 
     {state.insights[0] && <section className="coach-card">
       <div className="coach-icon">✦</div>
