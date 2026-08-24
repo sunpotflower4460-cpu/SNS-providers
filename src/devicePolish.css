@@ -72,6 +72,18 @@ body,
   white-space: normal;
 }
 
+button[data-copy-state="success"] {
+  color: #bdf0df !important;
+  border-color: rgba(114, 223, 189, .2) !important;
+  background: rgba(114, 223, 189, .09) !important;
+}
+
+button[data-copy-state="error"] {
+  color: #ffc0c9 !important;
+  border-color: rgba(255, 154, 168, .22) !important;
+  background: rgba(255, 154, 168, .08) !important;
+}
+
 .load-more-button {
   width: 100%;
   display: grid;
