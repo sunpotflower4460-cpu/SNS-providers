@@ -50,16 +50,25 @@ export default function WorkloadControls({ state, onChange }: Props) {
 
   return <section className="form-card workload-card">
     <div className="field-title">
-      <div><strong>1日にやる量</strong><span>無理なく続けられる件数に調整します</span></div>
-      <b>{values.total}</b>
+      <div><strong>1日にやる量</strong><span>まずは合計だけ決めればOKです</span></div>
+      <b>{values.total}件</b>
     </div>
 
     <div className="workload-advisor">
       <div><span>おすすめ</span><strong>{suggestion.total}件 / 日</strong></div>
-      <p>相性75以上が{highMatch}人、そのうち今すぐ実行先まで決まっている候補が{supply.actionable}件あります。今月の予算残りは${remainingBudget.toFixed(2)}です。</p>
-      {shortage > 0 && <p><strong>今の設定に対して候補が{shortage}件足りません。</strong> 自動補充がONなら、Todayの候補が少なくなったときだけ無料の公開情報探索と無料評価を試します。</p>}
-      {supply.reviewOnly > 0 && <p>{supply.reviewOnly}件はまだ判断材料が足りないため、Todayへ無理に出しません。具体的な投稿や関係情報が取れてから行動候補にします。</p>}
+      <p>今すぐ行動先まで決まっている候補は{supply.actionable}件です。無理なく続けられる量を、今ある候補から自動で提案しています。</p>
+      {shortage > 0 && <p><strong>今の設定だと候補が{shortage}件ほど不足しています。</strong> 自動補充がONなら、候補が減ったときだけ無料で新しい候補を探します。</p>}
       <button className="secondary-button" onClick={() => apply(suggestion)}>おすすめ件数にする</button>
+
+      <details className="workload-details">
+        <summary>おすすめの判断材料を見る</summary>
+        <div>
+          <span>目的との相性が高い候補 <b>{highMatch}人</b></span>
+          <span>今すぐ実行できる候補 <b>{supply.actionable}件</b></span>
+          <span>判断材料を待っている候補 <b>{supply.reviewOnly}件</b></span>
+          <span>今月の予算残り <b>${remainingBudget.toFixed(2)}</b></span>
+        </div>
+      </details>
     </div>
 
     <label className="auto-replenish-toggle">
@@ -67,14 +76,19 @@ export default function WorkloadControls({ state, onChange }: Props) {
       <input type="checkbox" checked={autoReplenishEnabled} onChange={(event) => setAutoReplenish(event.target.checked)} />
     </label>
 
-    <WorkloadSlider label="1日の最大件数" value={values.total} min={1} max={150} hint="Todayに出す行動の合計" onChange={(total) => apply({ ...values, total })} />
-    <WorkloadSlider label="新しくつながる" value={values.connect} min={0} max={120} hint="フォロー候補" onChange={(connect) => apply({ ...values, connect })} />
-    <WorkloadSlider label="会話する" value={values.conversation} min={0} max={30} hint="返信・DM" onChange={(conversation) => apply({ ...values, conversation })} />
-    <WorkloadSlider label="軽く反応する" value={values.light} min={0} max={30} hint="対象投稿が決まっているいいね" onChange={(light) => apply({ ...values, light })} />
-    <WorkloadSlider label="フォローを見直す" value={values.cleanup} min={0} max={30} hint="継続するか確認する相手" onChange={(cleanup) => apply({ ...values, cleanup })} />
-    <WorkloadSlider label="自分の発信を整える" value={values.self} min={0} max={5} hint="プロフィール・投稿の改善" onChange={(self) => apply({ ...values, self })} />
+    <WorkloadSlider label="1日の合計" value={values.total} min={1} max={150} hint="Todayに出す行動の最大数" onChange={(total) => apply({ ...values, total })} />
 
-    <small className="workload-warning">ここで決めるのは「SNSで許される操作回数」ではなく、あなた自身が1日に無理なく確認できる量です。実際のフォロー・いいね・返信は公式SNSで行います。</small>
+    <details className="workload-breakdown">
+      <summary><span><strong>内訳を細かく調整</strong><small>必要なときだけ変更</small></span><b>⌄</b></summary>
+      <div className="workload-breakdown-body">
+        <WorkloadSlider label="新しくつながる" value={values.connect} min={0} max={120} hint="フォロー候補" onChange={(connect) => apply({ ...values, connect })} />
+        <WorkloadSlider label="会話する" value={values.conversation} min={0} max={30} hint="返信・DM" onChange={(conversation) => apply({ ...values, conversation })} />
+        <WorkloadSlider label="軽く反応する" value={values.light} min={0} max={30} hint="対象投稿が決まっているいいね" onChange={(light) => apply({ ...values, light })} />
+        <WorkloadSlider label="フォローを見直す" value={values.cleanup} min={0} max={30} hint="継続するか確認する相手" onChange={(cleanup) => apply({ ...values, cleanup })} />
+        <WorkloadSlider label="自分の発信を整える" value={values.self} min={0} max={5} hint="プロフィール・投稿の改善" onChange={(self) => apply({ ...values, self })} />
+        <small className="workload-warning">ここで決めるのはSNSの操作上限ではなく、あなたが1日に確認する量です。実際のフォロー・いいね・返信は公式SNSで行います。</small>
+      </div>
+    </details>
 
     {/* Regression markers: 実行先まで決まっている候補 / reviewだけの候補は実行可能数に含めていません / 無料Tavily探索＋無料/ローカル評価 */}
   </section>;
