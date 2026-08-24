@@ -333,10 +333,12 @@ function BudgetPill({ state }: { state: AppState }) {
 function Today({ state, doneToday, onOpen, onTab }: {
   state: AppState; doneToday: number; onOpen: (c: Candidate) => void; onTab: (tab: Tab) => void;
 }) {
-  const queue = buildDailyQueue(state);
+  const rawQueue = buildDailyQueue(state);
+  const hasCandidates = state.candidates.some((candidate) => !candidate.skipped);
+  const queue = hasCandidates ? rawQueue : [];
   const summary = queueSummary(queue);
   const configuredLimit = Math.max(1, state.relationshipPolicy.dailyQueueLimit ?? 30);
-  const plannedTotal = Math.min(configuredLimit, doneToday + queue.length);
+  const plannedTotal = hasCandidates ? Math.min(configuredLimit, doneToday + queue.length) : 0;
   const progress = plannedTotal > 0 ? Math.min(100, Math.round((doneToday / plannedTotal) * 100)) : 0;
 
   return <>
@@ -347,7 +349,7 @@ function Today({ state, doneToday, onOpen, onTab }: {
       </div>
       <h1>{state.mission.primaryGoal}</h1>
       <p>{state.mission.text}</p>
-      <div className="mission-progress-head"><span>今日の進捗</span><strong>{doneToday} / {plannedTotal}</strong></div>
+      <div className="mission-progress-head"><span>今日の進捗</span><strong>{hasCandidates ? `${doneToday} / ${plannedTotal}` : '準備前'}</strong></div>
       <div className="mission-progress" aria-label={`今日の進捗 ${progress}%`}><span style={{ width: `${progress}%` }} /></div>
       <div className="today-summary" aria-label="今日の残り内訳">
         <span><b>{queue.length}</b>残り</span>
