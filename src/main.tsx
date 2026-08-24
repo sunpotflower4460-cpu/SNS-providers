@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import { installDialogBehavior } from './dialogBehavior';
 import './styles.css';
 import './integration.css';
 import './ux.css';
@@ -12,6 +13,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <App />
   </React.StrictMode>,
 );
+
+installDialogBehavior();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
