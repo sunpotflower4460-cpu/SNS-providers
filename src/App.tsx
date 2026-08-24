@@ -44,6 +44,12 @@ const actionLabel: Record<Candidate['recommendedAction'], string> = {
   unfollow_review: 'フォロー整理',
 };
 
+const insightCategoryLabel = {
+  profile: 'プロフィール',
+  content: '投稿',
+  network: 'つながり',
+} as const;
+
 function App() {
   const [state, setState] = useState<AppState>(() => loadState());
   const [tab, setTab] = useState<Tab>('today');
@@ -322,11 +328,12 @@ function App() {
 }
 
 function BudgetPill({ state }: { state: AppState }) {
-  const free = state.budget.monthlyLimitUsd === 0;
+  const freeOnly = state.budget.monthlyLimitUsd === 0;
+  const hasSpend = state.budget.usedUsd > 0.00001;
   return <div className="budget-pill" title="今月のAI / API利用額">
     <small>今月</small>
-    <strong>{free ? '無料運用' : `$${state.budget.usedUsd.toFixed(2)}`}</strong>
-    {!free && <span>/ ${state.budget.monthlyLimitUsd.toFixed(0)}</span>}
+    <strong>{freeOnly && !hasSpend ? '無料運用' : `$${state.budget.usedUsd.toFixed(2)}`}</strong>
+    {freeOnly ? (hasSpend && <span>有料処理OFF</span>) : <span>/ ${state.budget.monthlyLimitUsd.toFixed(0)}</span>}
   </div>;
 }
 
@@ -385,7 +392,10 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
   const [filter, setFilter] = useState<'all' | 'x' | 'instagram'>('all');
   const [platform, setPlatform] = useState<Platform>('instagram');
   const [reference, setReference] = useState('');
+  const [visibleLimit, setVisibleLimit] = useState(12);
   const visible = candidates.filter((candidate) => filter === 'all' || candidate.platform === filter);
+  const displayed = visible.slice(0, visibleLimit);
+  const hiddenCount = Math.max(0, visible.length - displayed.length);
   const now = Date.now();
   const matchesFilter = (candidate: Candidate) => filter === 'all' || candidate.platform === filter;
   const snoozedCount = state.candidates.filter((candidate) => {
@@ -394,6 +404,8 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
     return Number.isFinite(until) && until > now;
   }).length;
   const storedCount = state.candidates.filter((candidate) => !candidate.skipped && matchesFilter(candidate)).length;
+
+  useEffect(() => setVisibleLimit(12), [filter]);
 
   function addReference(value = reference) {
     if (!value.trim()) return;
@@ -440,9 +452,9 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
       <details className="disclosure-card">
         <summary><span><strong>自分で候補を追加</strong><small>URLや @username が分かっているとき</small></span><b>＋</b></summary>
         <div className="disclosure-body">
-          <div className="mini-segmented">
-            <button className={platform === 'instagram' ? 'active' : ''} onClick={() => setPlatform('instagram')}>Instagram</button>
-            <button className={platform === 'x' ? 'active' : ''} onClick={() => setPlatform('x')}>X</button>
+          <div className="mini-segmented" role="group" aria-label="追加するSNS">
+            <button aria-pressed={platform === 'instagram'} className={platform === 'instagram' ? 'active' : ''} onClick={() => setPlatform('instagram')}>Instagram</button>
+            <button aria-pressed={platform === 'x'} className={platform === 'x' ? 'active' : ''} onClick={() => setPlatform('x')}>X</button>
           </div>
           <div className="import-row"><input value={reference} onChange={(event) => setReference(event.target.value)} placeholder="プロフィールURL または @username" /><button onClick={() => addReference()}>追加</button></div>
           <button className="secondary-button full" onClick={addFromClipboard}>クリップボードから読み取る</button>
@@ -461,11 +473,16 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
 
     <div className="candidate-list-head">
       <div><span className="section-kicker">候補</span><strong>{visible.length}人</strong></div>
-      <div className="segmented">
-        {(['all', 'x', 'instagram'] as const).map((item) => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}>{item === 'all' ? 'すべて' : item === 'x' ? 'X' : 'Instagram'}</button>)}
+      <div className="segmented" role="group" aria-label="候補のSNS絞り込み">
+        {(['all', 'x', 'instagram'] as const).map((item) => <button key={item} aria-pressed={filter === item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}>{item === 'all' ? 'すべて' : item === 'x' ? 'X' : 'Instagram'}</button>)}
       </div>
     </div>
-    {visible.length > 0 ? <div className="card-stack">{visible.map((candidate) => <CandidateCard key={candidate.id} candidate={candidate} onOpen={onOpen} onLater={snoozeCandidate} />)}</div> : <DiscoverEmptyState filter={filter} storedCount={storedCount} snoozedCount={snoozedCount} />}
+    {visible.length > 0 ? <>
+      <div className="card-stack">{displayed.map((candidate) => <CandidateCard key={candidate.id} candidate={candidate} onOpen={onOpen} onLater={snoozeCandidate} />)}</div>
+      {hiddenCount > 0 && <button className="load-more-button" onClick={() => setVisibleLimit((current) => Math.min(visible.length, current + 12))}>
+        <span>次の{Math.min(12, hiddenCount)}人を見る</span><small>{displayed.length} / {visible.length}人を表示中</small>
+      </button>}
+    </> : <DiscoverEmptyState filter={filter} storedCount={storedCount} snoozedCount={snoozedCount} />}
   </>;
 }
 
@@ -511,7 +528,12 @@ function CandidateCard({ candidate, onOpen, onLater, featured = false }: { candi
 }
 
 function Relations({ state, onOpen, onChange }: { state: AppState; onOpen: (c: Candidate) => void; onChange: AppStateUpdater }) {
-  const following = state.candidates.filter((candidate) => !candidate.skipped && candidate.stage !== 'discovered');
+  const following = state.candidates
+    .filter((candidate) => !candidate.skipped && candidate.stage !== 'discovered')
+    .sort((a, b) => {
+      const cleanupPriority = Number(b.recommendedAction === 'unfollow_review') - Number(a.recommendedAction === 'unfollow_review');
+      return cleanupPriority || b.relationshipScore - a.relationshipScore;
+    });
   const cleanup = following.filter((candidate) => candidate.recommendedAction === 'unfollow_review');
   return <>
     <PageHeading eyebrow="関係" title="つながった後を育てる" text="フォロー数ではなく、今どのくらい関係が深まっているかを記録します。" />
@@ -528,10 +550,10 @@ function Relations({ state, onOpen, onChange }: { state: AppState; onOpen: (c: C
         <div className="relation-score"><strong>{candidate.relationshipScore}</strong><small>関係スコア</small></div>
       </button>
       {candidate.strategy && <p className="relation-advice">{candidate.strategy}</p>}
-      <div className="followback-controls" role="group" aria-label={`${candidate.username} follow back status`}>
-        <button className={candidate.followBack === true ? 'active' : ''} onClick={() => onChange((current) => setFollowBackStatus(current, candidate.id, true))}>相互</button>
-        <button className={candidate.followBack === false ? 'active warn' : ''} onClick={() => onChange((current) => setFollowBackStatus(current, candidate.id, false))}>フォロバなし</button>
-        <button className={candidate.followBack == null ? 'active' : ''} onClick={() => onChange((current) => setFollowBackStatus(current, candidate.id, null))}>未確認</button>
+      <div className="followback-controls" role="group" aria-label={`${candidate.username} のフォローバック状態`}>
+        <button aria-pressed={candidate.followBack === true} className={candidate.followBack === true ? 'active' : ''} onClick={() => onChange((current) => setFollowBackStatus(current, candidate.id, true))}>相互</button>
+        <button aria-pressed={candidate.followBack === false} className={candidate.followBack === false ? 'active warn' : ''} onClick={() => onChange((current) => setFollowBackStatus(current, candidate.id, false))}>フォロバなし</button>
+        <button aria-pressed={candidate.followBack == null} className={candidate.followBack == null ? 'active' : ''} onClick={() => onChange((current) => setFollowBackStatus(current, candidate.id, null))}>未確認</button>
       </div>
     </article>)}</div> : <section className="empty-state"><div>◎</div><strong>関係の記録はまだありません</strong><p>Todayからフォローや交流を記録すると、ここに相手との現在地がまとまります。</p></section>}
   </>;
@@ -558,7 +580,7 @@ function Me({ state, onAnalyze, analyzing }: { state: AppState; onAnalyze: (prof
     </section>
     {state.selfProfile.strategy && <section className="coach-card self-result"><div className="coach-icon">↗</div><div><span className="section-kicker">次に直すこと</span><h3>目的へ近づく作戦</h3><p>{state.selfProfile.strategy}</p></div></section>}
     {state.selfProfile.profileRewrite && <section className="form-card rewrite-card"><div className="field-title"><div><strong>プロフィール改善案</strong><span>事実を足さず、初見で目的が伝わりやすい形</span></div><b>AI</b></div><p>{state.selfProfile.profileRewrite}</p><button className="secondary-button" onClick={() => copyDraft(state.selfProfile.profileRewrite!)}>改善案をコピー</button></section>}
-    {state.insights.length > 0 && <section className="insights-section"><div className="section-heading-simple"><span className="section-kicker">改善ポイント</span><h2>覚えておきたいこと</h2></div><div className="insight-list">{state.insights.map((insight) => <article className="insight-card" key={insight.id}><div className={`priority ${insight.priority}`} /><div><span>{insight.category.toUpperCase()}</span><strong>{insight.title}</strong><p>{insight.body}</p></div></article>)}</div></section>}
+    {state.insights.length > 0 && <section className="insights-section"><div className="section-heading-simple"><span className="section-kicker">改善ポイント</span><h2>覚えておきたいこと</h2></div><div className="insight-list">{state.insights.map((insight) => <article className="insight-card" key={insight.id}><div className={`priority ${insight.priority}`} /><div><span>{insightCategoryLabel[insight.category]}</span><strong>{insight.title}</strong><p>{insight.body}</p></div></article>)}</div></section>}
   </>;
 }
 
@@ -568,6 +590,7 @@ function Settings({ state, onChange }: { state: AppState; onChange: AppStateUpda
   const [communicationDNA, setCommunicationDNA] = useState(state.mission.communicationDNA);
   const [budget, setBudget] = useState(state.budget.monthlyLimitUsd);
   const [followBackDays, setFollowBackDays] = useState(state.relationshipPolicy.followBackReviewAfterDays);
+  const [saved, setSaved] = useState(false);
 
   useEffect(() => setMissionText(state.mission.text), [state.mission.text]);
   useEffect(() => setPrimaryGoal(state.mission.primaryGoal), [state.mission.primaryGoal]);
@@ -582,25 +605,30 @@ function Settings({ state, onChange }: { state: AppState; onChange: AppStateUpda
       next = updateRelationshipPolicy(next, { ...next.relationshipPolicy, followBackReviewAfterDays: Math.max(7, Math.min(90, Math.round(followBackDays || 30))) });
       return next;
     });
+    setSaved(true);
+  }
+
+  function markEdited() {
+    setSaved(false);
   }
 
   return <>
     <PageHeading eyebrow="設定" title="AIの判断軸を決める" text="普段触るのはここだけで十分です。接続や細かい調整は下の詳細設定へまとめています。" />
     <section className="form-card settings-primary-card">
       <div className="form-intro"><strong>目的と話し方</strong><p>ここが「誰を選ぶか」「何を勧めるか」の基準になります。</p></div>
-      <label>このアプリに任せたいこと<textarea value={missionText} onChange={(event) => setMissionText(event.target.value)} /></label>
-      <label>最優先ゴール<input value={primaryGoal} onChange={(event) => setPrimaryGoal(event.target.value)} /></label>
-      <label>あなたらしい話し方<textarea value={communicationDNA} onChange={(event) => setCommunicationDNA(event.target.value)} /></label>
+      <label>このアプリに任せたいこと<textarea value={missionText} onChange={(event) => { setMissionText(event.target.value); markEdited(); }} /></label>
+      <label>最優先ゴール<input value={primaryGoal} onChange={(event) => { setPrimaryGoal(event.target.value); markEdited(); }} /></label>
+      <label>あなたらしい話し方<textarea value={communicationDNA} onChange={(event) => { setCommunicationDNA(event.target.value); markEdited(); }} /></label>
 
       <details className="inline-disclosure">
         <summary><span><strong>予算と整理ルール</strong><small>必要なときだけ変更</small></span><b>⌄</b></summary>
         <div className="inline-disclosure-body">
-          <label>月間AI / API予算 <span className="inline-value">${budget.toFixed(2)}</span><input className="range" type="range" min="0" max="10" step="0.5" value={budget} onChange={(event) => setBudget(Number(event.target.value))} /></label>
-          <label>フォローバック整理を確認するまで <span className="inline-value">{followBackDays}日</span><input className="range" type="range" min="7" max="90" step="1" value={followBackDays} onChange={(event) => setFollowBackDays(Number(event.target.value))} /></label>
+          <label>月間AI / API予算 <span className="inline-value">${budget.toFixed(2)}</span><input className="range" type="range" min="0" max="10" step="0.5" value={budget} onChange={(event) => { setBudget(Number(event.target.value)); markEdited(); }} /></label>
+          <label>フォローバック整理を確認するまで <span className="inline-value">{followBackDays}日</span><input className="range" type="range" min="7" max="90" step="1" value={followBackDays} onChange={(event) => { setFollowBackDays(Number(event.target.value)); markEdited(); }} /></label>
           <div className="hard-limit-row"><span><strong>予算上限を超えない</strong><small>設定額を超える有料API処理は実行しません</small></span><b>ON</b></div>
         </div>
       </details>
-      <button className="primary-button" onClick={persist}>この設定を保存</button>
+      <button className="primary-button" onClick={persist} aria-live="polite">{saved ? '保存しました' : 'この設定を保存'}</button>
     </section>
     <BackupControls state={state} onRestore={onChange} />
   </>;
