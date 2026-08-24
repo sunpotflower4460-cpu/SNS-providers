@@ -2,7 +2,7 @@ import type { Candidate } from './types';
 
 export function openCandidate(candidate: Candidate) {
   const engagementUrl = safeEngagementUrl(candidate.platform, candidate.engagementUrl);
-  if (candidate.recommendedAction === 'reply' && engagementUrl) {
+  if ((candidate.recommendedAction === 'reply' || candidate.recommendedAction === 'like') && engagementUrl) {
     window.open(engagementUrl, '_blank', 'noopener,noreferrer');
     return;
   }
