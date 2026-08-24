@@ -4,6 +4,7 @@ import App from './App';
 import './styles.css';
 import './integration.css';
 import './ux.css';
+import './devicePolish.css';
 import './accessibility.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
