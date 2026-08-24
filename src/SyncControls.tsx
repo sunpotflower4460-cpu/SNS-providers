@@ -46,7 +46,7 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
     } catch (error) {
       setToken(previous);
       const message = error instanceof Error ? error.message : '個人管理キーを確認できませんでした';
-      setStatus(`${message} · 新しいキーは保存していません`);
+      setStatus(`${message} · 変更は保存していません`);
     } finally {
       setBusy(false);
     }
