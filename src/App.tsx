@@ -14,15 +14,34 @@ import { useLocalDayKey } from './useLocalDay';
 type Tab = 'today' | 'discover' | 'relations' | 'me' | 'settings';
 
 const tabs: { id: Tab; icon: string; label: string }[] = [
-  { id: 'today', icon: '⌂', label: 'Today' },
-  { id: 'discover', icon: '✦', label: 'Discover' },
-  { id: 'relations', icon: '◎', label: 'Relations' },
-  { id: 'me', icon: '◐', label: 'Me' },
-  { id: 'settings', icon: '⚙', label: 'Settings' },
+  { id: 'today', icon: '⌂', label: '今日' },
+  { id: 'discover', icon: '＋', label: '探す' },
+  { id: 'relations', icon: '◎', label: '関係' },
+  { id: 'me', icon: '◐', label: '自分' },
+  { id: 'settings', icon: '⚙', label: '設定' },
 ];
 
 const kindLabel: Record<Candidate['kind'], string> = {
   fan: 'ファン候補', artist: 'アーティスト仲間', creator: 'クリエイター', media: 'メディア', venue: '活動機会', other: '候補',
+};
+
+const stageLabel: Record<Candidate['stage'], string> = {
+  discovered: '未接触',
+  interested: '気になる',
+  following: 'フォロー中',
+  engaged: '接点あり',
+  recognized: '認識済み',
+  conversation: '会話中',
+  relationship: '関係あり',
+};
+
+const actionLabel: Record<Candidate['recommendedAction'], string> = {
+  follow: 'フォロー',
+  like: 'いいね',
+  reply: '返信',
+  dm: 'DM',
+  review: '確認',
+  unfollow_review: 'フォロー整理',
 };
 
 function App() {
@@ -273,10 +292,10 @@ function App() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <div className="brand-mark">S</div>
+        <div className="brand-mark" aria-hidden="true">S</div>
         <div className="topbar-copy">
           <strong>Social Mission</strong>
-          <span>{statusNote}</span>
+          <span className="status-line" title={statusNote}><i aria-hidden="true" />{statusNote}</span>
         </div>
         <BudgetPill state={state} />
       </header>
@@ -289,10 +308,10 @@ function App() {
         {tab === 'settings' && <Settings state={state} onChange={setState} />}
       </main>
 
-      <nav className="bottom-nav" aria-label="Main navigation">
+      <nav className="bottom-nav" aria-label="メインナビゲーション">
         {tabs.map((item) => (
-          <button key={item.id} className={tab === item.id ? 'nav-item active' : 'nav-item'} onClick={() => setTab(item.id)}>
-            <span>{item.icon}</span><small>{item.label}</small>
+          <button key={item.id} aria-current={tab === item.id ? 'page' : undefined} className={tab === item.id ? 'nav-item active' : 'nav-item'} onClick={() => setTab(item.id)}>
+            <span aria-hidden="true">{item.icon}</span><small>{item.label}</small>
           </button>
         ))}
       </nav>
@@ -303,8 +322,12 @@ function App() {
 }
 
 function BudgetPill({ state }: { state: AppState }) {
-  const pct = state.budget.monthlyLimitUsd > 0 ? Math.min(100, Math.round((state.budget.usedUsd / state.budget.monthlyLimitUsd) * 100)) : 0;
-  return <div className="budget-pill"><span>{state.budget.monthlyLimitUsd === 0 ? 'FREE' : `${pct}%`}</span><strong>${state.budget.usedUsd.toFixed(2)}</strong></div>;
+  const free = state.budget.monthlyLimitUsd === 0;
+  return <div className="budget-pill" title="今月のAI / API利用額">
+    <small>今月</small>
+    <strong>{free ? '無料運用' : `$${state.budget.usedUsd.toFixed(2)}`}</strong>
+    {!free && <span>/ ${state.budget.monthlyLimitUsd.toFixed(0)}</span>}
+  </div>;
 }
 
 function Today({ state, doneToday, onOpen, onTab }: {
@@ -318,20 +341,19 @@ function Today({ state, doneToday, onOpen, onTab }: {
 
   return <>
     <section className="mission-card">
-      <div className="eyebrow">YOUR MISSION</div>
+      <div className="mission-topline">
+        <span className="section-kicker">今日のゴール</span>
+        <button className="text-button" onClick={() => onTab('settings')}>目的を編集</button>
+      </div>
       <h1>{state.mission.primaryGoal}</h1>
       <p>{state.mission.text}</p>
-      <div className="mission-progress"><span style={{ width: `${progress}%` }} /></div>
-      <div className="progress-copy"><strong>{doneToday}</strong><span>/ {plannedTotal} actions today</span></div>
-    </section>
-
-    <section className="section-block">
-      <div className="section-title"><div><span className="eyebrow">TODAY</span><h2>今日、目的に近づく</h2></div><button className="text-button" onClick={() => onTab('discover')}>すべて見る</button></div>
-      <div className="metric-grid">
-        <Metric icon="＋" value={summary.connect} label="新しくつながる" />
-        <Metric icon="↗" value={summary.engage} label="会話・交流" />
-        <Metric icon="◎" value={summary.self} label="自分を改善" />
-        <Metric icon="−" value={summary.cleanup} label="フォロー整理" />
+      <div className="mission-progress-head"><span>今日の進捗</span><strong>{doneToday} / {plannedTotal}</strong></div>
+      <div className="mission-progress" aria-label={`今日の進捗 ${progress}%`}><span style={{ width: `${progress}%` }} /></div>
+      <div className="today-summary" aria-label="今日の残り内訳">
+        <span><b>{queue.length}</b>残り</span>
+        <span><b>{summary.connect}</b>新規</span>
+        <span><b>{summary.engage}</b>交流</span>
+        <span><b>{summary.cleanup}</b>整理</span>
       </div>
     </section>
 
@@ -339,14 +361,10 @@ function Today({ state, doneToday, onOpen, onTab }: {
 
     {state.insights[0] && <section className="coach-card">
       <div className="coach-icon">✦</div>
-      <div><span className="eyebrow">AI COACH</span><h3>{state.insights[0].title}</h3><p>{state.insights[0].body}</p></div>
-      <button onClick={() => onTab('me')}>見る</button>
+      <div><span className="section-kicker">AIからのヒント</span><h3>{state.insights[0].title}</h3><p>{state.insights[0].body}</p></div>
+      <button onClick={() => onTab('me')}>詳しく</button>
     </section>}
   </>;
-}
-
-function Metric({ icon, value, label }: { icon: string; value: number; label: string }) {
-  return <div className="metric-card"><span className="metric-icon">{icon}</span><strong>{value}</strong><small>{label}</small></div>;
 }
 
 function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, onEnrichX, discovering, ranking, enrichingX, apiNote }: {
@@ -400,25 +418,50 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
   }
 
   return <>
-    <PageHeading eyebrow="DISCOVER" title="今日会うべき人" text="数ではなく、Missionへの近さで並べています。" />
+    <PageHeading eyebrow="探す" title="つながる相手を見つける" text="基本は自動探索だけでOKです。見つかった候補はMissionとの相性順に並びます。" />
 
-    <section className="import-card">
-      <div className="import-head"><div><span className="eyebrow">ADD CANDIDATE</span><strong>AIに探させるか、見つけた人を1タップで追加</strong></div><span className="status-chip">{apiNote}</span></div>
-      <button className="discovery-button" disabled={discovering} onClick={onDiscover}><span>✦</span><strong>{discovering ? '無料探索中…' : 'Missionから無料で候補を探す'}</strong><small>Tavily無料モード · X/Instagram公開プロフィール候補</small></button>
-      <div className="mini-segmented">
-        <button className={platform === 'instagram' ? 'active' : ''} onClick={() => setPlatform('instagram')}>Instagram</button>
-        <button className={platform === 'x' ? 'active' : ''} onClick={() => setPlatform('x')}>X</button>
+    <section className="discover-primary-card">
+      <div className="discover-primary-copy">
+        <span className="section-kicker">おすすめ</span>
+        <h2>Missionから自動で探す</h2>
+        <p>XとInstagramの公開情報から、今の目的に合う相手を探します。最終フォローや返信は公式SNSであなたが行います。</p>
       </div>
-      <div className="import-row"><input value={reference} onChange={(event) => setReference(event.target.value)} placeholder="プロフィールURL または @username" /><button onClick={() => addReference()}>追加</button></div>
-      <div className="import-actions">
-        <button className="secondary-button" onClick={addFromClipboard}>クリップボードから追加</button>
-        <button className="secondary-button" disabled={enrichingX} onClick={onEnrichX}>{enrichingX ? 'X同期中…' : 'X公式情報を補完'}</button>
-        <button className="primary-button" disabled={ranking} onClick={onRerank}>{ranking ? 'AI評価中…' : 'AIで候補を再評価'}</button>
-      </div>
+      <button className="discovery-button" disabled={discovering} onClick={onDiscover}>
+        <span>✦</span>
+        <strong>{discovering ? '候補を探しています…' : '新しい候補を探す'}</strong>
+        <small>無料探索を優先 · X / Instagram</small>
+      </button>
+      <div className="operation-status"><span aria-hidden="true" />{apiNote}</div>
     </section>
 
-    <div className="segmented">
-      {(['all', 'x', 'instagram'] as const).map((item) => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}>{item === 'all' ? 'All' : item === 'x' ? 'X' : 'Instagram'}</button>)}
+    <div className="discover-tools">
+      <details className="disclosure-card">
+        <summary><span><strong>自分で候補を追加</strong><small>URLや @username が分かっているとき</small></span><b>＋</b></summary>
+        <div className="disclosure-body">
+          <div className="mini-segmented">
+            <button className={platform === 'instagram' ? 'active' : ''} onClick={() => setPlatform('instagram')}>Instagram</button>
+            <button className={platform === 'x' ? 'active' : ''} onClick={() => setPlatform('x')}>X</button>
+          </div>
+          <div className="import-row"><input value={reference} onChange={(event) => setReference(event.target.value)} placeholder="プロフィールURL または @username" /><button onClick={() => addReference()}>追加</button></div>
+          <button className="secondary-button full" onClick={addFromClipboard}>クリップボードから読み取る</button>
+        </div>
+      </details>
+
+      <details className="disclosure-card">
+        <summary><span><strong>候補情報を更新・再評価</strong><small>普段は自動判断に任せてOK</small></span><b>↻</b></summary>
+        <div className="disclosure-body advanced-actions">
+          <button className="secondary-button" disabled={enrichingX} onClick={onEnrichX}>{enrichingX ? 'X公式情報を確認中…' : 'X公式情報を更新'}</button>
+          <button className="primary-button" disabled={ranking} onClick={onRerank}>{ranking ? 'AIで再評価中…' : '候補をAIで再評価'}</button>
+          <p>公式情報が変わった候補や、判断材料が増えた候補を更新したい場合に使います。</p>
+        </div>
+      </details>
+    </div>
+
+    <div className="candidate-list-head">
+      <div><span className="section-kicker">候補</span><strong>{visible.length}人</strong></div>
+      <div className="segmented">
+        {(['all', 'x', 'instagram'] as const).map((item) => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}>{item === 'all' ? 'すべて' : item === 'x' ? 'X' : 'Instagram'}</button>)}
+      </div>
     </div>
     {visible.length > 0 ? <div className="card-stack">{visible.map((candidate) => <CandidateCard key={candidate.id} candidate={candidate} onOpen={onOpen} onLater={snoozeCandidate} />)}</div> : <DiscoverEmptyState filter={filter} storedCount={storedCount} snoozedCount={snoozedCount} />}
   </>;
@@ -427,28 +470,37 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
 function DiscoverEmptyState({ filter, storedCount, snoozedCount }: { filter: 'all' | 'x' | 'instagram'; storedCount: number; snoozedCount: number }) {
   const platform = filter === 'all' ? '候補' : filter === 'x' ? 'X候補' : 'Instagram候補';
   if (snoozedCount > 0 && storedCount === snoozedCount) {
-    return <section className="form-card"><div className="field-title"><div><strong>今日はここまで</strong><span>{snoozedCount}件の{platform}を「明日へ」移動済みです。明日になると自動で候補へ戻ります。</span></div><b>✓</b></div></section>;
+    return <section className="empty-state"><div>✓</div><strong>今日はここまで</strong><p>{snoozedCount}件の{platform}を明日へ移動済みです。日付が変わると自動で候補へ戻ります。</p></section>;
   }
   if (storedCount === 0) {
-    return <section className="form-card"><div className="field-title"><div><strong>{platform}はまだありません</strong><span>上のMission探索、プロフィールURL、@usernameのどれかから追加できます。</span></div><b>＋</b></div></section>;
+    return <section className="empty-state"><div>＋</div><strong>{platform}はまだありません</strong><p>上の「新しい候補を探す」から始めるのがおすすめです。</p></section>;
   }
-  return <section className="form-card"><div className="field-title"><div><strong>今日表示する{platform}はありません</strong><span>見送った候補や明日送りの候補は今日の一覧から外れています。</span></div><b>○</b></div></section>;
+  return <section className="empty-state"><div>○</div><strong>今日表示する{platform}はありません</strong><p>見送った候補と明日送りの候補は、今日の一覧から外れています。</p></section>;
 }
 
 function CandidateCard({ candidate, onOpen, onLater, featured = false }: { candidate: Candidate; onOpen: (c: Candidate) => void; onLater: (c: Candidate) => void; featured?: boolean }) {
-  const buttonLabel = candidate.recommendedAction === 'reply' ? `${platformLabel(candidate.platform)}で返信` : candidate.recommendedAction === 'unfollow_review' ? `${platformLabel(candidate.platform)}で整理確認` : `${platformLabel(candidate.platform)}で見る`;
+  const buttonLabel = candidateActionButtonLabel(candidate);
+  const detailsAvailable = Boolean(candidate.strategy || candidate.publicMetrics || candidate.tags.length);
   return <article className={featured ? 'candidate-card featured' : 'candidate-card'}>
+    <div className="candidate-context">
+      <span className={`action-pill action-${candidate.recommendedAction}`}>おすすめ · {actionLabel[candidate.recommendedAction]}</span>
+      <span className="match-inline">相性 <b>{candidate.match}</b></span>
+    </div>
     <div className="candidate-head">
       <div className={`platform-avatar ${candidate.platform}`}>{candidate.platform === 'x' ? 'X' : '◎'}</div>
       <div className="candidate-identity"><strong>{candidate.displayName}{candidate.verified ? ' ✓' : ''}</strong><span>@{candidate.username} · {kindLabel[candidate.kind]}</span></div>
-      <div className="match-score"><strong>{candidate.match}</strong><small>MATCH</small></div>
     </div>
     {candidate.bio && <p className="candidate-bio">{candidate.bio}</p>}
-    {candidate.publicMetrics && <div className="profile-metrics"><span><b>{compactNumber(candidate.publicMetrics.followers)}</b> followers</span><span><b>{compactNumber(candidate.publicMetrics.posts)}</b> posts</span></div>}
-    <p className="reason">{candidate.reason}</p>
-    {candidate.strategy && <div className="strategy-note"><span>AI STRATEGY</span><p>{candidate.strategy}</p></div>}
-    <div className="tags">{candidate.tags.map((tag) => <span key={tag}>#{tag}</span>)}</div>
-    {candidate.draft && <div className="draft-box"><span>AI返信案</span><p>{candidate.draft}</p><button onClick={() => copyDraft(candidate.draft!)}>コピー</button></div>}
+    <div className="candidate-reason"><span>おすすめ理由</span><p>{candidate.reason}</p></div>
+    {candidate.draft && <div className="draft-box"><span>そのまま使える返信案</span><p>{candidate.draft}</p><button onClick={() => copyDraft(candidate.draft!)}>コピー</button></div>}
+    {detailsAvailable && <details className="candidate-details">
+      <summary>判断材料を見る</summary>
+      <div className="candidate-details-body">
+        {candidate.publicMetrics && <div className="profile-metrics"><span><b>{compactNumber(candidate.publicMetrics.followers)}</b> フォロワー</span><span><b>{compactNumber(candidate.publicMetrics.posts)}</b> 投稿</span></div>}
+        {candidate.strategy && <div className="strategy-note"><span>進め方</span><p>{candidate.strategy}</p></div>}
+        {candidate.tags.length > 0 && <div className="tags">{candidate.tags.slice(0, 6).map((tag) => <span key={tag}>#{tag}</span>)}</div>}
+      </div>
+    </details>}
     <div className="candidate-actions">
       <button className="secondary-button" onClick={() => onLater(candidate)}>明日へ</button>
       <button className="primary-button" onClick={() => onOpen(candidate)}>{buttonLabel}<span>↗</span></button>
@@ -460,18 +512,18 @@ function Relations({ state, onOpen, onChange }: { state: AppState; onOpen: (c: C
   const following = state.candidates.filter((candidate) => !candidate.skipped && candidate.stage !== 'discovered');
   const cleanup = following.filter((candidate) => candidate.recommendedAction === 'unfollow_review');
   return <>
-    <PageHeading eyebrow="RELATIONS" title="関係を育てる" text="フォロー数ではなく、関係の深まりと整理タイミングを覚えておきます。" />
+    <PageHeading eyebrow="関係" title="つながった後を育てる" text="フォロー数ではなく、今どのくらい関係が深まっているかを記録します。" />
     <div className="relation-summary">
-      <div><strong>{following.length}</strong><span>tracked</span></div>
-      <div><strong>{following.filter((c) => c.followBack === true).length}</strong><span>mutual</span></div>
-      <div><strong>{cleanup.length}</strong><span>review</span></div>
+      <div><strong>{following.length}</strong><span>関係を記録中</span></div>
+      <div><strong>{following.filter((c) => c.followBack === true).length}</strong><span>相互フォロー</span></div>
+      <div><strong>{cleanup.length}</strong><span>整理候補</span></div>
     </div>
-    {cleanup.length > 0 && <section className="cleanup-banner"><span className="eyebrow">FOLLOW REVIEW</span><strong>{cleanup.length}人を整理候補として確認</strong><p>自動解除はしません。Mission一致度と交流履歴を見て、公式アプリで最終判断します。</p></section>}
-    <div className="relation-list">{following.map((candidate) => <article className={candidate.recommendedAction === 'unfollow_review' ? 'relation-card review' : 'relation-card'} key={candidate.id}>
+    {cleanup.length > 0 && <section className="cleanup-banner"><span className="section-kicker">確認が必要</span><strong>{cleanup.length}人のフォロー継続を確認</strong><p>自動で解除はしません。Missionとの相性とこれまでの交流を見て、公式SNSで最終判断します。</p></section>}
+    {following.length > 0 ? <div className="relation-list">{following.map((candidate) => <article className={candidate.recommendedAction === 'unfollow_review' ? 'relation-card review' : 'relation-card'} key={candidate.id}>
       <button className="relation-main" onClick={() => onOpen(candidate)}>
         <div className={`mini-avatar ${candidate.platform}`}>{candidate.platform === 'x' ? 'X' : '◎'}</div>
-        <div><strong>{candidate.displayName}</strong><span>@{candidate.username} · {candidate.stage}</span></div>
-        <div className="relation-score">{candidate.relationshipScore}<small>REL</small></div>
+        <div><strong>{candidate.displayName}</strong><span>@{candidate.username}</span><small className="stage-pill">{stageLabel[candidate.stage]}</small></div>
+        <div className="relation-score"><strong>{candidate.relationshipScore}</strong><small>関係スコア</small></div>
       </button>
       {candidate.strategy && <p className="relation-advice">{candidate.strategy}</p>}
       <div className="followback-controls" role="group" aria-label={`${candidate.username} follow back status`}>
@@ -479,7 +531,7 @@ function Relations({ state, onOpen, onChange }: { state: AppState; onOpen: (c: C
         <button className={candidate.followBack === false ? 'active warn' : ''} onClick={() => onChange((current) => setFollowBackStatus(current, candidate.id, false))}>フォロバなし</button>
         <button className={candidate.followBack == null ? 'active' : ''} onClick={() => onChange((current) => setFollowBackStatus(current, candidate.id, null))}>未確認</button>
       </div>
-    </article>)}</div>
+    </article>)}</div> : <section className="empty-state"><div>◎</div><strong>関係の記録はまだありません</strong><p>Todayからフォローや交流を記録すると、ここに相手との現在地がまとまります。</p></section>}
   </>;
 }
 
@@ -494,16 +546,17 @@ function Me({ state, onAnalyze, analyzing }: { state: AppState; onAnalyze: (prof
   }, [state.selfProfile.profileText, state.selfProfile.recentPostsText]);
 
   return <>
-    <PageHeading eyebrow="ME" title="自分もMissionに近づける" text="相手探しだけでなく、自分のプロフィールと投稿の状態もAIが見ます。" />
-    <section className="score-card"><div><span>MISSION SCORE</span><strong>{score == null ? '—' : score}</strong>{score != null && <small>/100</small>}</div><p>{state.selfProfile.summary || 'まだ未測定です。プロフィールや最近の投稿を入れると、Missionから現在地と次の改善点を評価します。'}</p></section>
+    <PageHeading eyebrow="自分" title="自分の発信も整える" text="相手探しだけでなく、プロフィールと最近の投稿がMissionに合っているかも確認できます。" />
+    <section className="score-card"><div><span>Missionとの一致度</span><strong>{score == null ? '—' : score}</strong>{score != null && <small>/100</small>}</div><p>{state.selfProfile.summary || 'まだ分析していません。プロフィールか最近の投稿を入れると、今の状態と優先して直す場所を整理します。'}</p></section>
     <section className="form-card self-analysis-card">
-      <label>現在のプロフィール<textarea value={profile} onChange={(event) => setProfile(event.target.value)} placeholder="X / Instagramのプロフィール文を貼り付け" /></label>
+      <div className="form-intro"><strong>まず現在の発信を入れる</strong><p>片方だけでも分析できます。X同期済みなら自動で入っている場合があります。</p></div>
+      <label>プロフィール文<textarea value={profile} onChange={(event) => setProfile(event.target.value)} placeholder="X / Instagramのプロフィール文" /></label>
       <label>最近の投稿<textarea value={posts} onChange={(event) => setPosts(event.target.value)} placeholder="最近の投稿を数件まとめて貼り付け" /></label>
-      <button className="primary-button" disabled={analyzing} onClick={() => onAnalyze(profile, posts)}>{analyzing ? '分析中…' : 'Missionから自己分析'}</button>
+      <button className="primary-button" disabled={analyzing} onClick={() => onAnalyze(profile, posts)}>{analyzing ? '分析しています…' : '今の発信を分析する'}</button>
     </section>
-    {state.selfProfile.strategy && <section className="coach-card self-result"><div className="coach-icon">↗</div><div><span className="eyebrow">NEXT STRATEGY</span><h3>目的地へ近づく作戦</h3><p>{state.selfProfile.strategy}</p></div></section>}
-    {state.selfProfile.profileRewrite && <section className="form-card rewrite-card"><div className="field-title"><div><strong>プロフィール改善案</strong><span>事実を足さず、Missionへの入口を分かりやすくする</span></div><b>AI</b></div><p>{state.selfProfile.profileRewrite}</p><button className="secondary-button" onClick={() => copyDraft(state.selfProfile.profileRewrite!)}>コピー</button></section>}
-    <div className="insight-list">{state.insights.map((insight) => <article className="insight-card" key={insight.id}><div className={`priority ${insight.priority}`} /><div><span>{insight.category.toUpperCase()}</span><strong>{insight.title}</strong><p>{insight.body}</p></div></article>)}</div>
+    {state.selfProfile.strategy && <section className="coach-card self-result"><div className="coach-icon">↗</div><div><span className="section-kicker">次に直すこと</span><h3>目的へ近づく作戦</h3><p>{state.selfProfile.strategy}</p></div></section>}
+    {state.selfProfile.profileRewrite && <section className="form-card rewrite-card"><div className="field-title"><div><strong>プロフィール改善案</strong><span>事実を足さず、初見で目的が伝わりやすい形</span></div><b>AI</b></div><p>{state.selfProfile.profileRewrite}</p><button className="secondary-button" onClick={() => copyDraft(state.selfProfile.profileRewrite!)}>改善案をコピー</button></section>}
+    {state.insights.length > 0 && <section className="insights-section"><div className="section-heading-simple"><span className="section-kicker">改善ポイント</span><h2>覚えておきたいこと</h2></div><div className="insight-list">{state.insights.map((insight) => <article className="insight-card" key={insight.id}><div className={`priority ${insight.priority}`} /><div><span>{insight.category.toUpperCase()}</span><strong>{insight.title}</strong><p>{insight.body}</p></div></article>)}</div></section>}
   </>;
 }
 
@@ -530,15 +583,22 @@ function Settings({ state, onChange }: { state: AppState; onChange: AppStateUpda
   }
 
   return <>
-    <PageHeading eyebrow="SETTINGS" title="AIに目的地を教える" text="この設定が候補選び・交流文・自己改善の判断軸になります。" />
-    <section className="form-card">
-      <label>Mission<textarea value={missionText} onChange={(event) => setMissionText(event.target.value)} /></label>
+    <PageHeading eyebrow="設定" title="AIの判断軸を決める" text="普段触るのはここだけで十分です。接続や細かい調整は下の詳細設定へまとめています。" />
+    <section className="form-card settings-primary-card">
+      <div className="form-intro"><strong>目的と話し方</strong><p>ここが「誰を選ぶか」「何を勧めるか」の基準になります。</p></div>
+      <label>このアプリに任せたいこと<textarea value={missionText} onChange={(event) => setMissionText(event.target.value)} /></label>
       <label>最優先ゴール<input value={primaryGoal} onChange={(event) => setPrimaryGoal(event.target.value)} /></label>
-      <label>Communication DNA<textarea value={communicationDNA} onChange={(event) => setCommunicationDNA(event.target.value)} /></label>
-      <label>月間AI / API予算 <span className="inline-value">${budget.toFixed(2)}</span><input className="range" type="range" min="0" max="10" step="0.5" value={budget} onChange={(event) => setBudget(Number(event.target.value))} /></label>
-      <label>フォローバック整理レビュー <span className="inline-value">{followBackDays}日後</span><input className="range" type="range" min="7" max="90" step="1" value={followBackDays} onChange={(event) => setFollowBackDays(Number(event.target.value))} /></label>
-      <div className="hard-limit"><span>HARD LIMIT</span><strong>ON</strong><p>この上限を超える有料API処理は実行しません。</p></div>
-      <button className="primary-button" onClick={persist}>設定を保存</button>
+      <label>あなたらしい話し方<textarea value={communicationDNA} onChange={(event) => setCommunicationDNA(event.target.value)} /></label>
+
+      <details className="inline-disclosure">
+        <summary><span><strong>予算と整理ルール</strong><small>必要なときだけ変更</small></span><b>⌄</b></summary>
+        <div className="inline-disclosure-body">
+          <label>月間AI / API予算 <span className="inline-value">${budget.toFixed(2)}</span><input className="range" type="range" min="0" max="10" step="0.5" value={budget} onChange={(event) => setBudget(Number(event.target.value))} /></label>
+          <label>フォローバック整理を確認するまで <span className="inline-value">{followBackDays}日</span><input className="range" type="range" min="7" max="90" step="1" value={followBackDays} onChange={(event) => setFollowBackDays(Number(event.target.value))} /></label>
+          <div className="hard-limit-row"><span><strong>予算上限を超えない</strong><small>設定額を超える有料API処理は実行しません</small></span><b>ON</b></div>
+        </div>
+      </details>
+      <button className="primary-button" onClick={persist}>この設定を保存</button>
     </section>
     <BackupControls state={state} onRestore={onChange} />
   </>;
@@ -573,12 +633,49 @@ function clampInt(value: number | undefined, fallback: number, min: number, max:
 }
 
 function PageHeading({ eyebrow, title, text }: { eyebrow: string; title: string; text: string }) {
-  return <header className="page-heading"><span className="eyebrow">{eyebrow}</span><h1>{title}</h1><p>{text}</p></header>;
+  return <header className="page-heading"><span className="section-kicker">{eyebrow}</span><h1>{title}</h1><p>{text}</p></header>;
 }
 
 function ResultSheet({ candidate, onResolve }: { candidate: Candidate; onResolve: (action: 'followed' | 'skipped' | 'later' | 'kept') => void }) {
   const cleanup = candidate.recommendedAction === 'unfollow_review';
-  return <div className="sheet-backdrop"><section className="result-sheet"><div className="sheet-handle" /><span className="eyebrow">WELCOME BACK</span><h2>@{candidate.username} はどうしました？</h2><p>{cleanup ? 'フォロー整理の最終操作は公式SNS側で行います。ここでは継続・解除の判断だけ記録します。' : '最終操作は公式SNS側で行います。ここでは関係性履歴だけ記録します。'}</p><div className="sheet-actions">{cleanup ? <><button onClick={() => onResolve('kept')}>フォローを継続する</button><button onClick={() => onResolve('skipped')}>フォロー解除した</button><button className="muted" onClick={() => onResolve('later')}>後で</button></> : <><button onClick={() => onResolve('followed')}>フォローした</button><button onClick={() => onResolve('kept')}>交流した / 継続</button><button onClick={() => onResolve('skipped')}>今回は見送る</button><button className="muted" onClick={() => onResolve('later')}>後で</button></>}</div></section></div>;
+  const completion = outcomeForAction(candidate);
+  return <div className="sheet-backdrop"><section className="result-sheet" role="dialog" aria-modal="true" aria-labelledby="result-title">
+    <div className="sheet-handle" />
+    <span className="section-kicker">結果を記録</span>
+    <h2 id="result-title">@{candidate.username} への{actionLabel[candidate.recommendedAction]}はどうでしたか？</h2>
+    <p>{cleanup ? '公式SNSで確認した結果だけ記録します。自動でフォロー解除することはありません。' : '公式SNSでの操作結果だけ記録します。次回のおすすめ精度に使います。'}</p>
+    <div className="sheet-actions">{cleanup ? <>
+      <button className="sheet-primary" onClick={() => onResolve('kept')}>フォローを継続した</button>
+      <button onClick={() => onResolve('skipped')}>フォロー解除した</button>
+      <button className="muted" onClick={() => onResolve('later')}>まだ決めていない</button>
+    </> : <>
+      <button className="sheet-primary" onClick={() => onResolve(completion.result)}>{completion.label}</button>
+      <button onClick={() => onResolve('skipped')}>今回は見送った</button>
+      <button className="muted" onClick={() => onResolve('later')}>あとで記録する</button>
+    </>}</div>
+  </section></div>;
+}
+
+function candidateActionButtonLabel(candidate: Candidate) {
+  const platform = platformLabel(candidate.platform);
+  switch (candidate.recommendedAction) {
+    case 'follow': return `${platform}で確認してフォロー`;
+    case 'like': return `${platform}で対象投稿を開く`;
+    case 'reply': return `${platform}で返信先を開く`;
+    case 'dm': return `${platform}でDM先を開く`;
+    case 'unfollow_review': return `${platform}でフォローを確認`;
+    default: return `${platform}でプロフィールを確認`;
+  }
+}
+
+function outcomeForAction(candidate: Candidate): { label: string; result: 'followed' | 'kept' } {
+  switch (candidate.recommendedAction) {
+    case 'follow': return { label: 'フォローした', result: 'followed' };
+    case 'like': return { label: 'いいねした', result: 'kept' };
+    case 'reply': return { label: '返信した', result: 'kept' };
+    case 'dm': return { label: 'DMした', result: 'kept' };
+    default: return { label: '確認・交流した', result: 'kept' };
+  }
 }
 
 function compactNumber(value?: number) {
