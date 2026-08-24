@@ -5,6 +5,7 @@ const daily = await readFile(new URL('../src/DailyQueue.tsx', import.meta.url), 
 const backup = await readFile(new URL('../src/BackupControls.tsx', import.meta.url), 'utf8');
 const social = await readFile(new URL('../src/social.ts', import.meta.url), 'utf8');
 const dialogBehavior = await readFile(new URL('../src/dialogBehavior.ts', import.meta.url), 'utf8');
+const statusPresentation = await readFile(new URL('../src/statusPresentation.ts', import.meta.url), 'utf8');
 const main = await readFile(new URL('../src/main.tsx', import.meta.url), 'utf8');
 const syncControls = await readFile(new URL('../src/SyncControls.tsx', import.meta.url), 'utf8');
 const workloadControls = await readFile(new URL('../src/WorkloadControls.tsx', import.meta.url), 'utf8');
@@ -89,6 +90,16 @@ requireAll(dialogBehavior, [
   'previous?.isConnected',
 ], 'Result dialog can regress to missing Escape close, focus trapping, initial focus, or focus restoration.');
 requireAll(main, ['installDialogBehavior();'], 'Result dialog keyboard behavior is no longer installed at app startup.');
+
+requireAll(statusPresentation, [
+  "raw === 'API接続待機'",
+  "return '準備OK'",
+  "raw === 'ローカルモード'",
+  "return 'この端末で利用中'",
+  "status.setAttribute('role', 'status')",
+  "status.setAttribute('aria-live', 'polite')",
+], 'Idle header status can regress to implementation jargon or lose accessible live-status semantics.');
+requireAll(main, ['installStatusPresentation();'], 'Human-readable status presentation is no longer installed at app startup.');
 
 requireAll(social, [
   "candidate.recommendedAction === 'reply' || candidate.recommendedAction === 'like'",
@@ -205,4 +216,4 @@ for (const [name, source] of [
   }
 }
 
-console.log('UX invariants OK: Japanese navigation, truthful Today states, action-specific next steps, progressive candidate reveal, accessible selection states, action-specific outcomes, keyboard-safe dialogs, clipboard feedback, urgent relation ordering, save feedback, truthful budget display, progressive workload tuning, verifiable sync-key entry, mobile input ergonomics, readable advanced settings, and real-device viewport safety are preserved.');
+console.log('UX invariants OK: Japanese navigation, human-readable idle status, truthful Today states, action-specific next steps, progressive candidate reveal, accessible selection states, action-specific outcomes, keyboard-safe dialogs, clipboard feedback, urgent relation ordering, save feedback, truthful budget display, progressive workload tuning, verifiable sync-key entry, mobile input ergonomics, readable advanced settings, and real-device viewport safety are preserved.');
