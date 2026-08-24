@@ -109,6 +109,38 @@ button[data-copy-state="error"] {
   font-size: 10px;
 }
 
+.restore-confirm {
+  display: grid;
+  gap: 11px;
+  padding: 13px;
+  border: 1px solid rgba(255, 194, 124, .18);
+  border-radius: 14px;
+  background: rgba(255, 194, 124, .055);
+}
+
+.restore-confirm > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.restore-confirm strong {
+  color: #f3d2aa;
+  font-size: 12px;
+}
+
+.restore-confirm span {
+  color: #9eacbc;
+  font-size: 10px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.restore-confirm-actions {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 8px;
+}
+
 .candidate-details > summary,
 .disclosure-card > summary,
 .inline-disclosure > summary,
@@ -180,6 +212,10 @@ button[data-copy-state="error"] {
 
   .match-inline {
     flex: none;
+  }
+
+  .restore-confirm-actions {
+    grid-template-columns: 1fr;
   }
 
   .result-sheet {
