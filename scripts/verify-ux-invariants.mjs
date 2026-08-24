@@ -139,7 +139,11 @@ requireAll(backup, [
   '1日の量を調整',
   'アプリ・SNS・クラウド接続',
   'バックアップ',
-], 'Advanced settings can regress to an always-expanded wall of controls.');
+  'const [pendingRestore, setPendingRestore] = useState<AppState | null>(null);',
+  '現在のデータを置き換えます',
+  'この内容で復元',
+  '復元をキャンセルしました。現在のデータはそのままです。',
+], 'Advanced settings or backup restore safety can regress to an always-expanded wall or immediate destructive replacement.');
 
 requireAll(workloadControls, [
   'まずは合計だけ決めればOKです',
@@ -170,12 +174,14 @@ requireAll(devicePolish, [
   'overflow-wrap: anywhere;',
   '.insight-card > div:last-child > span',
   '.load-more-button',
+  '.restore-confirm',
+  '.restore-confirm-actions',
   'button[data-copy-state="success"]',
   'button[data-copy-state="error"]',
   'max-height: min(88dvh, 720px);',
   'overscroll-behavior: contain;',
   '@media (orientation: landscape) and (max-height: 600px)',
-], 'Real-device overflow, progressive reveal, copy feedback styling, result-sheet safety, neutral status semantics, or Japanese insight presentation regressed.');
+], 'Real-device overflow, progressive reveal, safe restore confirmation, copy feedback styling, result-sheet safety, neutral status semantics, or Japanese insight presentation regressed.');
 
 requireAll(syncCss, [
   '.secret-field',
@@ -216,4 +222,4 @@ for (const [name, source] of [
   }
 }
 
-console.log('UX invariants OK: Japanese navigation, human-readable idle status, truthful Today states, action-specific next steps, progressive candidate reveal, accessible selection states, action-specific outcomes, keyboard-safe dialogs, clipboard feedback, urgent relation ordering, save feedback, truthful budget display, progressive workload tuning, verifiable sync-key entry, mobile input ergonomics, readable advanced settings, and real-device viewport safety are preserved.');
+console.log('UX invariants OK: Japanese navigation, human-readable idle status, truthful Today states, action-specific next steps, progressive candidate reveal, accessible selection states, action-specific outcomes, keyboard-safe dialogs, clipboard feedback, urgent relation ordering, save feedback, truthful budget display, progressive workload tuning, verifiable sync-key entry, two-step backup restore, mobile input ergonomics, readable advanced settings, and real-device viewport safety are preserved.');
