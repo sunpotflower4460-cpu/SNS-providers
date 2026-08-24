@@ -129,6 +129,9 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
       allocation.posts >= 5 ? fetchPostsPage(accessToken, profile.id, allocation.posts) : emptyList<XPost>(),
     ]);
 
+    // All raw paid X payloads have been schema/identity/count validated inside the fetch
+    // helpers before this point. Only now is it safe to shrink the conservative reservation
+    // from the requested worst-case amount to the observed resource count.
     const followerCount = followersResult.data.length;
     const followingCount = followingResult.data.length;
     const postCount = postsResult.data.length;
@@ -196,7 +199,9 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
     return result;
   } catch (error) {
     // Once a paid X data request has started, retain the conservative reservation:
-    // transport/JSON failures do not prove the provider did not bill the read.
+    // transport/JSON failures do not prove the provider did not bill the read. Raw X
+    // payload validation happens before finalizeReservation(), so malformed provider data
+    // leaves the original worst-case amount intact.
     await markReservationUncertain(env, reservationId);
     const message = error instanceof Error ? error.message : 'Owned X sync failed';
     throw new Error(message);
@@ -212,7 +217,9 @@ async function fetchMe(accessToken: string) {
     'user.fields': 'description,profile_image_url,public_metrics,verified',
   });
   const response = await xFetch<UserResponse>(`https://api.x.com/2/users/me?${params.toString()}`, accessToken);
-  return response.data || null;
+  if (response.data == null) return null;
+  if (!validRawXUser(response.data)) throw new Error('X /2/users/me returned malformed user data');
+  return response.data;
 }
 
 async function fetchUsersPage(accessToken: string, userId: string, kind: 'followers' | 'following', maxResults: number, cursor: string | null) {
@@ -222,7 +229,15 @@ async function fetchUsersPage(accessToken: string, userId: string, kind: 'follow
   });
   if (cursor) params.set('pagination_token', cursor);
   const response = await xFetch<ListResponse<XUser>>(`https://api.x.com/2/users/${encodeURIComponent(userId)}/${kind}?${params.toString()}`, accessToken);
-  return { data: response.data || [], nextToken: response.meta?.next_token || null };
+  if (response.data != null && (!Array.isArray(response.data)
+    || response.data.length > maxResults
+    || !response.data.every(validRawXUser)
+    || !uniqueRawXUsers(response.data))) {
+    throw new Error(`X ${kind} endpoint returned malformed user data`);
+  }
+  const nextToken = response.meta?.next_token;
+  if (nextToken != null && safeCursor(nextToken) === null) throw new Error(`X ${kind} endpoint returned an invalid pagination token`);
+  return { data: response.data || [], nextToken: nextToken || null };
 }
 
 async function fetchPostsPage(accessToken: string, userId: string, maxResults: number) {
@@ -232,15 +247,23 @@ async function fetchPostsPage(accessToken: string, userId: string, maxResults: n
     exclude: 'retweets,replies',
   });
   const response = await xFetch<ListResponse<XPost>>(`https://api.x.com/2/users/${encodeURIComponent(userId)}/tweets?${params.toString()}`, accessToken);
-  return { data: response.data || [], nextToken: response.meta?.next_token || null };
+  if (response.data != null && (!Array.isArray(response.data)
+    || response.data.length > maxResults
+    || !response.data.every(validRawXPost)
+    || !uniqueRawXPosts(response.data))) {
+    throw new Error('X posts endpoint returned malformed post data');
+  }
+  const nextToken = response.meta?.next_token;
+  if (nextToken != null && safeCursor(nextToken) === null) throw new Error('X posts endpoint returned an invalid pagination token');
+  return { data: response.data || [], nextToken: nextToken || null };
 }
 
 async function xFetch<T>(url: string, accessToken: string): Promise<T> {
   const response = await fetchWithTimeout(url, { headers: { authorization: `Bearer ${accessToken}` } }, 30_000, 'X API');
   if (!response.ok) throw new Error(`X API returned ${response.status}`);
-  const body = await response.json().catch(() => null) as T | null;
-  if (!body || typeof body !== 'object') throw new Error('X API returned an empty or invalid JSON response');
-  return body;
+  const body = await response.json().catch(() => null) as unknown;
+  if (!isRecord(body)) throw new Error('X API returned an empty or invalid JSON response');
+  return body as T;
 }
 
 function normalizeUser(user: XUser) {
@@ -455,6 +478,60 @@ function daysRemainingInUtcMonth() {
   const now = new Date();
   const lastDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).getUTCDate();
   return Math.max(1, lastDay - now.getUTCDate() + 1);
+}
+
+function validRawXUser(value: unknown): value is XUser {
+  if (!isRecord(value)
+    || typeof value.id !== 'string'
+    || !/^\d{1,30}$/.test(value.id)
+    || typeof value.username !== 'string'
+    || !/^[A-Za-z0-9_]{1,15}$/.test(value.username)
+    || typeof value.name !== 'string'
+    || value.name.length > 300
+    || (value.description != null && (typeof value.description !== 'string' || value.description.length > 5000))
+    || (value.verified != null && typeof value.verified !== 'boolean')
+    || (value.profile_image_url != null && (typeof value.profile_image_url !== 'string' || !validHttpsUrl(value.profile_image_url)))) return false;
+  if (value.public_metrics == null) return true;
+  return isRecord(value.public_metrics)
+    && optionalNonNegativeFinite(value.public_metrics.followers_count)
+    && optionalNonNegativeFinite(value.public_metrics.following_count)
+    && optionalNonNegativeFinite(value.public_metrics.tweet_count)
+    && optionalNonNegativeFinite(value.public_metrics.listed_count);
+}
+
+function validRawXPost(value: unknown): value is XPost {
+  if (!isRecord(value)
+    || typeof value.id !== 'string'
+    || !/^\d{1,30}$/.test(value.id)
+    || typeof value.text !== 'string'
+    || value.text.length > 30_000
+    || (value.created_at != null && (typeof value.created_at !== 'string' || !validPastishIso(value.created_at)))) return false;
+  if (value.public_metrics == null) return true;
+  return isRecord(value.public_metrics)
+    && optionalNonNegativeFinite(value.public_metrics.like_count)
+    && optionalNonNegativeFinite(value.public_metrics.reply_count)
+    && optionalNonNegativeFinite(value.public_metrics.repost_count)
+    && optionalNonNegativeFinite(value.public_metrics.quote_count);
+}
+
+function uniqueRawXUsers(users: XUser[]) {
+  const ids = new Set<string>();
+  const usernames = new Set<string>();
+  for (const user of users) {
+    const username = user.username.toLowerCase();
+    if (ids.has(user.id) || usernames.has(username)) return false;
+    ids.add(user.id);
+    usernames.add(username);
+  }
+  return true;
+}
+
+function uniqueRawXPosts(posts: XPost[]) {
+  return new Set(posts.map((post) => post.id)).size === posts.length;
+}
+
+function optionalNonNegativeFinite(value: unknown) {
+  return value == null || nonNegativeFinite(value);
 }
 
 function validOwnedSnapshot(value: unknown) {
