@@ -127,6 +127,9 @@ export async function syncInstagramEngagers(env: InstagramOwnedEnv, body: Instag
       })),
   };
 
+  if (!validInstagramSnapshot(result, instagramUserId)) {
+    throw new Error('Instagram Graph API produced an invalid engager snapshot');
+  }
   await saveCache(env, userId, result);
   await recordUsage(env, userId, media.length, commentEvents);
   return result;
@@ -179,11 +182,22 @@ async function loadFreshCache(env: InstagramOwnedEnv, userId: string, force: boo
     if (!row) return null;
     const syncedAtMs = new Date(row.synced_at).getTime();
     if (!Number.isFinite(syncedAtMs) || syncedAtMs > Date.now() + 60_000 || Date.now() - syncedAtMs > CACHE_TTL_MS) return null;
-    const snapshot = JSON.parse(row.snapshot_json) as Record<string, unknown>;
-    if (!snapshot || typeof snapshot !== 'object' || snapshot.accountId !== expectedAccountId) return null;
+    const snapshot = JSON.parse(row.snapshot_json) as unknown;
+    if (!validInstagramSnapshot(snapshot, expectedAccountId)) {
+      await deleteCache(env, userId);
+      return null;
+    }
     return snapshot;
   } catch {
     return null;
+  }
+}
+
+async function deleteCache(env: InstagramOwnedEnv, userId: string) {
+  try {
+    await env.DB.prepare('DELETE FROM instagram_engager_snapshots WHERE user_id = ?').bind(userId).run();
+  } catch {
+    // Invalid cache is ignored even if cleanup cannot be persisted.
   }
 }
 
@@ -208,6 +222,87 @@ async function recordUsage(env: InstagramOwnedEnv, userId: string, mediaCount: n
   }
 }
 
+function validInstagramSnapshot(value: unknown, expectedAccountId: string) {
+  if (!isRecord(value)
+    || value.enabled !== true
+    || value.source !== 'instagram'
+    || value.externalCostUsd !== 0
+    || typeof value.syncedAt !== 'string'
+    || !validPastishIso(value.syncedAt)
+    || value.accountId !== expectedAccountId
+    || !boundedNonNegativeInteger(value.mediaScanned, 12)
+    || !boundedNonNegativeInteger(value.commentEvents, 600)
+    || !Array.isArray(value.engagers)
+    || value.engagers.length > 80
+    || !value.engagers.every(validEngager)
+    || !uniqueEngagers(value.engagers)) return false;
+
+  const mediaScanned = value.mediaScanned as number;
+  const commentEvents = value.commentEvents as number;
+  const engagers = value.engagers as Array<Record<string, unknown>>;
+  if (engagers.some((engager) => (engager.mediaCount as number) > mediaScanned)) return false;
+  return engagers.reduce((sum, engager) => sum + (engager.commentCount as number), 0) <= commentEvents;
+}
+
+function validEngager(value: unknown) {
+  return isRecord(value)
+    && typeof value.id === 'string'
+    && /^(?:\d{1,30}|username:[A-Za-z0-9._]{1,30})$/.test(value.id)
+    && typeof value.username === 'string'
+    && /^[A-Za-z0-9._]{1,30}$/.test(value.username)
+    && typeof value.profileUrl === 'string'
+    && validInstagramProfileUrl(value.profileUrl, value.username)
+    && boundedPositiveInteger(value.commentCount, 600)
+    && boundedPositiveInteger(value.mediaCount, 12)
+    && typeof value.lastCommentText === 'string'
+    && value.lastCommentText.length <= 500
+    && (value.lastCommentAt == null || (typeof value.lastCommentAt === 'string' && validPastishIso(value.lastCommentAt)))
+    && (value.latestMediaPermalink == null || (typeof value.latestMediaPermalink === 'string' && validInstagramMediaUrl(value.latestMediaPermalink)));
+}
+
+function uniqueEngagers(engagers: unknown[]) {
+  const ids = new Set<string>();
+  const usernames = new Set<string>();
+  for (const engager of engagers) {
+    if (!isRecord(engager) || typeof engager.id !== 'string' || typeof engager.username !== 'string') return false;
+    const username = engager.username.toLowerCase();
+    if (ids.has(engager.id) || usernames.has(username)) return false;
+    ids.add(engager.id);
+    usernames.add(username);
+  }
+  return true;
+}
+
+function validInstagramProfileUrl(value: string, username: string) {
+  if (value.length > 2000) return false;
+  try {
+    const url = new URL(value);
+    const host = url.hostname.replace(/^www\./, '').toLowerCase();
+    const parts = url.pathname.split('/').filter(Boolean);
+    return url.protocol === 'https:'
+      && host === 'instagram.com'
+      && parts.length === 1
+      && parts[0].toLowerCase() === username.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
+function validInstagramMediaUrl(value: string) {
+  if (value.length > 2000) return false;
+  try {
+    const url = new URL(value);
+    const host = url.hostname.replace(/^www\./, '').toLowerCase();
+    const [kind, shortcode] = url.pathname.split('/').filter(Boolean);
+    return url.protocol === 'https:'
+      && host === 'instagram.com'
+      && ['p', 'reel', 'reels', 'tv'].includes((kind || '').toLowerCase())
+      && /^[A-Za-z0-9_-]{1,100}$/.test(shortcode || '');
+  } catch {
+    return false;
+  }
+}
+
 function isLater(candidate?: string, current?: string | null) {
   if (!current) return true;
   if (!candidate) return false;
@@ -216,6 +311,23 @@ function isLater(candidate?: string, current?: string | null) {
   if (!Number.isFinite(candidateMs)) return false;
   if (!Number.isFinite(currentMs)) return true;
   return candidateMs >= currentMs;
+}
+
+function validPastishIso(value: string) {
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) && time <= Date.now() + 5 * 60 * 1000;
+}
+
+function boundedNonNegativeInteger(value: unknown, max: number) {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= max;
+}
+
+function boundedPositiveInteger(value: unknown, max: number) {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= max;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function sanitizeUsername(value: string) {
