@@ -194,6 +194,12 @@ export function applyXProfiles(state: AppState, profiles: XProfileResult[], atte
       // Keep the last successful sync timestamp separate from the last attempted read.
       return { ...candidate, profileSyncAttemptedAt: attemptedAt };
     }
+    const profileContextChanged = candidate.bio !== profile.description
+      || candidate.verified !== profile.verified
+      || Boolean(candidate.platformUserId && candidate.platformUserId !== profile.id);
+    const staleFollowAdvice = profileContextChanged
+      && candidate.recommendedAction === 'follow'
+      && !candidate.followedAt;
     return {
       ...candidate,
       platformUserId: profile.id,
@@ -203,6 +209,14 @@ export function applyXProfiles(state: AppState, profiles: XProfileResult[], atte
       publicMetrics: profile.publicMetrics,
       profileSyncedAt: attemptedAt,
       profileSyncAttemptedAt: attemptedAt,
+      recommendedAction: staleFollowAdvice ? 'review' as const : candidate.recommendedAction,
+      draft: staleFollowAdvice ? undefined : candidate.draft,
+      reason: staleFollowAdvice
+        ? 'X公式プロフィール情報で候補の判断材料が更新されたため、以前のフォロー推薦はいったん無効化しました。'
+        : candidate.reason,
+      strategy: staleFollowAdvice
+        ? '最新の公式プロフィールを反映した状態でAI再評価してから、フォローするかを決めます。古い推薦のままTodayには出しません。'
+        : candidate.strategy,
     };
   });
   return {
