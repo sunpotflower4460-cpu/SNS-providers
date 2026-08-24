@@ -26,6 +26,19 @@ requireAll(daily, [
   'その次',
 ], 'Today no longer presents one clear next action before secondary queue items.');
 
+requireAll(daily, [
+  'activeCandidateCount === 0',
+  'まず、つながる候補を見つけましょう',
+  'onOpenDiscover',
+  '候補を探す',
+], 'First-use Today can again look complete or distract from the required candidate-discovery step.');
+
+requireAll(app, [
+  "const hasCandidates = state.candidates.some((candidate) => !candidate.skipped);",
+  "const queue = hasCandidates ? rawQueue : [];",
+  "hasCandidates ? `${doneToday} / ${plannedTotal}` : '準備前'",
+], 'First-use progress can again show synthetic self-actions or a misleading completed state before any candidate exists.');
+
 requireAll(app, [
   'Missionから自動で探す',
   '<details className="disclosure-card">',
@@ -69,4 +82,4 @@ requireAll(ux, [
   '.candidate-details',
 ], 'Clarity/touch-target styling can regress below the intended hierarchy.');
 
-console.log('UX invariants OK: Japanese primary navigation, one-next-action Today flow, progressive disclosure, action-specific outcomes, advanced-settings grouping, exact actionable handoff, and touch-target hierarchy are preserved.');
+console.log('UX invariants OK: Japanese primary navigation, truthful first-use guidance, one-next-action Today flow, progressive disclosure, action-specific outcomes, advanced-settings grouping, exact actionable handoff, and touch-target hierarchy are preserved.');
