@@ -1,7 +1,8 @@
 import { useMemo } from 'react';
-import { buildDailyQueue, queueSummary } from './daily';
+import { buildDailyQueue } from './daily';
+import { platformLabel } from './social';
 import type { AppState, Candidate } from './types';
-import { useLocalDayKey } from './useLocalDay';
+import { localDayKey, useLocalDayKey } from './useLocalDay';
 import './daily.css';
 
 interface Props {
@@ -22,7 +23,7 @@ const actionIcon: Record<string, string> = {
 };
 
 const actionLabel: Record<string, string> = {
-  follow: 'フォロー候補',
+  follow: 'フォロー',
   like: 'いいね',
   reply: '返信',
   dm: 'DM',
@@ -34,14 +35,21 @@ const actionLabel: Record<string, string> = {
 export default function DailyQueue({ state, onOpenCandidate, onOpenMe, onOpenDiscover }: Props) {
   const localDay = useLocalDayKey();
   const items = useMemo(() => buildDailyQueue(state), [state, localDay]);
-  const summary = useMemo(() => queueSummary(items), [items]);
   const candidateById = useMemo(() => new Map(state.candidates.map((candidate) => [candidate.id, candidate])), [state.candidates]);
   const activeCandidateCount = state.candidates.filter((candidate) => !candidate.skipped).length;
+  const completedToday = useMemo(() => state.interactions.some((interaction) => {
+    const at = new Date(interaction.at);
+    return Number.isFinite(at.getTime()) && localDayKey(at) === localDay;
+  }), [state.interactions, localDay]);
 
   function openItem(item: (typeof items)[number]) {
+    if (item.kind === 'self') {
+      onOpenMe();
+      return;
+    }
     const candidate = item.candidateId ? candidateById.get(item.candidateId) : undefined;
     if (candidate) onOpenCandidate(candidate);
-    else onOpenMe();
+    else onOpenDiscover();
   }
 
   if (activeCandidateCount === 0) {
@@ -54,47 +62,53 @@ export default function DailyQueue({ state, onOpenCandidate, onOpenMe, onOpenDis
     </section>;
   }
 
-  if (!items.length) {
-    return <section className="daily-queue empty">
+  if (!items.length && completedToday) {
+    return <section className="daily-queue empty completed-empty">
       <div className="queue-complete-icon">✓</div>
       <span className="section-kicker">今日のおすすめ</span>
-      <h3>今日すぐやることはありません</h3>
-      <p>今日の分を終えたか、今ある候補にはまだ実行できる具体的な行動がありません。無理に行動を増やす必要はありません。</p>
-      <button className="secondary-button empty-action" onClick={onOpenDiscover}>候補を確認する</button>
+      <h3>今日のおすすめは完了です</h3>
+      <p>追加で無理に行動する必要はありません。新しい相手を見たいときだけ、候補一覧を確認できます。</p>
+      <button className="secondary-button empty-action" onClick={onOpenDiscover}>候補を見る</button>
+    </section>;
+  }
+
+  if (!items.length) {
+    return <section className="daily-queue empty waiting-empty">
+      <div className="queue-wait-icon">○</div>
+      <span className="section-kicker">今日のおすすめ</span>
+      <h3>今は実行できる候補がありません</h3>
+      <p>今ある候補には、まだ具体的な投稿や十分な判断材料がありません。必要なら新しい候補を探せます。</p>
+      <button className="primary-button empty-action" onClick={onOpenDiscover}>新しい候補を探す</button>
     </section>;
   }
 
   const first = items[0];
+  const firstCandidate = first.candidateId ? candidateById.get(first.candidateId) : undefined;
+  const firstCta = nextActionCta(first.action, firstCandidate);
   const remaining = items.slice(1, 8);
 
   return <section className="daily-queue">
     <div className="daily-queue-head">
       <div>
         <span className="section-kicker">今日のおすすめ</span>
-        <h2>上から順に進めればOK</h2>
+        <h2>まず、この1件から</h2>
       </div>
       <span className="queue-count">残り {items.length}件</span>
-    </div>
-
-    <div className="queue-summary" aria-label="今日の行動内訳">
-      <span><b>{summary.connect}</b>新しくつながる</span>
-      <span><b>{summary.engage}</b>交流する</span>
-      <span><b>{summary.cleanup}</b>整理する</span>
-      <span><b>{summary.self}</b>自分を改善</span>
     </div>
 
     <button
       className={first.action === 'unfollow_review' ? 'next-action-card cleanup' : 'next-action-card'}
       onClick={() => openItem(first)}
+      aria-label={`${first.title}：${firstCta}`}
     >
-      <span className="next-action-order">NEXT</span>
+      <span className="next-action-order">次にやること</span>
       <span className="next-action-icon">{actionIcon[first.action] || '◎'}</span>
       <span className="next-action-copy">
         <small>{actionLabel[first.action] || '確認'}</small>
         <strong>{first.title}</strong>
         <p>{first.reason}</p>
       </span>
-      <span className="next-action-cta">開く <b>›</b></span>
+      <span className="next-action-cta">{firstCta} <b>›</b></span>
     </button>
 
     {remaining.length > 0 && <div className="queue-list-block">
@@ -117,4 +131,17 @@ export default function DailyQueue({ state, onOpenCandidate, onOpenMe, onOpenDis
     </div>}
     {items.length > 8 && <p className="queue-more">まず上位8件だけ表示しています。完了すると次の候補が自動で繰り上がります。</p>}
   </section>;
+}
+
+function nextActionCta(action: string, candidate?: Candidate) {
+  if (action === 'self_improve') return '自分を整える';
+  const platform = candidate ? platformLabel(candidate.platform) : 'SNS';
+  switch (action) {
+    case 'follow': return `${platform}でフォロー`;
+    case 'like': return `${platform}で対象投稿を開く`;
+    case 'reply': return `${platform}で返信先を開く`;
+    case 'dm': return `${platform}でDM先を開く`;
+    case 'unfollow_review': return `${platform}で確認する`;
+    default: return `${platform}で確認する`;
+  }
 }
