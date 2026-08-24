@@ -39,7 +39,17 @@ requireAll(providerApi, [
   'const { start, end } = utcMonthWindow();',
   'occurred_at >= ? AND occurred_at < ?',
   'new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1))',
-], 'General provider/LLM budget accounting can again include future-month ledger rows.');
+  'if (!validRawXProfile(raw))',
+  'if (!requested.has(username))',
+  'seenIds.has(raw.id) || seenUsernames.has(username)',
+  'rawProfiles.length > usernames.length',
+], 'General provider budget accounting or raw paid X-enrichment response validation regressed.');
+
+const enrichFetchIndex = providerApi.indexOf('const profiles = await fetchXProfiles(usernames, env.X_BEARER_TOKEN);');
+const enrichFinalizeIndex = providerApi.indexOf("await finalizeReservation(env, reservationId, 'user_read'", enrichFetchIndex);
+if (enrichFetchIndex < 0 || enrichFinalizeIndex < 0 || enrichFetchIndex > enrichFinalizeIndex) {
+  throw new Error('Paid X profile enrichment can finalize a reduced cost before its requested-set validation returns successfully.');
+}
 
 requireAll(store, [
   'const profileContextChanged = candidate.bio !== profile.description',
@@ -54,4 +64,4 @@ if (unboundedMonthQuery.test(xOwned) || unboundedMonthQuery.test(providerApi)) {
   throw new Error('A paid-budget query appears to have a lower month bound without an upper month bound.');
 }
 
-console.log('Cache/ledger invariants OK: malformed X/Instagram snapshots are rejected and evicted, raw paid owned-X payloads are validated before reservation shrink, newly produced snapshots are validated before caching, paid budget totals/reservations are bounded to the active UTC month, and materially changed official X profiles invalidate stale follow advice before it can remain in Today.');
+console.log('Cache/ledger invariants OK: malformed X/Instagram snapshots are rejected and evicted, raw paid owned-X/X-enrichment payloads are validated before reservation shrink/finalize, newly produced snapshots are validated before caching, paid budget totals/reservations are bounded to the active UTC month, and materially changed official X profiles invalidate stale follow advice before it can remain in Today.');
