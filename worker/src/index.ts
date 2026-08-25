@@ -408,7 +408,7 @@ async function rankWithProvider(provider: 'groq' | 'deepseek', body: RankRequest
   const isGroq = provider === 'groq';
   const baseUrl = isGroq ? 'https://api.groq.com/openai/v1' : (env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com');
   const apiKey = isGroq ? env.GROQ_API_KEY! : env.DEEPSEEK_API_KEY!;
-  const model = isGroq ? (env.GROQ_MODEL || 'openai/gpt-oss-20b') : (env.DEEPSEEK_MODEL || 'deepseek-chat');
+  const model = isGroq ? (env.GROQ_MODEL || 'llama-3.3-70b-versatile') : (env.DEEPSEEK_MODEL || 'deepseek-chat');
   const hasSelfProfile = body.candidates.some((candidate) => candidate.kind === 'self_profile');
   const prompt = {
     mission: body.mission,
