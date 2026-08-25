@@ -5,6 +5,9 @@ import { getSyncToken } from './controlToken';
 import DailyQueue from './DailyQueue';
 import { buildDailyQueue, queueSummary } from './daily';
 import { mergeDiscoveredProfiles } from './discoveryStore';
+import Manual from './Manual';
+import Onboarding from './Onboarding';
+import { hasSeenOnboarding, markOnboardingSeen } from './onboarding';
 import { addCandidateFromReference, applyRankResults, applySelfAnalysis, applyXProfiles, loadState, recordInteraction, saveState, setFollowBackStatus, syncBudget, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
 import { copyDraft, openCandidate, platformLabel } from './social';
 import type { AppState, Candidate, Mission, Platform } from './types';
@@ -33,6 +36,8 @@ function App() {
   const [enrichingX, setEnrichingX] = useState(false);
   const [analyzingSelf, setAnalyzingSelf] = useState(false);
   const [apiNote, setApiNote] = useState(apiConfigured ? 'API接続待機' : 'ローカルモード');
+  const [showOnboarding, setShowOnboarding] = useState(() => !hasSeenOnboarding());
+  const [showManual, setShowManual] = useState(false);
   const localDay = useLocalDayKey();
 
   useEffect(() => saveState(state), [state]);
@@ -193,7 +198,10 @@ function App() {
           <strong>Social Mission</strong>
           <span>{apiNote}</span>
         </div>
-        <BudgetPill state={state} />
+        <div className="topbar-actions">
+          <button className="help-button" onClick={() => setShowManual(true)} aria-label="使い方ガイドを開く">？</button>
+          <BudgetPill state={state} />
+        </div>
       </header>
 
       <main className="page">
@@ -201,7 +209,7 @@ function App() {
         {tab === 'discover' && <Discover state={state} candidates={active} onOpen={onOpen} onChange={setState} onDiscover={discoverCandidates} onRerank={rerankCandidates} onEnrichX={enrichXCandidates} discovering={discovering} ranking={ranking} enrichingX={enrichingX} apiNote={apiNote} />}
         {tab === 'relations' && <Relations state={state} onOpen={onOpen} onChange={setState} />}
         {tab === 'me' && <Me state={state} onAnalyze={analyzeMe} analyzing={analyzingSelf} />}
-        {tab === 'settings' && <Settings state={state} onChange={setState} />}
+        {tab === 'settings' && <Settings state={state} onChange={setState} onOpenManual={() => setShowManual(true)} />}
       </main>
 
       <nav className="bottom-nav" aria-label="Main navigation">
@@ -213,6 +221,8 @@ function App() {
       </nav>
 
       {pending && <ResultSheet candidate={pending} onResolve={resolvePending} />}
+      {showOnboarding && <Onboarding onFinish={() => { markOnboardingSeen(); setShowOnboarding(false); }} onOpenManual={() => setShowManual(true)} />}
+      {!showOnboarding && showManual && <Manual onClose={() => setShowManual(false)} />}
     </div>
   );
 }
@@ -422,7 +432,7 @@ function Me({ state, onAnalyze, analyzing }: { state: AppState; onAnalyze: (prof
   </>;
 }
 
-function Settings({ state, onChange }: { state: AppState; onChange: (state: AppState) => void }) {
+function Settings({ state, onChange, onOpenManual }: { state: AppState; onChange: (state: AppState) => void; onOpenManual: () => void }) {
   const [missionText, setMissionText] = useState(state.mission.text);
   const [primaryGoal, setPrimaryGoal] = useState(state.mission.primaryGoal);
   const [communicationDNA, setCommunicationDNA] = useState(state.mission.communicationDNA);
@@ -438,6 +448,10 @@ function Settings({ state, onChange }: { state: AppState; onChange: (state: AppS
 
   return <>
     <PageHeading eyebrow="SETTINGS" title="AIに目的地を教える" text="この設定が候補選び・交流文・自己改善の判断軸になります。" />
+    <section className="form-card">
+      <div className="field-title"><div><strong>アプリの使い方が分からないときは</strong><span>5つのタブの役割と、基本の流れをいつでも見返せます</span></div><b>？</b></div>
+      <button className="secondary-button" onClick={onOpenManual}>使い方ガイドを見る</button>
+    </section>
     <section className="form-card">
       <label>Mission<textarea value={missionText} onChange={(event) => setMissionText(event.target.value)} /></label>
       <label>最優先ゴール<input value={primaryGoal} onChange={(event) => setPrimaryGoal(event.target.value)} /></label>
