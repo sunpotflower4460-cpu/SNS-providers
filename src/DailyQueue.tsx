@@ -8,6 +8,7 @@ interface Props {
   state: AppState;
   onOpenCandidate: (candidate: Candidate) => void;
   onOpenMe: () => void;
+  onOpenDiscover: () => void;
 }
 
 const actionIcon: Record<string, string> = {
@@ -20,21 +21,36 @@ const actionIcon: Record<string, string> = {
   self_improve: '✦',
 };
 
-export default function DailyQueue({ state, onOpenCandidate, onOpenMe }: Props) {
+export default function DailyQueue({ state, onOpenCandidate, onOpenMe, onOpenDiscover }: Props) {
   const localDay = useLocalDayKey();
   const items = useMemo(() => buildDailyQueue(state), [state, localDay]);
   const summary = useMemo(() => queueSummary(items), [items]);
   const candidateById = useMemo(() => new Map(state.candidates.map((candidate) => [candidate.id, candidate])), [state.candidates]);
+  const hasAnyCandidates = state.candidates.some((candidate) => !candidate.skipped);
 
   if (!items.length) {
-    return <section className="daily-queue empty"><span className="eyebrow">DAILY QUEUE</span><h3>今日のキューは完了です</h3><p>新しい候補を追加するか、明日またMissionに沿って組み直します。</p></section>;
+    if (!hasAnyCandidates) {
+      return <section className="daily-queue empty">
+        <span className="eyebrow">DAILY QUEUE</span>
+        <h3>今日のキューはまだ空です</h3>
+        <p>Discoverで交流したい人を追加すると、Missionに近い順でここにおすすめが並びます。</p>
+        <button className="secondary-button" onClick={onOpenDiscover}>Discoverを開く</button>
+      </section>;
+    }
+    return <section className="daily-queue empty">
+      <span className="eyebrow">DAILY QUEUE</span>
+      <h3>今日のキューは完了です</h3>
+      <p>新しい候補を追加するか、明日またMissionに沿って組み直します。</p>
+      <button className="secondary-button" onClick={onOpenDiscover}>候補を追加する</button>
+    </section>;
   }
 
   return <section className="daily-queue">
     <div className="daily-queue-head">
       <div><span className="eyebrow">DAILY QUEUE</span><h2>今日のおすすめ順</h2></div>
-      <span className="queue-count">{items.length} actions</span>
+      <span className="queue-count">{items.length}件</span>
     </div>
+    <p className="queue-hint">上から順にタップして進めましょう</p>
 
     <div className="queue-summary">
       <span><b>{summary.connect}</b>つながる</span>

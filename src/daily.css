@@ -8,9 +8,11 @@
 .daily-queue.empty { padding: 20px; }
 .daily-queue.empty h3 { margin: 7px 0 5px; font-size: 15px; }
 .daily-queue.empty p { margin: 0; color: #8e9bb0; font-size: 10px; line-height: 1.6; }
+.daily-queue.empty button { margin-top: 13px; }
 .daily-queue-head { display: flex; justify-content: space-between; align-items: end; gap: 12px; }
 .daily-queue-head h2 { margin: 4px 0 0; font-size: 18px; letter-spacing: -.025em; }
 .queue-count { flex: none; padding: 5px 8px; border-radius: 999px; border: 1px solid rgba(255,255,255,.08); color: #9faec4; font-size: 8px; background: rgba(255,255,255,.03); }
+.queue-hint { margin: 10px 0 12px; color: #7e8da1; font-size: 9.5px; }
 .queue-summary { display: grid; grid-template-columns: repeat(4,1fr); gap: 6px; margin: 13px 0; }
 .queue-summary span { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 4px; border: 1px solid rgba(255,255,255,.06); border-radius: 12px; color: #8190a5; font-size: 8px; background: rgba(0,0,0,.08); }
 .queue-summary b { color: #dce6f5; font-size: 14px; }
