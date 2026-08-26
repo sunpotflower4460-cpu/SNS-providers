@@ -37,12 +37,17 @@ export default function DailyQueue({ state, onOpenCandidate, onOpenMe, onOpenDis
   const items = useMemo(() => buildDailyQueue(state), [state, localDay]);
   const candidateById = useMemo(() => new Map(state.candidates.map((candidate) => [candidate.id, candidate])), [state.candidates]);
   const activeCandidateCount = state.candidates.filter((candidate) => !candidate.skipped).length;
-  const completedToday = useMemo(() => state.interactions.some((interaction) => {
-    const at = new Date(interaction.at);
-    return interaction.action !== 'review'
-      && Number.isFinite(at.getTime())
-      && localDayKey(at) === localDay;
-  }), [state.interactions, localDay]);
+  const completedToday = useMemo(() => {
+    const selfCompleted = state.selfProfile.analyzedAt
+      ? localDayKey(new Date(state.selfProfile.analyzedAt)) === localDay
+      : false;
+    return selfCompleted || state.interactions.some((interaction) => {
+      const at = new Date(interaction.at);
+      return interaction.action !== 'review'
+        && Number.isFinite(at.getTime())
+        && localDayKey(at) === localDay;
+    });
+  }, [state.interactions, state.selfProfile.analyzedAt, localDay]);
 
   function openItem(item: (typeof items)[number]) {
     if (item.kind === 'self') {
