@@ -1,6 +1,7 @@
 import api from './index';
 import { discoverSocialProfiles } from './discovery';
 import { syncInstagramEngagers, type InstagramOwnedSyncRequest } from './instagramOwned';
+import { reserveSyncLease, releaseSyncLease } from './syncLease';
 import { completeXOAuth, disconnectXOAuth, startXOAuth, xOAuthStatus } from './xOAuth';
 import { syncOwnedXData, type XOwnedSyncRequest } from './xOwned';
 
@@ -129,9 +130,18 @@ export default {
       const authorized = await authorizeSync(request, env);
       if (!authorized.ok) return json({ error: authorized.reason }, authorized.status, request, env);
       try {
-        const body = await request.json<XOwnedSyncRequest>();
-        const result = await syncOwnedXData(env, body || {});
-        return json(result, 200, request, env);
+        const body = (await request.json<XOwnedSyncRequest>()) || {};
+        const userId = sanitizeUserId(body.userId || 'local-user');
+        const leaseResult = await reserveSyncLease(env.DB, userId, 'x_owned_sync', 3 * 60 * 1000);
+        if (!leaseResult.ok) {
+          return json({ enabled: false, source: 'disabled', costUsd: 0, reason: leaseResult.reason }, 200, request, env);
+        }
+        try {
+          const result = await syncOwnedXData(env, body);
+          return json(result, 200, request, env);
+        } finally {
+          await releaseSyncLease(env.DB, leaseResult.lease);
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Owned X sync failed';
         return json({ error: message }, 400, request, env);
@@ -142,9 +152,18 @@ export default {
       const authorized = await authorizeSync(request, env);
       if (!authorized.ok) return json({ error: authorized.reason }, authorized.status, request, env);
       try {
-        const body = await request.json<InstagramOwnedSyncRequest>();
-        const result = await syncInstagramEngagers(env, body || {});
-        return json(result, 200, request, env);
+        const body = (await request.json<InstagramOwnedSyncRequest>()) || {};
+        const userId = sanitizeUserId(body.userId || 'local-user');
+        const leaseResult = await reserveSyncLease(env.DB, userId, 'instagram_owned_sync', 5 * 60 * 1000);
+        if (!leaseResult.ok) {
+          return json({ enabled: false, source: 'disabled', externalCostUsd: 0, engagers: [], reason: leaseResult.reason }, 200, request, env);
+        }
+        try {
+          const result = await syncInstagramEngagers(env, body);
+          return json(result, 200, request, env);
+        } finally {
+          await releaseSyncLease(env.DB, leaseResult.lease);
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Instagram engager sync failed';
         return json({ error: message }, 400, request, env);
