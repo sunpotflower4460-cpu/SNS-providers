@@ -27,13 +27,21 @@ if (rawValidationIndex < 0 || finalizeOwnedIndex < 0 || rawValidationIndex > fin
   throw new Error('Owned-X can shrink the worst-case reservation before raw paid provider payload validation completes.');
 }
 
+requireAll(xOwned, [
+  "if (result.meta.changes !== 1) throw new Error('Owned-X budget reservation disappeared before finalization')",
+  'await markReservationUncertain(env, reservationId, userId, worstCaseCost);',
+  "INSERT OR IGNORE INTO budget_ledger",
+  "VALUES (?, ?, 'x', 'owned_sync_uncertain', ?, 0, 0, 0, ?)",
+], 'Owned-X can again report paid work as finalized after its budget reservation row disappears.');
+
 requireAll(instagramOwned, [
   'validInstagramSnapshot(result, instagramUserId)',
   'validInstagramSnapshot(snapshot, expectedAccountId)',
   'DELETE FROM instagram_engager_snapshots WHERE user_id = ?',
   'uniqueEngagers(value.engagers)',
   'validInstagramMediaUrl(value.latestMediaPermalink)',
-], 'Instagram cache validation/eviction or deep snapshot integrity checks regressed.');
+  'existing.latestMediaPermalink = item.permalink || null;',
+], 'Instagram cache validation/eviction, deep snapshot integrity, or latest-comment target binding regressed.');
 
 requireAll(providerApi, [
   'const { start, end } = utcMonthWindow();',
@@ -51,17 +59,27 @@ if (enrichFetchIndex < 0 || enrichFinalizeIndex < 0 || enrichFetchIndex > enrich
   throw new Error('Paid X profile enrichment can finalize a reduced cost before its requested-set validation returns successfully.');
 }
 
+requireAll(providerApi, [
+  "if (result.meta.changes !== 1) throw new Error('Paid budget reservation disappeared before finalization')",
+  "await markReservationUncertain(env, reservationId, 'user_read_uncertain', userId, 'x', worstCaseCost);",
+  "await markReservationUncertain(env, reservationId, 'rank_uncertain', userId, provider, preflightUsd);",
+  'INSERT OR IGNORE INTO budget_ledger',
+  'Math.max(0, reservedUsd)',
+], 'Paid X/LLM accounting can again silently lose a reservation between provider success and ledger finalization.');
+
 requireAll(store, [
   'const profileContextChanged = candidate.bio !== profile.description',
   'const staleFollowAdvice = profileContextChanged',
   "candidate.recommendedAction === 'follow'",
   "recommendedAction: staleFollowAdvice ? 'review' as const : candidate.recommendedAction",
   '古い推薦のままTodayには出しません。',
-], 'A materially changed official X profile can leave an obsolete follow recommendation actionable in Today.');
+  'const identityResetIds = new Set<string>();',
+  'state.interactions.filter((interaction) => !identityResetIds.has(interaction.candidateId))',
+], 'Official X enrichment can leave obsolete follow advice actionable or transfer CRM history across immutable identity changes.');
 
 const unboundedMonthQuery = /budget_ledger[^\n]{0,220}occurred_at >= \?(?![^\n]{0,120}occurred_at < \?)/;
 if (unboundedMonthQuery.test(xOwned) || unboundedMonthQuery.test(providerApi)) {
   throw new Error('A paid-budget query appears to have a lower month bound without an upper month bound.');
 }
 
-console.log('Cache/ledger invariants OK: malformed X/Instagram snapshots are rejected and evicted, raw paid owned-X/X-enrichment payloads are validated before reservation shrink/finalize, newly produced snapshots are validated before caching, paid budget totals/reservations are bounded to the active UTC month, and materially changed official X profiles invalidate stale follow advice before it can remain in Today.');
+console.log('Cache/ledger invariants OK: malformed X/Instagram snapshots are rejected and evicted, raw paid owned-X/X-enrichment payloads are validated before reservation shrink/finalize, vanished paid reservations fail closed and are conservatively reconstructed when possible, newly produced snapshots are validated before caching, paid budget totals/reservations are bounded to the active UTC month, Instagram latest comment targets stay event-bound, and official X identity/profile changes cannot leave stale CRM advice actionable.');
