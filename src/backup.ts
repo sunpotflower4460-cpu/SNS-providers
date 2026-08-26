@@ -25,6 +25,8 @@ const legacyDemoCandidates = new Set([
   'x-2:x:songwriter_friend',
 ]);
 
+const xReservedPaths = new Set(['home', 'explore', 'notifications', 'messages', 'search', 'i', 'settings', 'compose', 'intent']);
+const instagramReservedPaths = new Set(['p', 'reel', 'reels', 'stories', 'explore', 'accounts', 'direct', 'about', 'developer']);
 const allowedStages = new Set(['discovered', 'interested', 'following', 'engaged', 'recognized', 'conversation', 'relationship']);
 const allowedKinds = new Set(['fan', 'artist', 'creator', 'media', 'venue', 'other']);
 const allowedActions = new Set(['follow', 'like', 'reply', 'dm', 'review', 'unfollow_review']);
@@ -217,7 +219,7 @@ function normalizeInsight(raw: SelfInsight): SelfInsight | null {
 function normalizeXAccount(account: AppState['xAccount'] | undefined): AppState['xAccount'] {
   if (!account || typeof account !== 'object') return {};
   return {
-    username: safeText(account.username, 15) || undefined,
+    username: sanitizeUsername('x', account.username) || undefined,
     displayName: safeText(account.displayName, 180) || undefined,
     verified: typeof account.verified === 'boolean' ? account.verified : undefined,
     publicMetrics: normalizeMetrics(account.publicMetrics),
@@ -249,7 +251,12 @@ function normalizeInstagramAccount(account: AppState['instagramAccount']): AppSt
 function sanitizeUsername(platform: Candidate['platform'], value: unknown) {
   if (typeof value !== 'string') return '';
   const username = value.trim().replace(/^@/, '');
-  if (platform === 'x') return /^[A-Za-z0-9_]{1,15}$/.test(username) ? username : '';
+  const lowered = username.toLowerCase();
+  if (platform === 'x') {
+    if (xReservedPaths.has(lowered)) return '';
+    return /^[A-Za-z0-9_]{1,15}$/.test(username) ? username : '';
+  }
+  if (instagramReservedPaths.has(lowered)) return '';
   return /^[A-Za-z0-9._]{1,30}$/.test(username) ? username : '';
 }
 
