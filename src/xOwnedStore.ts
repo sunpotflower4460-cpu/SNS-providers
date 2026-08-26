@@ -1,5 +1,5 @@
 import { applyOwnedXSync } from './store';
-import type { XOwnedSyncResponse } from './xAccount';
+import type { XFollowEvidenceTarget, XOwnedSyncResponse } from './xAccount';
 import type { AppState, Candidate } from './types';
 
 const MAX_NEW_INBOUND_CANDIDATES = 40;
@@ -168,6 +168,7 @@ function applyFullCycleFollowEvidence(state: AppState, result: XOwnedSyncRespons
   if (!evidence?.complete || evidence.targetCount <= 0) return state;
   const seen = new Set(evidence.seenKeys);
   const unseen = new Set(evidence.unseenKeys);
+  const targetByKey = new Map(evidence.targets.map((target) => [target.key, target]));
   if (!seen.size && !unseen.size) return state;
 
   const now = Date.now();
@@ -175,6 +176,13 @@ function applyFullCycleFollowEvidence(state: AppState, result: XOwnedSyncRespons
   const candidates = state.candidates.map((candidate) => {
     if (candidate.skipped || candidate.platform !== 'x' || !candidate.followedAt) return candidate;
     if (identityChangedIds.has(candidate.id)) return candidate;
+    const target = targetByKey.get(candidate.id);
+    // The async X result may arrive after a JSON/D1 restore replaced the candidate that
+    // originally owned this ID. Apply full-cycle proof only when the current candidate is
+    // still the exact tracked handle/immutable identity. If an immutable ID was not known
+    // when the cycle began, fail closed once the current candidate has gained one and wait
+    // for the next cycle to prove the binding using that ID.
+    if (!target || !matchesFollowEvidenceTarget(candidate, target)) return candidate;
     if (seen.has(candidate.id)) {
       return {
         ...candidate,
@@ -214,4 +222,10 @@ function applyFullCycleFollowEvidence(state: AppState, result: XOwnedSyncRespons
   });
 
   return { ...state, candidates };
+}
+
+function matchesFollowEvidenceTarget(candidate: Candidate, target: XFollowEvidenceTarget) {
+  if (candidate.username.toLowerCase() !== target.username.toLowerCase()) return false;
+  if (target.platformUserId) return candidate.platformUserId === target.platformUserId;
+  return !candidate.platformUserId;
 }
