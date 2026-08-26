@@ -34,7 +34,9 @@ export default function WorkloadControls({ state, onChange }: Props) {
         dailyConversationLimit: clamp(next.conversation, 0, 30),
         dailyLightEngagementLimit: clamp(next.light, 0, 30),
         dailyCleanupLimit: clamp(next.cleanup, 0, 30),
-        dailySelfImproveLimit: clamp(next.self, 0, 5),
+        // The current self-improvement workflow is one aggregate Me analysis. Multiple
+        // slots would all open the same action and disappear together, so keep it binary.
+        dailySelfImproveLimit: clamp(next.self, 0, 1),
       };
       return { ...current, relationshipPolicy };
     });
@@ -87,7 +89,7 @@ export default function WorkloadControls({ state, onChange }: Props) {
         <WorkloadSlider label="会話する" value={values.conversation} min={0} max={30} hint="返信・DM" onChange={(conversation) => apply({ ...values, conversation })} />
         <WorkloadSlider label="軽く反応する" value={values.light} min={0} max={30} hint="対象投稿が決まっているいいね" onChange={(light) => apply({ ...values, light })} />
         <WorkloadSlider label="フォローを見直す" value={values.cleanup} min={0} max={30} hint="継続するか確認する相手" onChange={(cleanup) => apply({ ...values, cleanup })} />
-        <WorkloadSlider label="自分の発信を整える" value={values.self} min={0} max={5} hint="プロフィール・投稿の改善" onChange={(self) => apply({ ...values, self })} />
+        <WorkloadSlider label="自分の発信を整える" value={values.self} min={0} max={1} hint="その日のプロフィール・投稿分析を1回" onChange={(self) => apply({ ...values, self })} />
         <small className="workload-warning">ここで決めるのはSNSの操作上限ではなく、あなたが1日に確認する量です。実際のフォロー・いいね・返信は公式SNSで行います。</small>
       </div>
     </details>
@@ -117,7 +119,7 @@ function valuesFromPolicy(policy: RelationshipPolicy): WorkloadValues {
     conversation: clamp(policy.dailyConversationLimit ?? 8, 0, 30),
     light: clamp(policy.dailyLightEngagementLimit ?? 8, 0, 30),
     cleanup: clamp(policy.dailyCleanupLimit ?? 5, 0, 30),
-    self: clamp(policy.dailySelfImproveLimit ?? 2, 0, 5),
+    self: clamp(policy.dailySelfImproveLimit ?? 1, 0, 1),
   };
 }
 
@@ -150,7 +152,7 @@ function suggestWorkload(state: AppState): WorkloadValues {
   const limit = state.budget.monthlyLimitUsd;
   const usedRatio = limit > 0 ? Math.min(1, state.budget.usedUsd / limit) : 0;
   const budgetFactor = limit === 0 ? 0.82 : usedRatio >= 0.9 ? 0.72 : usedRatio >= 0.7 ? 0.86 : 1;
-  const self = state.insights.length > 0 ? Math.min(2, state.insights.length) : 0;
+  const self = state.insights.length > 0 ? 1 : 0;
   const availableActions = strongFollow + conversations + light + cleanup + self;
   const qualityBase = 18 + Math.min(52, Math.round(highMatch.length * 0.7));
   const desiredTotal = Math.round(qualityBase * budgetFactor);
