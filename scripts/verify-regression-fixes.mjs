@@ -3,9 +3,12 @@ import { readFile } from 'node:fs/promises';
 const providerApi = await readFile(new URL('../worker/src/index.ts', import.meta.url), 'utf8');
 const wrangler = await readFile(new URL('../worker/wrangler.jsonc', import.meta.url), 'utf8');
 const app = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8');
+const api = await readFile(new URL('../src/api.ts', import.meta.url), 'utf8');
 const backup = await readFile(new URL('../src/backup.ts', import.meta.url), 'utf8');
 const workload = await readFile(new URL('../src/WorkloadControls.tsx', import.meta.url), 'utf8');
 const statusPresentation = await readFile(new URL('../src/statusPresentation.ts', import.meta.url), 'utf8');
+const resultResolution = await readFile(new URL('../src/resultResolution.ts', import.meta.url), 'utf8');
+const instagramOwnedStore = await readFile(new URL('../src/instagramOwnedStore.ts', import.meta.url), 'utf8');
 
 const expectedGroqModel = 'llama-3.3-70b-versatile';
 if (!providerApi.includes(`env.GROQ_MODEL || '${expectedGroqModel}'`)
@@ -41,6 +44,12 @@ if (!app.includes("candidate.reason.startsWith('無料Web検索から候補')")
   throw new Error('Automatic refill can again lose successful discovery yield, re-search before retrying untouched candidates, or become stuck after a transient failure.');
 }
 
+if (!api.includes('completeFreeOnlyRankingBatch(validated.results, selected)')
+  || !api.includes("recommendedAction: 'review'")
+  || !api.includes('無料評価でこの候補の確実な判定が返らなかったため、本人確認を優先します。')) {
+  throw new Error('A partial free-provider ranking response can again leave omitted candidates untouched and trigger repeated automatic evaluation.');
+}
+
 if (!backup.includes('monthlyLimitUsd: clampNumber(state?.budget?.monthlyLimitUsd, 0, 10, 3)')
   || !backup.includes('followBackReviewAfterDays: clampInteger(policy?.followBackReviewAfterDays, 7, 90')
   || !backup.includes('dailyQueueLimit: clampInteger(policy?.dailyQueueLimit, 1, 150')
@@ -54,4 +63,18 @@ if (!backup.includes('monthlyLimitUsd: clampNumber(state?.budget?.monthlyLimitUs
   throw new Error('Restored settings can again exceed supported UI/runtime bounds or poison candidates with an unbounded future snooze.');
 }
 
-console.log('Regression fixes OK: provider defaults are aligned, workload edits preserve concurrent state, recommendations retain refill capacity, status rendering is non-destructive, automatic refill is retry-safe, and restored values stay inside supported runtime bounds.');
+if (!resultResolution.includes('const completedVisibleEngagement =')
+  || !resultResolution.includes("engagementUrl: visibleCandidate.recommendedAction === 'like' || visibleCandidate.recommendedAction === 'reply'")
+  || !resultResolution.includes("const recordedAction: Interaction['action'] = visibleReview && action === 'kept'")
+  || !resultResolution.includes("? 'review'")) {
+  throw new Error('Completed exact engagement can again replay later, or a profile-only review can incorrectly advance relationship engagement.');
+}
+
+if (!instagramOwnedStore.includes('isNewerCommentSignal(existing, engager.lastCommentAt)')
+  || !instagramOwnedStore.includes("const recommendedAction: Candidate['recommendedAction'] = newCommentSignal && engagementUrl")
+  || !instagramOwnedStore.includes('cached/same comment')
+  || !instagramOwnedStore.includes('incoming > handled')) {
+  throw new Error('Cached Instagram comments can again recreate already-completed reply actions without a newer inbound signal.');
+}
+
+console.log('Regression fixes OK: provider defaults are aligned, state updates are race-safe, auto refill is retry-safe and partial-response-safe, restored values stay bounded, completed exact engagement is consumed, and cached Instagram comments do not replay handled actions.');
