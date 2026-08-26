@@ -105,9 +105,10 @@ export async function syncInstagramEngagers(env: InstagramOwnedEnv, body: Instag
       if (isLater(comment.timestamp, existing.lastCommentAt)) {
         existing.lastCommentAt = comment.timestamp || existing.lastCommentAt;
         existing.lastCommentText = (comment.text || '').trim().slice(0, 500);
-        existing.latestMediaPermalink = item.permalink || existing.latestMediaPermalink;
-      } else if (!existing.latestMediaPermalink && item.permalink) {
-        existing.latestMediaPermalink = item.permalink;
+        // Keep the concrete action target bound to the exact same comment event as
+        // lastCommentAt/lastCommentText. If this newest media lacks a permalink, do not
+        // inherit an older post URL and accidentally send the user to the wrong post.
+        existing.latestMediaPermalink = item.permalink || null;
       }
       engagers.set(key, existing);
     }
