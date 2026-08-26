@@ -7,6 +7,7 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
   const byUsername = new Map(state.candidates.filter((candidate) => candidate.platform === 'instagram').map((candidate) => [candidate.username.toLowerCase(), candidate]));
   const additions: Candidate[] = [];
   const updates = new Map<string, Candidate>();
+  const identityResetIds = new Set<string>();
 
   for (const engager of result.engagers || []) {
     const username = engager.username.trim().replace(/^@/, '').toLowerCase();
@@ -27,6 +28,40 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
       : '既に相手から反応があるため、まずコメント文脈の確認や自然な返信を優先します。';
 
     if (existing) {
+      const existingStableId = stableInstagramId(existing.platformUserId);
+      const incomingStableId = stableInstagramId(engager.id);
+      const identityChanged = Boolean(existingStableId && incomingStableId && existingStableId !== incomingStableId);
+
+      if (identityChanged) {
+        identityResetIds.add(existing.id);
+        const engagementUrl = engager.latestMediaPermalink || undefined;
+        const recommendedAction: Candidate['recommendedAction'] = engagementUrl ? 'reply' : 'review';
+        updates.set(existing.id, {
+          ...existing,
+          skipped: false,
+          snoozedUntil: undefined,
+          profileUrl: engager.profileUrl,
+          engagementUrl,
+          platformUserId: incomingStableId,
+          profileSyncedAt: syncedAt,
+          kind: 'fan',
+          match,
+          relationshipScore,
+          stage: 'engaged',
+          reason: `Instagramの公式ユーザーIDが以前の記録と異なります。同じ@usernameを別アカウントが使用している可能性があるため、過去の関係履歴を新しい相手へ引き継がず再確認します。${baseReason}`,
+          strategy: engagementUrl
+            ? strategy
+            : '新しいアカウントからのコメント接点は確認できましたが対象投稿URLがないため、古い投稿を流用せずプロフィールから確認します。',
+          tags: ['inbound', 'commenter'],
+          recommendedAction,
+          draft: undefined,
+          followedAt: undefined,
+          followBack: null,
+          lastInteractionAt: latestIso(undefined, engager.lastCommentAt) || syncedAt,
+        });
+        continue;
+      }
+
       // A cached/old comment must not undo an explicit user dismissal. Only a comment
       // whose timestamp is newer than the dismissal/last known signal may reactivate it.
       if (existing.skipped && !freshContact) continue;
@@ -46,6 +81,10 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
       const exactTargetStrategy = newCommentSignal && !newEngagementUrl
         ? '新しいInstagramコメントは確認できましたが、対象投稿URLを取得できなかったため古い投稿を流用せず、プロフィールから内容を確認します。'
         : strategy;
+      // A username-based fallback ID is not immutable. Never let it overwrite a numeric
+      // Graph user ID already known for this candidate; upgrade fallback -> numeric when
+      // possible, but only compare two numeric IDs for identity-change detection above.
+      const platformUserId = incomingStableId || existingStableId || engager.id || existing.platformUserId;
 
       updates.set(existing.id, {
         ...existing,
@@ -58,7 +97,7 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
         strategy: refreshOpportunityCopy ? exactTargetStrategy : existing.strategy,
         recommendedAction,
         draft: recommendedAction === 'reply' ? existing.draft : undefined,
-        platformUserId: engager.id || existing.platformUserId,
+        platformUserId,
         profileSyncedAt: syncedAt,
         lastInteractionAt: latestIso(existing.lastInteractionAt, engager.lastCommentAt),
         tags: [...new Set([...existing.tags, 'inbound', 'commenter'])],
@@ -94,6 +133,9 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
   return {
     ...state,
     candidates: [...additions, ...candidates],
+    interactions: identityResetIds.size
+      ? state.interactions.filter((interaction) => !identityResetIds.has(interaction.candidateId))
+      : state.interactions,
     instagramAccount: {
       lastSyncedAt: syncedAt,
       mediaScanned: result.mediaScanned || 0,
@@ -101,6 +143,11 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
       engagerCount: result.engagers?.length || 0,
     },
   };
+}
+
+function stableInstagramId(value?: string | null) {
+  const id = value?.trim() || '';
+  return /^\d{1,30}$/.test(id) ? id : '';
 }
 
 function isFreshCommentAfterDismissal(candidate: Candidate, incomingAt: string | null) {
