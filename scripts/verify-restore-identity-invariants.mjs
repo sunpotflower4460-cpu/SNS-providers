@@ -4,6 +4,7 @@ const backup = await readFile(new URL('../src/backup.ts', import.meta.url), 'utf
 const daily = await readFile(new URL('../src/daily.ts', import.meta.url), 'utf8');
 const xAccount = await readFile(new URL('../src/xAccount.ts', import.meta.url), 'utf8');
 const xOwnedStore = await readFile(new URL('../src/xOwnedStore.ts', import.meta.url), 'utf8');
+const instagramOwnedStore = await readFile(new URL('../src/instagramOwnedStore.ts', import.meta.url), 'utf8');
 
 const requiredRestoreGuards = [
   'const knownIdentities = new Set(group.map(stableCandidateIdentity).filter(Boolean));',
@@ -29,13 +30,8 @@ if (!daily.includes("relationshipItems.filter((item) => item.action === 'like')"
   throw new Error('Review-only identity conflicts can leak back into the actionable Today queue.');
 }
 
-const requiredFollowEvidenceGuards = [
-  "!candidate.tags.includes('identity-conflict')",
-];
-for (const fragment of requiredFollowEvidenceGuards) {
-  if (!xAccount.includes(fragment)) {
-    throw new Error(`Ambiguous restored handles can re-enter follow-evidence tracking: ${fragment}`);
-  }
+if (!xAccount.includes("!candidate.tags.includes('identity-conflict')")) {
+  throw new Error('Ambiguous restored X handles can re-enter follow-evidence tracking.');
 }
 
 const requiredOwnedSyncGuards = [
@@ -53,4 +49,20 @@ for (const fragment of requiredOwnedSyncGuards) {
   }
 }
 
-console.log('Restore identity invariants OK: immutable-ID conflicts preserve CRM history, stay out of follow evidence/Today actions, and resolve deterministically when official X identity arrives.');
+const requiredInstagramGuards = [
+  'const byUsername = new Map<string, Candidate[]>();',
+  'const knownUsernameIdentities = new Set(usernameGroup.map((candidate) => stableInstagramId(candidate.platformUserId)).filter(Boolean));',
+  'for (const conflicting of usernameGroup) {',
+  'else if (incomingStableId && knownUsernameIdentities.size > 1) {',
+  "const identityConflictResolved = Boolean(stableExisting && existing.tags.includes('identity-conflict'));",
+  "existing.tags.filter((tag) => tag !== 'identity-conflict')",
+  'conflictingRemovedIds.add(conflicting.id);',
+  'byUsername.set(username, [candidate]);',
+];
+for (const fragment of requiredInstagramGuards) {
+  if (!instagramOwnedStore.includes(fragment)) {
+    throw new Error(`Instagram identity reconciliation can reuse a recycled handle or revive stale reply routing: ${fragment}`);
+  }
+}
+
+console.log('Restore identity invariants OK: immutable-ID conflicts preserve CRM history, stay out of X follow evidence/Today actions, and resolve deterministically from official X/Instagram identity data.');
