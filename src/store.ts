@@ -338,7 +338,9 @@ export function recordInteraction(state: AppState, candidateId: string, action: 
   if (!target || target.skipped) return state;
   const cleanupKeep = action === 'kept' && target.recommendedAction === 'unfollow_review';
   const cleanupRemove = action === 'skipped' && target.recommendedAction === 'unfollow_review';
-  const recordedAction: Interaction['action'] = cleanupKeep ? 'review' : action;
+  // Keep cleanup completion distinct from a profile-only review. It is real Today work,
+  // but it must not count as relationship engagement or advance stage/score.
+  const recordedAction: Interaction['action'] = cleanupKeep ? 'unfollow_review' : action;
   const priorEngagements = state.interactions.filter((interaction) => interaction.candidateId === candidateId && interaction.action === 'kept').length;
   const interactions = [{ id: crypto.randomUUID(), candidateId, action: recordedAction, at: now }, ...state.interactions];
   const candidates = state.candidates.map((candidate) => {
