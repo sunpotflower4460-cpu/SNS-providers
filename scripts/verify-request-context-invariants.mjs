@@ -213,6 +213,8 @@ requireAll(xAccount, [
   'value.posts.length > 50',
   'uniqueUsers(value.followers)',
   'uniqueIds(value.posts)',
+  'coherentUsersAcrossLists(value.followers, value.following)',
+  'validPagingState(value.resumePaging)',
   'followersCoverage.fetched !== value.followers.length',
   '(requested.followers as number) < value.followers.length',
   'validPastishIso(value.syncedAt)',
@@ -221,7 +223,7 @@ requireAll(xAccount, [
   'value.targets.length === value.targetCount',
   'targetKeys.every((key) => allKeys.includes(key))',
   "value.source === 'cache' && value.costUsd !== 0",
-], 'Owned-X client validation can accept duplicate, oversized, temporally invalid, unbound follow-evidence, or coverage-inconsistent payloads.');
+], 'Owned-X client validation can accept duplicate, oversized, temporally invalid, contradictory, unbound follow-evidence/checkpoint, or coverage-inconsistent payloads.');
 
 requireAll(xOwnedStore, [
   'const targetByKey = new Map(evidence.targets.map((target) => [target.key, target]));',
@@ -259,18 +261,21 @@ requireAll(providerApi, [
 ], 'X enrichment can silently mutate an invalid handle into a different account name.');
 
 requireAll(xOwned, [
-  'const syncedAtMs = new Date(row.synced_at).getTime();',
+  'snapshot.syncedAt !== row.synced_at',
+  'const syncedAtMs = new Date(snapshot.syncedAt as string).getTime();',
   '!Number.isFinite(syncedAtMs)',
   'syncedAtMs > Date.now() + 60_000',
   'validOwnedSnapshot(snapshot)',
   'DELETE FROM x_owned_snapshots WHERE user_id = ?',
-  'safeCursor(row?.followers_cursor)',
-  'safeCycle(row?.followers_cycle)',
+  'pagingFromStoredRow(row)',
+  'validPagingState(snapshot.resumePaging)',
+  'validListMeta(response.meta, data.length, maxResults)',
   'X API returned an empty or invalid JSON response',
-], 'Owned-X can trust malformed/future cache state, corrupted paging state, or invalid successful JSON.');
+], 'Owned-X can trust malformed/future cache state, corrupted paging/checkpoint state, incoherent raw list metadata, or invalid successful JSON.');
 
 requireAll(instagramOwned, [
-  'const syncedAtMs = new Date(row.synced_at).getTime();',
+  'snapshot.syncedAt !== row.synced_at',
+  'const syncedAtMs = new Date(snapshot.syncedAt as string).getTime();',
   '!Number.isFinite(syncedAtMs)',
   'syncedAtMs > Date.now() + 60_000',
   'snapshot.accountId !== expectedAccountId',
@@ -278,4 +283,4 @@ requireAll(instagramOwned, [
   'Instagram Graph API returned an empty or invalid JSON response',
 ], 'Instagram owned sync can trust malformed/future cache state, mutate invalid usernames, or accept invalid successful JSON.');
 
-console.log('Request-context invariants OK: stale async results are discarded, full-cycle X evidence is identity-bound across delayed restores, visible result-sheet semantics are preserved, profile-only reviews do not inflate engagement, routed bodies and frontend/Worker timeouts are bounded, social handoff and restore URLs stay canonical, X/Instagram payload identity/count/time coherence fails closed, restored relationship clocks reject future poison, X enrichment uses future-safe backoff, persistence failures stay visible, and paid LLM preflight remains byte-conservative.');
+console.log('Request-context invariants OK: stale async results are discarded, full-cycle X evidence is identity-bound across delayed restores, visible result-sheet semantics are preserved, profile-only reviews do not inflate engagement, routed bodies and frontend/Worker timeouts are bounded, social handoff and restore URLs stay canonical, X/Instagram payload identity/count/time coherence fails closed, cache freshness is tied to snapshot observation time, restored relationship clocks reject future poison, X enrichment uses future-safe backoff, persistence failures stay visible, and paid LLM preflight remains byte-conservative.');
