@@ -69,6 +69,7 @@ interface PagingState {
 }
 
 const CACHE_TTL_MS = 20 * 60 * 60 * 1000;
+const MAX_PAGING_CYCLE = 1_000_000;
 
 export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
   const userId = sanitizeUserId(body.userId || 'local-user');
@@ -112,22 +113,25 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
   const worstCaseCost = userReadRate + (allocation.followers + allocation.following + allocation.posts) * ownedReadRate;
   const paging = await loadPaging(env, userId);
 
+  // Follow-cycle storage is local D1 work, not an X provider read. Prepare it before the
+  // paid reservation/provider boundary so a missing/corrupt evidence table cannot consume
+  // paid budget or make a successful /users/me lookup look cost-uncertain.
+  if (allocation.followers > 0) {
+    await prepareFollowCycleTargets(
+      env.DB,
+      userId,
+      paging.followersCycle,
+      paging.followersCursor,
+      body.trackedAccounts,
+    );
+  }
+
   const reservationId = await reserveBudget(env, userId, worstCaseCost, budget.effectiveLimit);
   if (!reservationId) return disabled('HARD LIMIT or budget-ledger integrity changed before the X sync budget could be reserved.');
 
   try {
     const profile = await fetchMe(accessToken);
     if (!profile) throw new Error('X /2/users/me returned no user');
-
-    if (allocation.followers > 0) {
-      await prepareFollowCycleTargets(
-        env.DB,
-        userId,
-        paging.followersCycle,
-        paging.followersCursor,
-        body.trackedAccounts,
-      );
-    }
 
     const [followersResult, followingResult, postsResult] = await Promise.all([
       allocation.followers > 0 ? fetchUsersPage(accessToken, profile.id, 'followers', allocation.followers, paging.followersCursor) : emptyList<XUser>(),
@@ -165,8 +169,6 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
       : null;
 
     const nextPaging = advancePaging(paging, allocation, followersResult.nextToken, followingResult.nextToken);
-    await savePaging(env, userId, nextPaging);
-
     const syncedAt = new Date().toISOString();
     const result = {
       enabled: true,
@@ -205,6 +207,7 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
       },
       followEvidence,
       requested: allocation,
+      resumePaging: nextPaging,
       pacing: {
         daysRemaining: daysRemainingInUtcMonth(),
         pacedCapUsd,
@@ -212,7 +215,20 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
       },
     };
     if (!validOwnedSnapshot(result)) throw new Error('Owned X sync produced an invalid snapshot');
-    await saveCache(env, userId, result);
+
+    // Paging and snapshot are redundant checkpoints. If the dedicated paging row fails,
+    // the snapshot carries the exact next cursor/cycle and loadPaging() can recover it even
+    // after the cache TTL expires. Only if both writes fail do we surface degraded durability
+    // while still returning the already-paid, validated data instead of encouraging a blind retry.
+    const pagingPersisted = await savePaging(env, userId, nextPaging, syncedAt);
+    const cachePersisted = await saveCache(env, userId, result);
+    if (!pagingPersisted && !cachePersisted) {
+      return {
+        ...result,
+        persistenceDegraded: true,
+        reason: 'X公式データは取得できましたが、次回位置をD1へ保存できませんでした。重複した有料読み取りを避けるため、D1の状態を確認するまで再更新しないでください。',
+      };
+    }
     return result;
   } catch (error) {
     // Once a paid X data request has started, retain the conservative reservation:
@@ -246,15 +262,19 @@ async function fetchUsersPage(accessToken: string, userId: string, kind: 'follow
   });
   if (cursor) params.set('pagination_token', cursor);
   const response = await xFetch<ListResponse<XUser>>(`https://api.x.com/2/users/${encodeURIComponent(userId)}/${kind}?${params.toString()}`, accessToken);
+  const data = response.data || [];
   if (response.data != null && (!Array.isArray(response.data)
     || response.data.length > maxResults
     || !response.data.every(validRawXUser)
     || !uniqueRawXUsers(response.data))) {
     throw new Error(`X ${kind} endpoint returned malformed user data`);
   }
+  if (!validListMeta(response.meta, data.length, maxResults)) {
+    throw new Error(`X ${kind} endpoint returned incoherent pagination metadata`);
+  }
   const nextToken = response.meta?.next_token;
   if (nextToken != null && safeCursor(nextToken) === null) throw new Error(`X ${kind} endpoint returned an invalid pagination token`);
-  return { data: response.data || [], nextToken: nextToken || null };
+  return { data, nextToken: nextToken || null };
 }
 
 async function fetchPostsPage(accessToken: string, userId: string, maxResults: number) {
@@ -264,15 +284,19 @@ async function fetchPostsPage(accessToken: string, userId: string, maxResults: n
     exclude: 'retweets,replies',
   });
   const response = await xFetch<ListResponse<XPost>>(`https://api.x.com/2/users/${encodeURIComponent(userId)}/tweets?${params.toString()}`, accessToken);
+  const data = response.data || [];
   if (response.data != null && (!Array.isArray(response.data)
     || response.data.length > maxResults
     || !response.data.every(validRawXPost)
     || !uniqueRawXPosts(response.data))) {
     throw new Error('X posts endpoint returned malformed post data');
   }
+  if (!validListMeta(response.meta, data.length, maxResults)) {
+    throw new Error('X posts endpoint returned incoherent pagination metadata');
+  }
   const nextToken = response.meta?.next_token;
   if (nextToken != null && safeCursor(nextToken) === null) throw new Error('X posts endpoint returned an invalid pagination token');
-  return { data: response.data || [], nextToken: nextToken || null };
+  return { data, nextToken: nextToken || null };
 }
 
 async function xFetch<T>(url: string, accessToken: string): Promise<T> {
@@ -338,29 +362,47 @@ function advancePaging(paging: PagingState, allocation: { followers: number; fol
 }
 
 async function loadPaging(env: XOwnedEnv, userId: string): Promise<PagingState> {
+  const empty = emptyPaging();
   try {
     const row = await env.DB.prepare(
-      'SELECT followers_cursor, following_cursor, followers_cycle, following_cycle FROM x_owned_paging WHERE user_id = ?'
+      'SELECT followers_cursor, following_cursor, followers_cycle, following_cycle, updated_at FROM x_owned_paging WHERE user_id = ?'
     ).bind(userId).first<{
       followers_cursor: string | null;
       following_cursor: string | null;
       followers_cycle: number;
       following_cycle: number;
+      updated_at: string;
     }>();
-    return {
-      followersCursor: safeCursor(row?.followers_cursor),
-      followingCursor: safeCursor(row?.following_cursor),
-      followersCycle: safeCycle(row?.followers_cycle),
-      followingCycle: safeCycle(row?.following_cycle),
-    };
+    const rowState = row ? pagingFromStoredRow(row) : null;
+    const rowUpdatedMs = row && validPastishIso(row.updated_at) ? new Date(row.updated_at).getTime() : Number.NEGATIVE_INFINITY;
+
+    // A successfully cached paid snapshot is also a durable resume checkpoint. This
+    // repairs the important partial-persistence case where x_owned_paging failed after the
+    // provider read but x_owned_snapshots succeeded, avoiding a later duplicate paid page.
+    const snapshotRow = await env.DB.prepare('SELECT snapshot_json, synced_at FROM x_owned_snapshots WHERE user_id = ?')
+      .bind(userId)
+      .first<{ snapshot_json: string; synced_at: string }>();
+    if (snapshotRow) {
+      const snapshot = JSON.parse(snapshotRow.snapshot_json) as unknown;
+      if (validOwnedSnapshot(snapshot)
+        && isRecord(snapshot)
+        && validPagingState(snapshot.resumePaging)
+        && snapshot.syncedAt === snapshotRow.synced_at) {
+        const snapshotMs = new Date(snapshot.syncedAt as string).getTime();
+        if (Number.isFinite(snapshotMs) && snapshotMs >= rowUpdatedMs) {
+          return pagingFromValue(snapshot.resumePaging);
+        }
+      }
+    }
+    return rowState || empty;
   } catch {
-    return { followersCursor: null, followingCursor: null, followersCycle: 0, followingCycle: 0 };
+    return empty;
   }
 }
 
-async function savePaging(env: XOwnedEnv, userId: string, paging: PagingState) {
+async function savePaging(env: XOwnedEnv, userId: string, paging: PagingState, updatedAt: string) {
   try {
-    await env.DB.prepare(
+    const result = await env.DB.prepare(
       `INSERT INTO x_owned_paging (user_id, followers_cursor, following_cursor, followers_cycle, following_cycle, updated_at)
        VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_id) DO UPDATE SET
@@ -375,10 +417,11 @@ async function savePaging(env: XOwnedEnv, userId: string, paging: PagingState) {
       paging.followingCursor,
       paging.followersCycle,
       paging.followingCycle,
-      new Date().toISOString(),
+      updatedAt,
     ).run();
+    return result.meta.changes === 1;
   } catch {
-    // Paging persistence failure safely falls back to the stored/initial cursor next time.
+    return false;
   }
 }
 
@@ -389,13 +432,13 @@ async function loadFreshCache(env: XOwnedEnv, userId: string, force: boolean) {
       .bind(userId)
       .first<{ snapshot_json: string; synced_at: string }>();
     if (!row) return null;
-    const syncedAtMs = new Date(row.synced_at).getTime();
-    if (!Number.isFinite(syncedAtMs) || syncedAtMs > Date.now() + 60_000 || Date.now() - syncedAtMs > CACHE_TTL_MS) return null;
     const snapshot = JSON.parse(row.snapshot_json) as unknown;
-    if (!validOwnedSnapshot(snapshot)) {
+    if (!validOwnedSnapshot(snapshot) || !isRecord(snapshot) || snapshot.syncedAt !== row.synced_at) {
       await deleteCache(env, userId);
       return null;
     }
+    const syncedAtMs = new Date(snapshot.syncedAt as string).getTime();
+    if (!Number.isFinite(syncedAtMs) || syncedAtMs > Date.now() + 60_000 || Date.now() - syncedAtMs > CACHE_TTL_MS) return null;
     return snapshot;
   } catch {
     return null;
@@ -412,13 +455,14 @@ async function deleteCache(env: XOwnedEnv, userId: string) {
 
 async function saveCache(env: XOwnedEnv, userId: string, snapshot: unknown) {
   try {
-    const syncedAt = new Date().toISOString();
-    await env.DB.prepare(
+    if (!isRecord(snapshot) || typeof snapshot.syncedAt !== 'string' || !validPastishIso(snapshot.syncedAt)) return false;
+    const result = await env.DB.prepare(
       `INSERT INTO x_owned_snapshots (user_id, snapshot_json, synced_at) VALUES (?, ?, ?)
        ON CONFLICT(user_id) DO UPDATE SET snapshot_json = excluded.snapshot_json, synced_at = excluded.synced_at`
-    ).bind(userId, JSON.stringify(snapshot), syncedAt).run();
+    ).bind(userId, JSON.stringify(snapshot), snapshot.syncedAt).run();
+    return result.meta.changes === 1;
   } catch {
-    // A cache failure should not discard successfully fetched data.
+    return false;
   }
 }
 
@@ -553,6 +597,19 @@ function uniqueRawXPosts(posts: XPost[]) {
   return new Set(posts.map((post) => post.id)).size === posts.length;
 }
 
+function validListMeta(meta: unknown, dataLength: number, maxResults: number) {
+  if (meta == null) return true;
+  if (!isRecord(meta)) return false;
+  if (meta.result_count != null
+    && (typeof meta.result_count !== 'number'
+      || !Number.isInteger(meta.result_count)
+      || meta.result_count < 0
+      || meta.result_count > maxResults
+      || meta.result_count !== dataLength)) return false;
+  if (meta.next_token != null && safeCursor(meta.next_token) === null) return false;
+  return true;
+}
+
 function optionalNonNegativeFinite(value: unknown) {
   return value == null || nonNegativeFinite(value);
 }
@@ -583,6 +640,7 @@ function validOwnedSnapshot(value: unknown) {
     || !uniqueIds(value.posts)
     || !validCoverage(value.coverage)
     || !validRequested(value.requested)
+    || !validPagingState(value.resumePaging)
     || !validPacing(value.pacing)) return false;
   if (value.followEvidence != null && !validFollowEvidence(value.followEvidence)) return false;
 
@@ -641,7 +699,7 @@ function validCoverageSlice(value: unknown, maxFetched: number) {
   return isRecord(value)
     && boundedNonNegativeInteger(value.fetched, maxFetched)
     && typeof value.complete === 'boolean'
-    && (value.cycle == null || boundedNonNegativeInteger(value.cycle, 1_000_000))
+    && (value.cycle == null || boundedNonNegativeInteger(value.cycle, MAX_PAGING_CYCLE))
     && (value.rotated == null || typeof value.rotated === 'boolean');
 }
 
@@ -650,6 +708,43 @@ function validRequested(value: unknown) {
     && boundedNonNegativeInteger(value.followers, 500)
     && boundedNonNegativeInteger(value.following, 500)
     && boundedNonNegativeInteger(value.posts, 50);
+}
+
+function validPagingState(value: unknown): value is PagingState {
+  return isRecord(value)
+    && (value.followersCursor === null || (typeof value.followersCursor === 'string' && safeCursor(value.followersCursor) !== null))
+    && (value.followingCursor === null || (typeof value.followingCursor === 'string' && safeCursor(value.followingCursor) !== null))
+    && boundedNonNegativeInteger(value.followersCycle, MAX_PAGING_CYCLE)
+    && boundedNonNegativeInteger(value.followingCycle, MAX_PAGING_CYCLE);
+}
+
+function pagingFromValue(value: unknown): PagingState {
+  if (!validPagingState(value)) return emptyPaging();
+  return {
+    followersCursor: value.followersCursor,
+    followingCursor: value.followingCursor,
+    followersCycle: value.followersCycle,
+    followingCycle: value.followingCycle,
+  };
+}
+
+function pagingFromStoredRow(row: {
+  followers_cursor: string | null;
+  following_cursor: string | null;
+  followers_cycle: number;
+  following_cycle: number;
+}): PagingState | null {
+  const value = {
+    followersCursor: row.followers_cursor,
+    followingCursor: row.following_cursor,
+    followersCycle: row.followers_cycle,
+    followingCycle: row.following_cycle,
+  };
+  return validPagingState(value) ? value : null;
+}
+
+function emptyPaging(): PagingState {
+  return { followersCursor: null, followingCursor: null, followersCycle: 0, followingCycle: 0 };
 }
 
 function validPacing(value: unknown) {
@@ -662,7 +757,7 @@ function validPacing(value: unknown) {
 function validFollowEvidence(value: unknown) {
   if (!isRecord(value)
     || typeof value.complete !== 'boolean'
-    || !boundedNonNegativeInteger(value.cycle, 1_000_000)
+    || !boundedNonNegativeInteger(value.cycle, MAX_PAGING_CYCLE)
     || !boundedNonNegativeInteger(value.targetCount, 500)
     || !Array.isArray(value.seenKeys)
     || !Array.isArray(value.unseenKeys)
@@ -782,7 +877,7 @@ function safeCursor(value: unknown) {
 
 function safeCycle(value: unknown) {
   const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
+  return Number.isSafeInteger(parsed) && parsed >= 0 && parsed <= MAX_PAGING_CYCLE ? parsed : 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
