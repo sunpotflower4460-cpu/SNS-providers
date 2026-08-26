@@ -982,4 +982,5 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function sanitizeUserId(value: string) {
   const userId = value.trim();
   if (!/^[A-Za-z0-9._-]{1,80}$/.test(userId)) throw new Error('invalid userId');
+  return userId;
 }
