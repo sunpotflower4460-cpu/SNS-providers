@@ -1,16 +1,22 @@
 import { applyOwnedXSync } from './store';
-import type { XFollowEvidenceTarget, XOwnedSyncResponse } from './xAccount';
+import type { XFollowEvidenceTarget, XOwnedSyncResponse, XOwnedUser } from './xAccount';
 import type { AppState, Candidate } from './types';
 
 const MAX_NEW_INBOUND_CANDIDATES = 40;
 
 export function applyOwnedXSyncWithDiscovery(state: AppState, result: XOwnedSyncResponse): AppState {
+  // X handles can be renamed while the immutable numeric user ID stays the same. Repair
+  // old same-ID duplicates and route the current handle back onto the existing CRM record
+  // before evaluating username-reuse identity changes. This preserves genuine history for
+  // the same person without ever transferring history to a different immutable account.
+  const stableIdentityState = reconcileOwnedXStableIdentities(state, result);
+
   // If the same handle now resolves to a different immutable X user ID, any follower-cycle
   // evidence in this response was prepared against the old identity. Reset that candidate's
   // identity-bound CRM data first, then skip this cycle's evidence for it. The next fresh
   // cycle will be prepared with the new platformUserId and can safely establish follow-back.
-  const identityChangedIds = ownedXIdentityChanges(state, result);
-  const identitySafeState = resetOwnedXIdentityChanges(state, result, identityChangedIds);
+  const identityChangedIds = ownedXIdentityChanges(stableIdentityState, result);
+  const identitySafeState = resetOwnedXIdentityChanges(stableIdentityState, result, identityChangedIds);
   let synced = applyOwnedXSync(identitySafeState, result);
   synced = preservePostSnapshotFollowState(identitySafeState, synced, result);
   synced = reconcileSelfInputs(state, synced, result);
@@ -22,19 +28,25 @@ export function applyOwnedXSyncWithDiscovery(state: AppState, result: XOwnedSync
       .filter((candidate) => candidate.platform === 'x')
       .map((candidate) => [candidate.username.toLowerCase(), candidate]),
   );
-  const followingSet = new Set((result.following || []).map((user) => user.username.toLowerCase()));
+  const existingByStableId = new Map(
+    synced.candidates
+      .filter((candidate) => candidate.platform === 'x' && stableXId(candidate.platformUserId))
+      .map((candidate) => [stableXId(candidate.platformUserId), candidate]),
+  );
+  const followingIds = new Set((result.following || []).map((user) => user.id));
+  const followingUsernames = new Set((result.following || []).map((user) => user.username.toLowerCase()));
   const additions: Candidate[] = [];
   const observedAt = result.syncedAt || new Date().toISOString();
 
   for (const follower of result.followers) {
     const username = follower.username.toLowerCase();
-    const existing = existingByUsername.get(username);
+    const existing = existingByStableId.get(follower.id) || existingByUsername.get(username);
     // A follower list is a current snapshot, not an event stream. If the user has
     // explicitly dismissed this person, seeing the same follower again is not proof
     // of a new follow event, so keep the dismissal until fresh evidence exists.
     if (existing) continue;
     if (additions.length >= MAX_NEW_INBOUND_CANDIDATES) continue;
-    const mutual = followingSet.has(username);
+    const mutual = followingIds.has(follower.id) || followingUsernames.has(username);
     const candidate: Candidate = {
       id: `x-${crypto.randomUUID()}`,
       platform: 'x',
@@ -62,11 +74,93 @@ export function applyOwnedXSyncWithDiscovery(state: AppState, result: XOwnedSync
     };
     additions.push(candidate);
     existingByUsername.set(username, candidate);
+    existingByStableId.set(follower.id, candidate);
   }
 
   return additions.length
     ? { ...synced, candidates: [...additions, ...synced.candidates] }
     : synced;
+}
+
+function reconcileOwnedXStableIdentities(state: AppState, result: XOwnedSyncResponse): AppState {
+  if (!result.enabled) return state;
+  const incomingUsers = uniqueOwnedUsers([...(result.followers || []), ...(result.following || [])]);
+  const officialUsernameById = new Map(incomingUsers.map((user) => [user.id, user.username.toLowerCase()]));
+  const xCandidates = state.candidates.filter((candidate) => candidate.platform === 'x');
+
+  // Repair legacy duplicates first. Older versions could create a new candidate when an
+  // existing X user renamed their handle because discovery was keyed only by username.
+  const byStableId = new Map<string, Candidate>();
+  const legacyIdentityAliases = new Map<string, string>();
+  for (const candidate of xCandidates) {
+    const stableId = stableXId(candidate.platformUserId);
+    if (!stableId) continue;
+    const previous = byStableId.get(stableId);
+    if (!previous) {
+      byStableId.set(stableId, candidate);
+      continue;
+    }
+    const preferred = preferXIdentityCandidate(previous, candidate, officialUsernameById.get(stableId));
+    const duplicate = preferred.id === previous.id ? candidate : previous;
+    byStableId.set(stableId, preferred);
+    legacyIdentityAliases.set(duplicate.id, preferred.id);
+  }
+
+  const canonicalX = xCandidates.filter((candidate) => !legacyIdentityAliases.has(candidate.id));
+  const byUsername = new Map(canonicalX.map((candidate) => [candidate.username.toLowerCase(), candidate]));
+  const updates = new Map<string, Candidate>();
+  const conflictingRemovedIds = new Set<string>();
+  const syncedAt = result.syncedAt || new Date().toISOString();
+
+  for (const user of incomingUsers) {
+    const stableExisting = byStableId.get(user.id);
+    if (!stableExisting) continue;
+    const username = user.username.toLowerCase();
+    const usernameExisting = byUsername.get(username);
+    if (usernameExisting && usernameExisting.id !== stableExisting.id) {
+      // The current official handle belongs to stableExisting. A different candidate that
+      // still occupies this handle is either an old no-ID observation or a different prior
+      // identity. Remove it without transferring interactions across identities.
+      conflictingRemovedIds.add(usernameExisting.id);
+      updates.delete(usernameExisting.id);
+    }
+
+    const renamed = stableExisting.username.toLowerCase() !== username;
+    const profileChanged = renamed
+      || stableExisting.bio !== user.description
+      || stableExisting.verified !== user.verified
+      || stableExisting.displayName !== (user.name || user.username);
+    if (!profileChanged) continue;
+
+    updates.set(stableExisting.id, {
+      ...stableExisting,
+      username: user.username,
+      displayName: renamed && sameUsername(stableExisting.displayName, stableExisting.username)
+        ? user.name || user.username
+        : user.name || stableExisting.displayName,
+      profileUrl: `https://x.com/${user.username}`,
+      platformUserId: user.id,
+      bio: user.description || '',
+      verified: user.verified,
+      publicMetrics: user.publicMetrics,
+      profileSyncedAt: syncedAt,
+      profileSyncAttemptedAt: syncedAt,
+    });
+  }
+
+  if (!legacyIdentityAliases.size && !conflictingRemovedIds.size && !updates.size) return state;
+
+  const candidates = state.candidates
+    .filter((candidate) => !legacyIdentityAliases.has(candidate.id) && !conflictingRemovedIds.has(candidate.id))
+    .map((candidate) => updates.get(candidate.id) || candidate);
+  const interactions = state.interactions
+    .map((interaction) => {
+      const candidateId = resolveIdentityAlias(interaction.candidateId, legacyIdentityAliases);
+      return candidateId === interaction.candidateId ? interaction : { ...interaction, candidateId };
+    })
+    .filter((interaction) => !conflictingRemovedIds.has(interaction.candidateId));
+
+  return { ...state, candidates, interactions };
 }
 
 function ownedXIdentityChanges(state: AppState, result: XOwnedSyncResponse) {
@@ -258,4 +352,49 @@ function matchesFollowEvidenceTarget(candidate: Candidate, target: XFollowEviden
   if (candidate.username.toLowerCase() !== target.username.toLowerCase()) return false;
   if (target.platformUserId) return candidate.platformUserId === target.platformUserId;
   return !candidate.platformUserId;
+}
+
+function uniqueOwnedUsers(users: XOwnedUser[]) {
+  const byId = new Map<string, XOwnedUser>();
+  for (const user of users) byId.set(user.id, user);
+  return [...byId.values()];
+}
+
+function stableXId(value?: string | null) {
+  const id = value?.trim() || '';
+  return /^\d{1,30}$/.test(id) ? id : '';
+}
+
+function sameUsername(left?: string, right?: string) {
+  return (left || '').trim().replace(/^@/, '').toLowerCase() === (right || '').trim().replace(/^@/, '').toLowerCase();
+}
+
+function preferXIdentityCandidate(left: Candidate, right: Candidate, officialUsername?: string) {
+  const leftMatchesOfficial = Boolean(officialUsername && left.username.toLowerCase() === officialUsername);
+  const rightMatchesOfficial = Boolean(officialUsername && right.username.toLowerCase() === officialUsername);
+  if (leftMatchesOfficial !== rightMatchesOfficial) return rightMatchesOfficial ? right : left;
+  const leftInteraction = safeTime(left.lastInteractionAt);
+  const rightInteraction = safeTime(right.lastInteractionAt);
+  if (leftInteraction !== rightInteraction) return rightInteraction > leftInteraction ? right : left;
+  if (left.relationshipScore !== right.relationshipScore) return right.relationshipScore > left.relationshipScore ? right : left;
+  if (Boolean(left.skipped) !== Boolean(right.skipped)) return left.skipped ? right : left;
+  const leftProfile = safeTime(left.profileSyncedAt);
+  const rightProfile = safeTime(right.profileSyncedAt);
+  if (leftProfile !== rightProfile) return rightProfile > leftProfile ? right : left;
+  return left.id.localeCompare(right.id) <= 0 ? left : right;
+}
+
+function resolveIdentityAlias(candidateId: string, aliases: Map<string, string>) {
+  let current = candidateId;
+  const seen = new Set<string>();
+  while (aliases.has(current) && !seen.has(current)) {
+    seen.add(current);
+    current = aliases.get(current)!;
+  }
+  return current;
+}
+
+function safeTime(value?: string | null) {
+  const time = value ? new Date(value).getTime() : Number.NaN;
+  return Number.isFinite(time) ? time : Number.NEGATIVE_INFINITY;
 }
