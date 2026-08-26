@@ -182,7 +182,7 @@ export default {
             return json({ error: 'expectedUpdatedAt must be a string or null' }, 400, request, env);
           }
           if (typeof body.expectedUpdatedAt === 'string' && !validPastishIso(body.expectedUpdatedAt)) {
-            return json({ error: 'expectedUpdatedAt must be a current valid ISO timestamp' }, 400, request, env);
+            return json({ error: 'expectedUpdatedAt must be a valid ISO timestamp and not too far in the future' }, 400, request, env);
           }
 
           const stateJson = JSON.stringify(body.state);
