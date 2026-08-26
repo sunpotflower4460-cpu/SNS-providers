@@ -6,6 +6,7 @@ const xOAuth = await readFile(new URL('../worker/src/xOAuth.ts', import.meta.url
 const router = await readFile(new URL('../worker/src/router.ts', import.meta.url), 'utf8');
 const syncLease = await readFile(new URL('../worker/src/syncLease.ts', import.meta.url), 'utf8');
 const app = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8');
+const daily = await readFile(new URL('../src/daily.ts', import.meta.url), 'utf8');
 const dailyQueue = await readFile(new URL('../src/DailyQueue.tsx', import.meta.url), 'utf8');
 const api = await readFile(new URL('../src/api.ts', import.meta.url), 'utf8');
 const backup = await readFile(new URL('../src/backup.ts', import.meta.url), 'utf8');
@@ -52,12 +53,22 @@ if (!app.includes("candidate.reason.startsWith('無料Web検索から候補')")
   throw new Error('Automatic refill can again lose successful discovery yield, ignore a cross-device cooldown, or strand a second free-ranking batch.');
 }
 
-if (!app.includes('const selfAnalyzedToday = state.selfProfile.analyzedAt')
-  || !app.includes('const plannedSelf = !selfAnalyzedToday')
+if (!app.includes('const selfDone = state.selfProfile.analyzedAt')
+  || !app.includes('return relationshipDone + selfDone;')
+  || !app.includes('const selfLimit = clampInt(state.relationshipPolicy.dailySelfImproveLimit, 1, 0, 1);')
+  || !app.includes('const plannedSelf = selfLimit > 0 && state.insights.length > 0 ? 1 : 0;')
   || !app.includes("return interaction.action !== 'review' && sameLocalDay(at, now);")
-  || !app.includes("interaction.action !== 'review'\n        && at.getFullYear()")
-  || !dailyQueue.includes("return interaction.action !== 'review'\n      && Number.isFinite(at.getTime())")) {
-  throw new Error('Automatic refill/Today progress or completion can again reserve completed self work or count profile-only reviews as executable work.');
+  || !daily.includes('self: clampInt(policy.dailySelfImproveLimit, 1, 0, 1)')
+  || !dailyQueue.includes('const selfCompleted = state.selfProfile.analyzedAt')
+  || !dailyQueue.includes("return interaction.action !== 'review'")) {
+  throw new Error('Today self-work can again occupy multiple duplicate slots, disappear without progress, change relationship quota after completion, or count profile-only reviews as executable work.');
+}
+
+if (!workload.includes('dailySelfImproveLimit: clamp(next.self, 0, 1)')
+  || !workload.includes('self: clamp(policy.dailySelfImproveLimit ?? 1, 0, 1)')
+  || !workload.includes('value={values.self} min={0} max={1}')
+  || !workload.includes('const self = state.insights.length > 0 ? 1 : 0;')) {
+  throw new Error('Workload settings can again configure multiple duplicate self-analysis actions for the same day.');
 }
 
 if (!app.includes('const candidateOperationBusy = discovering || ranking || enrichingX;')
@@ -98,7 +109,7 @@ if (!backup.includes('monthlyLimitUsd: clampNumber(state?.budget?.monthlyLimitUs
   || !backup.includes('dailyConversationLimit: clampInteger(policy?.dailyConversationLimit, 0, 30')
   || !backup.includes('dailyLightEngagementLimit: clampInteger(policy?.dailyLightEngagementLimit, 0, 30')
   || !backup.includes('dailyCleanupLimit: clampInteger(policy?.dailyCleanupLimit, 0, 30')
-  || !backup.includes('dailySelfImproveLimit: clampInteger(policy?.dailySelfImproveLimit, 0, 5')
+  || !backup.includes('dailySelfImproveLimit: clampInteger(policy?.dailySelfImproveLimit, 0, 1')
   || !backup.includes('MAX_SNOOZE_FUTURE_MS = 7 * 86_400_000')
   || !backup.includes('snoozedUntil: validSnoozeOptionalIso(raw.snoozedUntil)')) {
   throw new Error('Restored settings can again exceed supported UI/runtime bounds or poison candidates with an unbounded future snooze.');
@@ -149,4 +160,4 @@ if (!xOAuth.includes('let refreshable = false;')
   throw new Error('X OAuth status can again advertise a corrupt stored refresh token as a maintainable/usable connection.');
 }
 
-console.log('Regression fixes OK: provider defaults are aligned, manual and automatic candidate operations are serialized, Today completion ignores profile-only reviews, auto refill matches Today and continues multi-batch free ranking, cross-device discovery retry and first-party sync leases are enforced, reserved social paths and future sync versions fail closed, cleanup accounting stays distinct from profile review, exact engagement is consumed, Instagram never reuses a stale post target for a newer comment, and X OAuth validates refresh-token usability.');
+console.log('Regression fixes OK: provider defaults are aligned, manual and automatic candidate operations are serialized, Today completion ignores profile-only reviews and counts one aggregate self-analysis action, auto refill keeps self-work quota stable and continues multi-batch free ranking, cross-device discovery retry and first-party sync leases are enforced, reserved social paths and future sync versions fail closed, cleanup accounting stays distinct from profile review, exact engagement is consumed, Instagram never reuses a stale post target for a newer comment, and X OAuth validates refresh-token usability.');
