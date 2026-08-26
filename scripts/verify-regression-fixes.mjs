@@ -71,10 +71,10 @@ if (!resultResolution.includes('const completedVisibleEngagement =')
   throw new Error('Completed exact engagement can again replay later, or a profile-only review can incorrectly advance relationship engagement.');
 }
 
-if (!instagramOwnedStore.includes('isNewerCommentSignal(existing, engager.lastCommentAt)')
+if (!instagramOwnedStore.includes('const newCommentSignal = existing ? isNewerCommentSignal(existing, engager.lastCommentAt)')
+  || !instagramOwnedStore.includes('const engagementUrl = newCommentSignal')
   || !instagramOwnedStore.includes("const recommendedAction: Candidate['recommendedAction'] = newCommentSignal && engagementUrl")
-  || !instagramOwnedStore.includes('cached/same comment')
-  || !instagramOwnedStore.includes('incoming > handled')) {
+  || !instagramOwnedStore.includes('return !Number.isFinite(handled) || incoming > handled;')) {
   throw new Error('Cached Instagram comments can again recreate already-completed reply actions without a newer inbound signal.');
 }
 
