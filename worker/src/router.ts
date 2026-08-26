@@ -369,22 +369,31 @@ async function reserveAutomaticDiscovery(env: Env, userId: string) {
   const id = crypto.randomUUID();
   const now = new Date();
   const cutoff = new Date(now.getTime() - AUTO_DISCOVERY_COOLDOWN_MS).toISOString();
+  const futureLimit = new Date(now.getTime() + MAX_CLOCK_SKEW_MS).toISOString();
   try {
     const result = await env.DB.prepare(
       `INSERT INTO budget_ledger (id, user_id, provider, operation, cost_usd, input_units, output_units, cache_hit, occurred_at)
        SELECT ?, ?, 'tavily', 'search_auto_guard', 0, 0, 0, 0, ?
        WHERE NOT EXISTS (
          SELECT 1 FROM budget_ledger
-         WHERE user_id = ? AND provider = 'tavily' AND operation = 'search_auto_guard' AND occurred_at >= ?
+         WHERE user_id = ?
+           AND provider = 'tavily'
+           AND operation = 'search_auto_guard'
+           AND occurred_at >= ?
+           AND occurred_at <= ?
        )`
-    ).bind(id, userId, now.toISOString(), userId, cutoff).run();
+    ).bind(id, userId, now.toISOString(), userId, cutoff, futureLimit).run();
     if (result.meta.changes > 0) return { ok: true as const, id };
 
     const latest = await env.DB.prepare(
       `SELECT occurred_at FROM budget_ledger
-       WHERE user_id = ? AND provider = 'tavily' AND operation = 'search_auto_guard' AND occurred_at >= ?
+       WHERE user_id = ?
+         AND provider = 'tavily'
+         AND operation = 'search_auto_guard'
+         AND occurred_at >= ?
+         AND occurred_at <= ?
        ORDER BY occurred_at DESC LIMIT 1`
-    ).bind(userId, cutoff).first<{ occurred_at: string }>();
+    ).bind(userId, cutoff, futureLimit).first<{ occurred_at: string }>();
     const latestMs = latest?.occurred_at ? new Date(latest.occurred_at).getTime() : Number.NaN;
     const remainingMs = Number.isFinite(latestMs)
       ? Math.max(1_000, latestMs + AUTO_DISCOVERY_COOLDOWN_MS - now.getTime())
@@ -392,7 +401,7 @@ async function reserveAutomaticDiscovery(env: Env, userId: string) {
     return {
       ok: false as const,
       reason: '自動候補補充は直近20時間以内に実行済みです。必要ならDiscoverから手動探索できます。',
-      retryAfterSeconds: Math.max(1, Math.ceil(remainingMs / 1000)),
+      retryAfterSeconds: Math.max(1, Math.min(86_400, Math.ceil(remainingMs / 1000))),
     };
   } catch {
     return {
