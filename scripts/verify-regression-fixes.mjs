@@ -152,12 +152,15 @@ if (!xFollowEvidence.includes('if (target.platform_user_id) return followerIds.h
   throw new Error('X full-cycle follow evidence can again fall back to a recycled username after an immutable user-ID mismatch.');
 }
 
-if (!xOwnedStore.includes('const identityChangedIds = ownedXIdentityChanges(state, result);')
-  || !xOwnedStore.includes('const identitySafeState = resetOwnedXIdentityChanges(state, result, identityChangedIds);')
+if (!xOwnedStore.includes('const stableIdentityState = reconcileOwnedXStableIdentities(state, result);')
+  || !xOwnedStore.includes('const identityChangedIds = ownedXIdentityChanges(stableIdentityState, result);')
+  || !xOwnedStore.includes('const identitySafeState = resetOwnedXIdentityChanges(stableIdentityState, result, identityChangedIds);')
   || !xOwnedStore.includes('applyFullCycleFollowEvidence(synced, result, identityChangedIds)')
+  || !xOwnedStore.includes('const legacyIdentityAliases = new Map<string, string>();')
+  || !xOwnedStore.includes('existingByStableId.get(follower.id) || existingByUsername.get(username)')
   || !xOwnedStore.includes('interactions: state.interactions.filter((interaction) => !changedIds.has(interaction.candidateId))')
   || !xOwnedStore.includes('if (identityChangedIds.has(candidate.id)) return candidate;')) {
-  throw new Error('Owned-X username reuse can again transfer old CRM history or old-cycle follow evidence to a different immutable account.');
+  throw new Error('Owned-X handle rename/reuse can again split one immutable identity, transfer old CRM history, or apply old-cycle follow evidence to a different account.');
 }
 
 if (!store.includes('const identityResetIds = new Set<string>();')
@@ -213,4 +216,4 @@ if (!xOAuth.includes('let refreshable = false;')
   throw new Error('X OAuth status can again advertise a corrupt stored refresh token as a maintainable/usable connection.');
 }
 
-console.log('Regression fixes OK: provider defaults are aligned, manual and automatic candidate operations are serialized, Today completion ignores profile-only reviews and counts one aggregate self-analysis action, auto refill keeps self-work quota stable and continues multi-batch free ranking, automatic discovery guards reject future poison, slow cloud restores cannot erase newer local work, cross-device discovery retry and first-party sync leases are enforced, reserved social paths and future sync versions fail closed, X/Instagram immutable identity changes cannot inherit old CRM/evidence, cleanup accounting stays distinct from profile review, exact engagement is consumed, Instagram binds the newest comment to its own concrete post target, repairs handle-renamed legacy duplicates without reactivating stale dismissals, and X OAuth validates refresh-token usability.');
+console.log('Regression fixes OK: provider defaults are aligned, manual and automatic candidate operations are serialized, Today completion ignores profile-only reviews and counts one aggregate self-analysis action, auto refill keeps self-work quota stable and continues multi-batch free ranking, automatic discovery guards reject future poison, slow cloud restores cannot erase newer local work, cross-device discovery retry and first-party sync leases are enforced, reserved social paths and future sync versions fail closed, X/Instagram immutable identity changes and handle renames cannot inherit or split old CRM/evidence, cleanup accounting stays distinct from profile review, exact engagement is consumed, Instagram binds the newest comment to its own concrete post target, repairs handle-renamed legacy duplicates without reactivating stale dismissals, and X OAuth validates refresh-token usability.');
