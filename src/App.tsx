@@ -93,6 +93,7 @@ function App() {
       || !getSyncToken().trim()
       || discovering
       || ranking
+      || enrichingX
       || autoReplenishingRef.current) return;
 
     const demand = autoReplenishDemand(state);
@@ -220,7 +221,7 @@ function App() {
         setRanking(false);
       }
     })();
-  }, [autoRetryTick, localDay, state, discovering, ranking]);
+  }, [autoRetryTick, localDay, state, discovering, ranking, enrichingX]);
 
   const active = useMemo(() => {
     const now = Date.now();
