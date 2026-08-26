@@ -150,14 +150,30 @@ export function addCandidateFromReference(state: AppState, platform: Platform, r
   const existing = state.candidates.find((candidate) => candidate.platform === platform && candidate.username.toLowerCase() === username.toLowerCase());
   if (existing) {
     if (!existing.skipped) return state;
+    const hasHistoricalIdentity = Boolean(
+      stablePlatformUserId(existing.platformUserId)
+      || existing.followedAt
+      || existing.lastInteractionAt
+      || existing.relationshipScore > 0
+      || state.interactions.some((interaction) => interaction.candidateId === existing.id),
+    );
     const candidates = state.candidates.map((candidate) => candidate.id === existing.id ? {
       ...candidate,
       skipped: false,
       snoozedUntil: undefined,
+      engagementUrl: undefined,
+      followBack: hasHistoricalIdentity ? null : candidate.followBack,
       recommendedAction: 'review' as const,
       draft: undefined,
-      reason: '以前に見送った候補を、手動操作で再び候補へ戻しました。',
-      strategy: '過去の関係履歴は残したまま、現在のプロフィールと発信を確認して次の交流を判断します。',
+      tags: hasHistoricalIdentity
+        ? [...new Set([...candidate.tags, 'identity-conflict'])].slice(0, 30)
+        : candidate.tags,
+      reason: hasHistoricalIdentity
+        ? '以前の候補を@username指定で戻しましたが、ハンドルだけでは過去と同じ人物だと確認できません。過去の履歴は保持しつつ、現在の公式identityを確認するまで直接アクションを停止します。'
+        : '以前に見送った候補を、手動操作で再び候補へ戻しました。',
+      strategy: hasHistoricalIdentity
+        ? '現在の公式プロフィールとユーザーIDを確認し、過去の履歴が同じ相手に属すると確認できてから交流を再開します。'
+        : '過去の関係履歴は残したまま、現在のプロフィールと発信を確認して次の交流を判断します。',
     } : candidate);
     return refreshRelationshipAdvice({ ...state, candidates });
   }
@@ -215,7 +231,11 @@ export function applyXProfiles(state: AppState, profiles: XProfileResult[], atte
       };
     }
 
-    const profileContextChanged = candidate.bio !== profile.description
+    const identityConflictResolved = Boolean(currentStableId
+      && currentStableId === profile.id
+      && candidate.tags.includes('identity-conflict'));
+    const profileContextChanged = identityConflictResolved
+      || candidate.bio !== profile.description
       || candidate.verified !== profile.verified;
     const staleFollowAdvice = profileContextChanged
       && candidate.recommendedAction === 'follow'
@@ -229,14 +249,23 @@ export function applyXProfiles(state: AppState, profiles: XProfileResult[], atte
       publicMetrics: profile.publicMetrics,
       profileSyncedAt: attemptedAt,
       profileSyncAttemptedAt: attemptedAt,
-      recommendedAction: staleFollowAdvice ? 'review' as const : candidate.recommendedAction,
-      draft: staleFollowAdvice ? undefined : candidate.draft,
-      reason: staleFollowAdvice
-        ? 'X公式プロフィール情報で候補の判断材料が更新されたため、以前のフォロー推薦はいったん無効化しました。'
-        : candidate.reason,
-      strategy: staleFollowAdvice
-        ? '最新の公式プロフィールを反映した状態でAI再評価してから、フォローするかを決めます。古い推薦のままTodayには出しません。'
-        : candidate.strategy,
+      engagementUrl: identityConflictResolved ? undefined : candidate.engagementUrl,
+      followBack: identityConflictResolved ? null : candidate.followBack,
+      recommendedAction: identityConflictResolved || staleFollowAdvice ? 'review' as const : candidate.recommendedAction,
+      draft: identityConflictResolved || staleFollowAdvice ? undefined : candidate.draft,
+      reason: identityConflictResolved
+        ? 'X公式プロフィール確認で、保存済みの公式ユーザーIDが現在もこの@usernameの所有者であることを確認しました。直接アクションは再評価してから再開します。'
+        : staleFollowAdvice
+          ? 'X公式プロフィール情報で候補の判断材料が更新されたため、以前のフォロー推薦はいったん無効化しました。'
+          : candidate.reason,
+      strategy: identityConflictResolved
+        ? '現在の公式identityを確認できたためハンドル競合の隔離を解除しました。最新プロフィールを基準にMissionとの相性と次の行動を再評価します。'
+        : staleFollowAdvice
+          ? '最新の公式プロフィールを反映した状態でAI再評価してから、フォローするかを決めます。古い推薦のままTodayには出しません。'
+          : candidate.strategy,
+      tags: identityConflictResolved
+        ? candidate.tags.filter((tag) => tag !== 'identity-conflict')
+        : candidate.tags,
     };
   });
   const normalized = normalizeAppState({
@@ -470,6 +499,16 @@ function refreshRelationshipAdvice(state: AppState): AppState {
 }
 
 function normalizeLocalRelationshipAction(candidate: Candidate): Candidate {
+  if (candidate.tags.includes('identity-conflict')) {
+    return {
+      ...candidate,
+      engagementUrl: undefined,
+      followBack: null,
+      recommendedAction: 'review',
+      draft: undefined,
+      strategy: candidate.strategy || '現在の@usernameと過去の関係履歴が同じ人物に属すると確認できるまで、直接アクションを停止します。',
+    };
+  }
   const replyReady = Boolean(candidate.engagementUrl) || ['engaged', 'recognized', 'conversation', 'relationship'].includes(candidate.stage);
   const dmReady = ['recognized', 'conversation', 'relationship'].includes(candidate.stage);
   if (candidate.recommendedAction === 'follow' && candidate.followedAt) {
