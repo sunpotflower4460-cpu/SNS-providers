@@ -121,7 +121,14 @@ export async function syncOwnedXData(monthlyLimitUsd: number, candidates: Candid
   if (!apiConfigured) throw new Error('Worker URLが設定されていません');
   const token = requiredControlToken();
   const trackedAccounts = candidates
-    .filter((candidate) => candidate.platform === 'x' && Boolean(candidate.followedAt) && !candidate.skipped)
+    // A restored handle conflict is intentionally review-only until official X data proves
+    // which immutable ID owns the handle now. Never feed those ambiguous records into a
+    // follow cycle: otherwise old history could be converted back into cleanup advice for
+    // the current handle owner.
+    .filter((candidate) => candidate.platform === 'x'
+      && Boolean(candidate.followedAt)
+      && !candidate.skipped
+      && !candidate.tags.includes('identity-conflict'))
     .slice(0, 500)
     .map((candidate) => ({
       key: candidate.id,
