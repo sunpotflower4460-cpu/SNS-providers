@@ -6,6 +6,7 @@ const xOAuth = await readFile(new URL('../worker/src/xOAuth.ts', import.meta.url
 const router = await readFile(new URL('../worker/src/router.ts', import.meta.url), 'utf8');
 const syncLease = await readFile(new URL('../worker/src/syncLease.ts', import.meta.url), 'utf8');
 const app = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8');
+const dailyQueue = await readFile(new URL('../src/DailyQueue.tsx', import.meta.url), 'utf8');
 const api = await readFile(new URL('../src/api.ts', import.meta.url), 'utf8');
 const backup = await readFile(new URL('../src/backup.ts', import.meta.url), 'utf8');
 const social = await readFile(new URL('../src/social.ts', import.meta.url), 'utf8');
@@ -54,14 +55,17 @@ if (!app.includes("candidate.reason.startsWith('無料Web検索から候補')")
 if (!app.includes('const selfAnalyzedToday = state.selfProfile.analyzedAt')
   || !app.includes('const plannedSelf = !selfAnalyzedToday')
   || !app.includes("return interaction.action !== 'review' && sameLocalDay(at, now);")
-  || !app.includes("interaction.action !== 'review'\n        && at.getFullYear()")) {
-  throw new Error('Automatic refill/Today progress can again reserve already-completed self work or count profile-only reviews as executable work.');
+  || !app.includes("interaction.action !== 'review'\n        && at.getFullYear()")
+  || !dailyQueue.includes("return interaction.action !== 'review'\n      && Number.isFinite(at.getTime())")) {
+  throw new Error('Automatic refill/Today progress or completion can again reserve completed self work or count profile-only reviews as executable work.');
 }
 
 if (!app.includes('const candidateOperationBusy = discovering || ranking || enrichingX;')
   || (app.match(/disabled=\{candidateOperationBusy\}/g) || []).length < 3
-  || !app.includes("setApiNote('別の候補処理が終わってから再評価してください')")) {
-  throw new Error('Manual discovery, paid X enrichment and AI ranking can again overlap and discard paid results after concurrent candidate mutation.');
+  || !app.includes("setApiNote('別の候補処理が終わってから再評価してください')")
+  || !app.includes('|| enrichingX\n      || autoReplenishingRef.current')
+  || !app.includes('[autoRetryTick, localDay, state, discovering, ranking, enrichingX]')) {
+  throw new Error('Manual or automatic discovery/ranking and paid X enrichment can again overlap and discard paid results after concurrent candidate mutation.');
 }
 
 if (!api.includes('completeFreeOnlyRankingBatch(validated.results, selected)')
@@ -78,12 +82,13 @@ if (!api.includes('retryAfterSeconds?: number;')
 
 if (!syncLease.includes('ON CONFLICT(id) DO UPDATE SET')
   || !syncLease.includes('WHERE budget_ledger.occurred_at < ?')
+  || !syncLease.includes('budget_ledger.occurred_at > ?')
   || !syncLease.includes('DELETE FROM budget_ledger WHERE id = ? AND operation = ?')
   || !syncLease.includes('crypto.randomUUID()')
   || !router.includes("reserveSyncLease(env.DB, userId, 'x_owned_sync', 3 * 60 * 1000)")
   || !router.includes("reserveSyncLease(env.DB, userId, 'instagram_owned_sync', 5 * 60 * 1000)")
   || (router.match(/releaseSyncLease\(env\.DB, leaseResult\.lease\)/g) || []).length < 2) {
-  throw new Error('First-party X/Instagram sync can again overlap across devices, duplicate provider reads, or let an expired owner delete a newer lease.');
+  throw new Error('First-party X/Instagram sync can again overlap across devices, duplicate provider reads, keep a future-poisoned lease, or let an expired owner delete a newer lease.');
 }
 
 if (!backup.includes('monthlyLimitUsd: clampNumber(state?.budget?.monthlyLimitUsd, 0, 10, 3)')
@@ -130,10 +135,11 @@ if (!resultResolution.includes('const completedVisibleEngagement =')
 }
 
 if (!instagramOwnedStore.includes('const newCommentSignal = existing ? isNewerCommentSignal(existing, engager.lastCommentAt)')
-  || !instagramOwnedStore.includes('const engagementUrl = newCommentSignal')
-  || !instagramOwnedStore.includes("const recommendedAction: Candidate['recommendedAction'] = newCommentSignal && engagementUrl")
+  || !instagramOwnedStore.includes('const newEngagementUrl = newCommentSignal ? engager.latestMediaPermalink || undefined : undefined;')
+  || !instagramOwnedStore.includes("newCommentSignal\n        ? newEngagementUrl ? 'reply' : 'review'")
+  || instagramOwnedStore.includes('engager.latestMediaPermalink || existing.engagementUrl')
   || !instagramOwnedStore.includes('return !Number.isFinite(handled) || incoming > handled;')) {
-  throw new Error('Cached Instagram comments can again recreate already-completed reply actions without a newer inbound signal.');
+  throw new Error('Cached/targetless Instagram comments can again replay a handled action or reuse an older post as the target for a newer inbound signal.');
 }
 
 if (!xOAuth.includes('let refreshable = false;')
@@ -143,4 +149,4 @@ if (!xOAuth.includes('let refreshable = false;')
   throw new Error('X OAuth status can again advertise a corrupt stored refresh token as a maintainable/usable connection.');
 }
 
-console.log('Regression fixes OK: provider defaults are aligned, candidate operations are serialized, auto refill matches Today and continues multi-batch free ranking, cross-device discovery retry and first-party sync leases are enforced, reserved social paths and future sync versions fail closed, cleanup accounting stays distinct from profile review, exact engagement is consumed, cached Instagram comments do not replay handled actions, and X OAuth validates refresh-token usability.');
+console.log('Regression fixes OK: provider defaults are aligned, manual and automatic candidate operations are serialized, Today completion ignores profile-only reviews, auto refill matches Today and continues multi-batch free ranking, cross-device discovery retry and first-party sync leases are enforced, reserved social paths and future sync versions fail closed, cleanup accounting stays distinct from profile review, exact engagement is consumed, Instagram never reuses a stale post target for a newer comment, and X OAuth validates refresh-token usability.');
