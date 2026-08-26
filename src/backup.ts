@@ -379,7 +379,11 @@ function dedupeCandidates(candidates: Candidate[]): CandidateDedupeResult {
     }
     const knownIdentities = new Set(group.map(stableCandidateIdentity).filter(Boolean));
     if (knownIdentities.size > 1) {
-      finalCandidates.push(...group);
+      // The handle now points at more than one known immutable identity in restored data.
+      // Preserve both CRM records/history, but make neither executable: a profile/follow/
+      // reply/DM/unfollow URL is handle-based and could otherwise act on the current owner
+      // while displaying historical context that belongs to the previous owner.
+      finalCandidates.push(...group.map(quarantineRestoredHandleConflict));
       continue;
     }
     let preferred = group[0];
@@ -396,6 +400,20 @@ function dedupeCandidates(candidates: Candidate[]): CandidateDedupeResult {
 function stableCandidateIdentity(candidate: Candidate) {
   const id = candidate.platformUserId?.trim() || '';
   return /^\d{1,30}$/.test(id) ? `${candidate.platform}:${id}` : '';
+}
+
+function quarantineRestoredHandleConflict(candidate: Candidate): Candidate {
+  const warning = '同じ@usernameに異なる公式ユーザーIDの記録があります。ハンドルが別の人へ再利用された可能性があるため、過去の関係履歴を維持したまま自動アクションを停止しました。';
+  return {
+    ...candidate,
+    engagementUrl: undefined,
+    recommendedAction: 'review',
+    draft: undefined,
+    followBack: null,
+    reason: `${warning}${candidate.reason ? ` ${candidate.reason}` : ''}`.slice(0, 2400),
+    strategy: `${warning} 公式SNSで現在のプロフィールを確認し、どの履歴が現在の相手に属するか判断してから再開してください。`.slice(0, 3200),
+    tags: [...new Set([...candidate.tags, 'identity-conflict'])].slice(0, 30),
+  };
 }
 
 function preferRestoredCandidate(left: Candidate, right: Candidate) {
