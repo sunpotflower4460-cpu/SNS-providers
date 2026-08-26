@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { downloadBackup, readBackup } from './backup';
 import InstallControls from './InstallControls';
 import InstagramAccountControls from './InstagramAccountControls';
+import { detachExternalAccountSummaries } from './restoreSafety';
 import SyncControls from './SyncControls';
 import WorkloadControls from './WorkloadControls';
 import XAccountControls from './XAccountControls';
@@ -27,10 +28,10 @@ export default function BackupControls({ state, onRestore }: { state: AppState; 
   async function prepareRestore(file?: File) {
     if (!file) return;
     try {
-      const restored = await readBackup(file);
+      const restored = detachExternalAccountSummaries(await readBackup(file));
       setPendingRestore(restored);
       setPendingFileName(file.name);
-      setStatus('バックアップを確認しました。復元するまで現在のデータは変わりません。');
+      setStatus('バックアップを確認しました。復元するまで現在のデータは変わりません。SNS接続の現在情報は次回の公式同期で確認します。');
     } catch (error) {
       setPendingRestore(null);
       setPendingFileName('');
@@ -45,7 +46,7 @@ export default function BackupControls({ state, onRestore }: { state: AppState; 
     updateState(pendingRestore);
     setPendingRestore(null);
     setPendingFileName('');
-    setStatus('バックアップから復元しました');
+    setStatus('バックアップから復元しました。SNSアカウントの現在情報は次回の公式同期で更新されます');
   }
 
   function cancelRestore() {
@@ -91,7 +92,7 @@ export default function BackupControls({ state, onRestore }: { state: AppState; 
           <input ref={inputRef} className="visually-hidden" type="file" accept="application/json,.json" onChange={(event) => prepareRestore(event.target.files?.[0])} />
 
           {pendingRestore && <div className="restore-confirm" role="alert">
-            <div><strong>現在のデータを置き換えます</strong><span>{pendingFileName || '選択したバックアップ'}を復元すると、今のMission・候補・関係・設定がバックアップ内容へ変わります。</span></div>
+            <div><strong>現在のデータを置き換えます</strong><span>{pendingFileName || '選択したバックアップ'}を復元すると、今のMission・候補・関係・設定がバックアップ内容へ変わります。SNSアカウントの現在情報はバックアップ値を使わず、次回の公式同期で確認します。</span></div>
             <div className="restore-confirm-actions">
               <button className="secondary-button" onClick={cancelRestore}>キャンセル</button>
               <button className="primary-button" onClick={confirmRestore}>この内容で復元</button>
