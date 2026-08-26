@@ -4,6 +4,7 @@ const providerApi = await readFile(new URL('../worker/src/index.ts', import.meta
 const wrangler = await readFile(new URL('../worker/wrangler.jsonc', import.meta.url), 'utf8');
 const xOAuth = await readFile(new URL('../worker/src/xOAuth.ts', import.meta.url), 'utf8');
 const xFollowEvidence = await readFile(new URL('../worker/src/xFollowEvidence.ts', import.meta.url), 'utf8');
+const instagramOwned = await readFile(new URL('../worker/src/instagramOwned.ts', import.meta.url), 'utf8');
 const router = await readFile(new URL('../worker/src/router.ts', import.meta.url), 'utf8');
 const syncLease = await readFile(new URL('../worker/src/syncLease.ts', import.meta.url), 'utf8');
 const app = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8');
@@ -15,6 +16,7 @@ const social = await readFile(new URL('../src/social.ts', import.meta.url), 'utf
 const store = await readFile(new URL('../src/store.ts', import.meta.url), 'utf8');
 const xOwnedStore = await readFile(new URL('../src/xOwnedStore.ts', import.meta.url), 'utf8');
 const sync = await readFile(new URL('../src/sync.ts', import.meta.url), 'utf8');
+const syncControls = await readFile(new URL('../src/SyncControls.tsx', import.meta.url), 'utf8');
 const workload = await readFile(new URL('../src/WorkloadControls.tsx', import.meta.url), 'utf8');
 const statusPresentation = await readFile(new URL('../src/statusPresentation.ts', import.meta.url), 'utf8');
 const resultResolution = await readFile(new URL('../src/resultResolution.ts', import.meta.url), 'utf8');
@@ -89,8 +91,10 @@ if (!api.includes('completeFreeOnlyRankingBatch(validated.results, selected)')
 
 if (!api.includes('retryAfterSeconds?: number;')
   || !api.includes('optionalBoundedInteger(result.retryAfterSeconds, 1, 86_400)')
-  || !router.includes('retryAfterSeconds: Math.max(1, Math.ceil(remainingMs / 1000))')) {
-  throw new Error('Cross-device automatic-discovery throttling can again block a local day without exposing when retry becomes safe.');
+  || !router.includes('const futureLimit = new Date(now.getTime() + MAX_CLOCK_SKEW_MS).toISOString();')
+  || (router.match(/AND occurred_at <= \?/g) || []).length < 2
+  || !router.includes('retryAfterSeconds: Math.max(1, Math.min(86_400, Math.ceil(remainingMs / 1000)))')) {
+  throw new Error('Cross-device automatic-discovery throttling can again be poisoned by a future row or expose an invalid retry window.');
 }
 
 if (!syncLease.includes('ON CONFLICT(id) DO UPDATE SET')
@@ -134,6 +138,15 @@ if (!sync.includes('MAX_REMOTE_CLOCK_SKEW_MS = 5 * 60 * 1000')
   throw new Error('A corrupted far-future D1 snapshot version can again poison optimistic-lock state.');
 }
 
+if (!syncControls.includes('const latestStateRef = useRef(state);')
+  || !syncControls.includes('latestStateRef.current = state;')
+  || (syncControls.match(/const localFingerprintAtStart = stateFingerprint\(latestStateRef\.current\);/g) || []).length < 2
+  || !syncControls.includes('if (stateFingerprint(latestStateRef.current) !== localFingerprintAtStart)')
+  || !syncControls.includes('const versionCleared = clearRemoteStateVersion();')
+  || !syncControls.includes('復元中にこの端末のデータが変更されたため、上書きせず停止しました')) {
+  throw new Error('A slow D1 restore can again erase local work completed while the download was in flight.');
+}
+
 if (!xFollowEvidence.includes('if (target.platform_user_id) return followerIds.has(target.platform_user_id);')
   || xFollowEvidence.includes('if (target.platform_user_id && followerIds.has(target.platform_user_id)) return true;')) {
   throw new Error('X full-cycle follow evidence can again fall back to a recycled username after an immutable user-ID mismatch.');
@@ -147,6 +160,14 @@ if (!xOwnedStore.includes('const identityChangedIds = ownedXIdentityChanges(stat
   throw new Error('Owned-X username reuse can again transfer old CRM history or old-cycle follow evidence to a different immutable account.');
 }
 
+if (!store.includes('const identityResetIds = new Set<string>();')
+  || !store.includes('const identityChanged = Boolean(candidate.platformUserId && candidate.platformUserId !== profile.id);')
+  || !store.includes('interactions: identityResetIds.size')
+  || !store.includes('state.interactions.filter((interaction) => !identityResetIds.has(interaction.candidateId))')
+  || !store.includes('Xの公式ユーザーIDが以前の記録と異なります')) {
+  throw new Error('Normal paid X profile enrichment can again transfer old CRM history to a recycled handle.');
+}
+
 if (!store.includes("const recordedAction: Interaction['action'] = cleanupKeep ? 'unfollow_review' : action;")
   || !store.includes('if (cleanupKeep) {')
   || !store.includes("recommendedAction: 'review' as const")) {
@@ -158,6 +179,12 @@ if (!resultResolution.includes('const completedVisibleEngagement =')
   || !resultResolution.includes("const recordedAction: Interaction['action'] = visibleReview && action === 'kept'")
   || !resultResolution.includes("? 'review'")) {
   throw new Error('Completed exact engagement can again replay later, or a profile-only review can incorrectly advance relationship engagement.');
+}
+
+if (!instagramOwned.includes('existing.latestMediaPermalink = item.permalink || null;')
+  || instagramOwned.includes('existing.latestMediaPermalink = item.permalink || existing.latestMediaPermalink')
+  || instagramOwned.includes('else if (!existing.latestMediaPermalink && item.permalink)')) {
+  throw new Error('Instagram Worker can again pair the newest comment timestamp with an older post permalink.');
 }
 
 if (!instagramOwnedStore.includes('const newCommentSignal = existing ? isNewerCommentSignal(existing, engager.lastCommentAt)')
@@ -182,4 +209,4 @@ if (!xOAuth.includes('let refreshable = false;')
   throw new Error('X OAuth status can again advertise a corrupt stored refresh token as a maintainable/usable connection.');
 }
 
-console.log('Regression fixes OK: provider defaults are aligned, manual and automatic candidate operations are serialized, Today completion ignores profile-only reviews and counts one aggregate self-analysis action, auto refill keeps self-work quota stable and continues multi-batch free ranking, cross-device discovery retry and first-party sync leases are enforced, reserved social paths and future sync versions fail closed, X/Instagram immutable identity changes cannot inherit old CRM/evidence, cleanup accounting stays distinct from profile review, exact engagement is consumed, Instagram never reuses a stale post target for a newer comment, and X OAuth validates refresh-token usability.');
+console.log('Regression fixes OK: provider defaults are aligned, manual and automatic candidate operations are serialized, Today completion ignores profile-only reviews and counts one aggregate self-analysis action, auto refill keeps self-work quota stable and continues multi-batch free ranking, automatic discovery guards reject future poison, slow cloud restores cannot erase newer local work, cross-device discovery retry and first-party sync leases are enforced, reserved social paths and future sync versions fail closed, X/Instagram immutable identity changes cannot inherit old CRM/evidence, cleanup accounting stays distinct from profile review, exact engagement is consumed, Instagram binds the newest comment to its own concrete post target only, and X OAuth validates refresh-token usability.');
