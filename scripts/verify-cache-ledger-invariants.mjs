@@ -187,17 +187,32 @@ requireAll(providerApi, [
 ], 'Paid X/LLM accounting can again silently lose a reservation between provider success and ledger finalization.');
 
 requireAll(store, [
+  'const currentStableId = stablePlatformUserId(candidate.platformUserId);',
+  'if (currentStableId && currentStableId !== profile.id) {',
+  "tags: [...new Set([...candidate.tags, 'identity-conflict'])]",
   'const profileContextChanged = candidate.bio !== profile.description',
   'const staleFollowAdvice = profileContextChanged',
   "candidate.recommendedAction === 'follow'",
   "recommendedAction: staleFollowAdvice ? 'review' as const : candidate.recommendedAction",
   '古い推薦のままTodayには出しません。',
-  'const identityResetIds = new Set<string>();',
-  'state.interactions.filter((interaction) => !identityResetIds.has(interaction.candidateId))',
-], 'Official X enrichment can leave obsolete follow advice actionable or transfer CRM history across immutable identity changes.');
+  'const normalized = normalizeAppState({',
+  'return refreshRelationshipAdvice(normalized);',
+], 'Official X enrichment can leave obsolete follow advice actionable, overwrite a newer immutable identity, or skip post-enrichment identity normalization.');
+
+const enrichConflictStart = store.indexOf('if (currentStableId && currentStableId !== profile.id) {');
+const enrichConflictEnd = store.indexOf('const profileContextChanged = candidate.bio !== profile.description', enrichConflictStart);
+const enrichConflictBlock = enrichConflictStart >= 0 && enrichConflictEnd > enrichConflictStart
+  ? store.slice(enrichConflictStart, enrichConflictEnd)
+  : '';
+if (!enrichConflictBlock
+  || enrichConflictBlock.includes('platformUserId: profile.id')
+  || enrichConflictBlock.includes('identityResetIds')
+  || enrichConflictBlock.includes('state.interactions.filter')) {
+  throw new Error('A mismatched/stale X enrichment can again replace an immutable identity or erase the old person\'s CRM history.');
+}
 
 if ((budgetIntegrity.match(/occurred_jd >= julianday\(\?\) AND occurred_jd < julianday\(\?\)/g) || []).length < 2) {
   throw new Error('A paid-budget read or reservation lost one side of the active UTC month boundary.');
 }
 
-console.log('Cache/ledger invariants OK: malformed X/Instagram snapshots are rejected and evicted, cache freshness is bound to snapshot observation time, X paging checkpoints fail independently and recover from either durable source, paid X provider snapshots validate before exact-cost finalization, finalized costs are never relabeled uncertain by local evidence failures, corrupt follow-evidence rows fail closed and irrecoverable evidence cycles are quarantined without rereading the paid page, raw paid X-enrichment identities validate before finalize, legacy invalid budget rows disable paid work, reservations remain atomic inside the active UTC month, X/Instagram renames follow immutable identity, recycled-handle conflicts resolve deterministically, and stale CRM advice cannot remain actionable.');
+console.log('Cache/ledger invariants OK: malformed X/Instagram snapshots are rejected and evicted, cache freshness is bound to snapshot observation time, X paging checkpoints fail independently and recover from either durable source, paid X provider snapshots validate before exact-cost finalization, finalized costs are never relabeled uncertain by local evidence failures, corrupt follow-evidence rows fail closed and irrecoverable evidence cycles are quarantined without rereading the paid page, raw paid X-enrichment identities validate before finalize, stale/mismatched enrichment cannot rewrite immutable CRM identity, legacy invalid budget rows disable paid work, reservations remain atomic inside the active UTC month, X/Instagram renames follow immutable identity, recycled-handle conflicts resolve deterministically, and stale CRM advice cannot remain actionable.');
