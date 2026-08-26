@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 
 const xOwned = await readFile(new URL('../worker/src/xOwned.ts', import.meta.url), 'utf8');
+const xFollowEvidence = await readFile(new URL('../worker/src/xFollowEvidence.ts', import.meta.url), 'utf8');
 const instagramOwned = await readFile(new URL('../worker/src/instagramOwned.ts', import.meta.url), 'utf8');
 const providerApi = await readFile(new URL('../worker/src/index.ts', import.meta.url), 'utf8');
 const budgetIntegrity = await readFile(new URL('../worker/src/budgetIntegrity.ts', import.meta.url), 'utf8');
@@ -16,6 +17,7 @@ function requireAll(source, fragments, message) {
 requireAll(xOwned, [
   'validOwnedSnapshot(result)',
   'validOwnedSnapshot(snapshot)',
+  'validOwnedSnapshot(validatedProviderResult)',
   'DELETE FROM x_owned_snapshots WHERE user_id = ?',
   'readActiveMonthUsage(env.DB, userId)',
   'reserveActiveMonthBudget(env.DB',
@@ -36,18 +38,50 @@ requireAll(xOwned, [
   'const pagingPersisted = await savePaging(env, userId, nextPaging, syncedAt);',
   'const cachePersisted = await saveCache(env, userId, result);',
   'persistenceDegraded: true',
-], 'Owned-X cache/raw-payload validation, independent paging recovery, cross-list identity coherence, or bounded UTC-month budget accounting regressed.');
+  'followEvidenceDegraded: true',
+  'quarantineFollowerEvidencePaging(paging, ordinaryNextPaging, followersResult.nextToken)',
+  'followersCycle: paging.followersCycle + 1',
+  'let reservationFinalized = false;',
+  'reservationFinalized = true;',
+  'if (!reservationFinalized)',
+], 'Owned-X cache/raw-payload validation, independent paging recovery, post-finalization evidence quarantine, or bounded UTC-month budget accounting regressed.');
 
 if (xOwned.includes('following_cursor = excluded.followingCursor')) {
   throw new Error('Owned-X paging UPSERT again references a non-existent camelCase SQLite column.');
 }
 
-const rawValidationIndex = xOwned.indexOf('safe to shrink the conservative reservation');
 const coherenceIndex = xOwned.indexOf('coherentRawXUsersAcrossLists(followersResult.data, followingResult.data)');
-const finalizeOwnedIndex = xOwned.indexOf('await finalizeReservation(env, reservationId, actualCost', coherenceIndex);
-if (rawValidationIndex < 0 || coherenceIndex < 0 || finalizeOwnedIndex < 0 || coherenceIndex > finalizeOwnedIndex || rawValidationIndex > finalizeOwnedIndex) {
-  throw new Error('Owned-X can shrink the worst-case reservation before raw/cross-list paid provider identity validation completes.');
+const providerSnapshotValidationIndex = xOwned.indexOf('if (!validOwnedSnapshot(validatedProviderResult))');
+const finalizeOwnedIndex = xOwned.indexOf('await finalizeReservation(env, reservationId, actualCost', providerSnapshotValidationIndex);
+const finalizedFlagIndex = xOwned.indexOf('reservationFinalized = true;', finalizeOwnedIndex);
+const evidenceUpdateIndex = xOwned.indexOf('followEvidence = await updateFollowCycleEvidence(', finalizedFlagIndex);
+if (coherenceIndex < 0
+  || providerSnapshotValidationIndex < 0
+  || finalizeOwnedIndex < 0
+  || finalizedFlagIndex < 0
+  || evidenceUpdateIndex < 0
+  || coherenceIndex > providerSnapshotValidationIndex
+  || providerSnapshotValidationIndex > finalizeOwnedIndex
+  || finalizeOwnedIndex > finalizedFlagIndex
+  || finalizedFlagIndex > evidenceUpdateIndex) {
+  throw new Error('Owned-X can finalize a reduced paid cost before provider snapshot validation, or mutate follow evidence before the exact cost is durable.');
 }
+
+const catchFinalizedGuardIndex = xOwned.indexOf('if (!reservationFinalized)');
+const catchUncertainIndex = xOwned.indexOf('await markReservationUncertain(env, reservationId, userId, worstCaseCost);', catchFinalizedGuardIndex);
+if (catchFinalizedGuardIndex < 0 || catchUncertainIndex < 0 || catchFinalizedGuardIndex > catchUncertainIndex) {
+  throw new Error('A local post-finalization failure can again relabel a known paid X cost as uncertain.');
+}
+
+requireAll(xFollowEvidence, [
+  'export class FollowEvidenceStorageUnavailableError extends Error',
+  'targets.every(validTargetRow)',
+  'completedRows.every(validTargetRow)',
+  'uniqueTargetRows(targets)',
+  'uniqueTargetRows(completedRows)',
+  'throw new FollowEvidenceStorageUnavailableError();',
+  'if (!(await invalidateCycle(db, userId, cycle)))',
+], 'Corrupt/partially persisted X follow-evidence rows can again escape runtime validation or fail to signal an irrecoverable storage cycle.');
 
 requireAll(xAccount, [
   'coherentUsersAcrossLists(value.followers, value.following)',
@@ -55,7 +89,9 @@ requireAll(xAccount, [
   'const idByUsername = new Map<string, string>();',
   'validPagingState(value.resumePaging)',
   'persistenceDegraded?: boolean;',
-], 'Owned-X client validation can accept contradictory identity/checkpoint metadata or hide degraded persistence.');
+  'followEvidenceDegraded?: boolean;',
+  'value.followEvidenceDegraded === true && value.followEvidence != null',
+], 'Owned-X client validation can accept contradictory identity/checkpoint metadata, degraded evidence with stale proof, or hide degraded persistence.');
 
 requireAll(xOwnedStore, [
   'const stableIdentityState = reconcileOwnedXStableIdentities(state, result);',
@@ -150,4 +186,4 @@ if ((budgetIntegrity.match(/occurred_jd >= julianday\(\?\) AND occurred_jd < jul
   throw new Error('A paid-budget read or reservation lost one side of the active UTC month boundary.');
 }
 
-console.log('Cache/ledger invariants OK: malformed X/Instagram snapshots are rejected and evicted, cache freshness is bound to the snapshot observation time, X paging checkpoints fail independently and can recover from either durable source, raw paid owned-X/X-enrichment payloads and cross-endpoint X identities are validated before reservation shrink/finalize, vanished paid reservations fail closed and are conservatively reconstructed when possible, legacy negative/text or unassignable-timestamp budget rows disable paid work, reservations remain atomic by actual instant inside the active UTC month, X/Instagram handle renames follow immutable identity and repair old duplicates, Instagram latest comment targets stay event-bound, and official X identity/profile changes cannot leave stale CRM advice actionable.');
+console.log('Cache/ledger invariants OK: malformed X/Instagram snapshots are rejected and evicted, cache freshness is bound to snapshot observation time, X paging checkpoints fail independently and recover from either durable source, paid X provider snapshots validate before exact-cost finalization, finalized costs are never relabeled uncertain by local evidence failures, corrupt follow-evidence rows fail closed and irrecoverable evidence cycles are quarantined without rereading the paid page, raw paid X-enrichment identities validate before finalize, legacy invalid budget rows disable paid work, reservations remain atomic inside the active UTC month, X/Instagram renames follow immutable identity, and stale CRM advice cannot remain actionable.');
