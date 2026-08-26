@@ -41,6 +41,13 @@ interface XCoverageSlice {
   rotated?: boolean;
 }
 
+interface XPagingState {
+  followersCursor: string | null;
+  followingCursor: string | null;
+  followersCycle: number;
+  followingCycle: number;
+}
+
 export interface XFollowEvidenceTarget {
   key: string;
   username: string;
@@ -61,6 +68,7 @@ export interface XOwnedSyncResponse {
   source: 'x' | 'cache' | 'disabled';
   costUsd: number;
   reason?: string;
+  persistenceDegraded?: boolean;
   startedAt?: string;
   syncedAt?: string;
   profile?: XOwnedUser;
@@ -74,6 +82,7 @@ export interface XOwnedSyncResponse {
   };
   followEvidence?: XFollowEvidence | null;
   requested?: { followers: number; following: number; posts: number };
+  resumePaging?: XPagingState;
   pacing?: {
     daysRemaining: number;
     pacedCapUsd: number;
@@ -173,7 +182,8 @@ function validOwnedSyncResponse(value: unknown): value is XOwnedSyncResponse {
   if (!isRecord(value)
     || typeof value.enabled !== 'boolean'
     || !['x', 'cache', 'disabled'].includes(String(value.source || ''))
-    || !nonNegativeFinite(value.costUsd)) return false;
+    || !nonNegativeFinite(value.costUsd)
+    || (value.persistenceDegraded != null && typeof value.persistenceDegraded !== 'boolean')) return false;
 
   if (!value.enabled) {
     return value.source === 'disabled'
@@ -192,7 +202,7 @@ function validOwnedSyncResponse(value: unknown): value is XOwnedSyncResponse {
   if (!Array.isArray(value.following) || value.following.length > 500 || !value.following.every(validOwnedUser) || !uniqueUsers(value.following)) return false;
   if (!coherentUsersAcrossLists(value.followers, value.following)) return false;
   if (!Array.isArray(value.posts) || value.posts.length > 50 || !value.posts.every(validOwnedPost) || !uniqueIds(value.posts)) return false;
-  if (!validCoverage(value.coverage) || !validRequested(value.requested) || !validPacing(value.pacing)) return false;
+  if (!validCoverage(value.coverage) || !validRequested(value.requested) || !validPagingState(value.resumePaging) || !validPacing(value.pacing)) return false;
   if (value.followEvidence != null && !validFollowEvidence(value.followEvidence)) return false;
 
   const coverage = value.coverage as Record<string, unknown>;
@@ -299,6 +309,14 @@ function validRequested(value: unknown) {
     && boundedNonNegativeInteger(value.posts, 50);
 }
 
+function validPagingState(value: unknown): value is XPagingState {
+  return isRecord(value)
+    && (value.followersCursor === null || validCursor(value.followersCursor))
+    && (value.followingCursor === null || validCursor(value.followingCursor))
+    && boundedNonNegativeInteger(value.followersCycle, 1_000_000)
+    && boundedNonNegativeInteger(value.followingCycle, 1_000_000);
+}
+
 function validPacing(value: unknown) {
   return isRecord(value)
     && boundedPositiveInteger(value.daysRemaining, 31)
@@ -342,6 +360,10 @@ function coherentUsersAcrossLists(followers: XOwnedUser[], following: XOwnedUser
 
 function uniqueIds(items: Array<{ id: string }>) {
   return new Set(items.map((item) => item.id)).size === items.length;
+}
+
+function validCursor(value: unknown) {
+  return typeof value === 'string' && value.length > 0 && value.length <= 2048;
 }
 
 function validAuthorizeUrl(value: string) {
