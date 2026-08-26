@@ -184,7 +184,6 @@ export function applyXProfiles(state: AppState, profiles: XProfileResult[], atte
   const byUsername = new Map(profiles.map((profile) => [profile.username.toLowerCase(), profile]));
   const attempted = new Set(attemptedUsernames.map((username) => username.trim().toLowerCase()).filter(Boolean));
   const attemptedAt = new Date().toISOString();
-  const identityResetIds = new Set<string>();
   const candidates = state.candidates.map((candidate) => {
     if (candidate.platform !== 'x' || candidate.skipped) return candidate;
     const username = candidate.username.toLowerCase();
@@ -196,32 +195,23 @@ export function applyXProfiles(state: AppState, profiles: XProfileResult[], atte
       return { ...candidate, profileSyncAttemptedAt: attemptedAt };
     }
 
-    const identityChanged = Boolean(candidate.platformUserId && candidate.platformUserId !== profile.id);
-    if (identityChanged) {
-      identityResetIds.add(candidate.id);
+    const currentStableId = stablePlatformUserId(candidate.platformUserId);
+    if (currentStableId && currentStableId !== profile.id) {
+      // Generic username enrichment cannot safely decide whether this is a real handle
+      // transfer or a stale response that arrived after another official sync/restore.
+      // Never rewrite an existing immutable identity or move its CRM history to the new ID.
+      // Preserve the old person and history, quarantine direct actions, and let a later
+      // identity-bound official observation resolve which current record owns the handle.
       return {
         ...candidate,
-        platformUserId: profile.id,
-        displayName: profile.name || profile.username,
-        bio: profile.description,
-        verified: profile.verified,
-        publicMetrics: profile.publicMetrics,
-        profileSyncedAt: attemptedAt,
         profileSyncAttemptedAt: attemptedAt,
         engagementUrl: undefined,
-        kind: 'other' as const,
-        match: 50,
-        relationshipScore: 0,
-        stage: 'discovered' as const,
-        reason: 'Xの公式ユーザーIDが以前の記録と異なります。同じ@usernameを別アカウントが使用している可能性があるため、過去の関係履歴を新しい相手へ引き継がず再確認します。',
-        strategy: '以前の相手と同一人物だと推測せず、現在の公式プロフィールと発信からMissionとの相性をあらためて判断します。',
-        tags: [],
+        followBack: null,
         recommendedAction: 'review' as const,
         draft: undefined,
-        followedAt: undefined,
-        followBack: null,
-        lastInteractionAt: undefined,
-        snoozedUntil: undefined,
+        reason: 'X公式プロフィール確認で、この@usernameに以前の記録とは異なる公式ユーザーIDが返りました。古い応答やハンドル再利用の可能性があるため、過去の相手を新しいIDへ置き換えず再確認します。',
+        strategy: '過去の関係履歴と公式ユーザーIDはそのまま保持し、現在のプロフィールを確認できる新しい証拠が揃うまでフォロー・返信・DM・整理へ進めません。',
+        tags: [...new Set([...candidate.tags, 'identity-conflict'])],
       };
     }
 
@@ -249,18 +239,16 @@ export function applyXProfiles(state: AppState, profiles: XProfileResult[], atte
         : candidate.strategy,
     };
   });
-  return {
+  const normalized = normalizeAppState({
     ...state,
     candidates,
-    interactions: identityResetIds.size
-      ? state.interactions.filter((interaction) => !identityResetIds.has(interaction.candidateId))
-      : state.interactions,
     budget: {
       ...state.budget,
       usedUsd: Math.max(0, state.budget.usedUsd + Math.max(0, costUsd)),
       xUsd: Math.max(0, state.budget.xUsd + Math.max(0, costUsd)),
     },
-  };
+  });
+  return refreshRelationshipAdvice(normalized);
 }
 
 export function applyOwnedXSync(state: AppState, result: XOwnedSyncResponse): AppState {
@@ -553,6 +541,11 @@ function sanitizeUsername(platform: Platform, value: string) {
   }
   if (INSTAGRAM_RESERVED_PATHS.has(lowered)) return '';
   return /^[A-Za-z0-9._]{1,30}$/.test(username) ? username : '';
+}
+
+function stablePlatformUserId(value?: string | null) {
+  const id = value?.trim() || '';
+  return /^\d{1,30}$/.test(id) ? id : '';
 }
 
 function clampScore(value: number) {
