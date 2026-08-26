@@ -3,9 +3,13 @@ import { readFile } from 'node:fs/promises';
 const providerApi = await readFile(new URL('../worker/src/index.ts', import.meta.url), 'utf8');
 const wrangler = await readFile(new URL('../worker/wrangler.jsonc', import.meta.url), 'utf8');
 const xOAuth = await readFile(new URL('../worker/src/xOAuth.ts', import.meta.url), 'utf8');
+const router = await readFile(new URL('../worker/src/router.ts', import.meta.url), 'utf8');
 const app = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8');
 const api = await readFile(new URL('../src/api.ts', import.meta.url), 'utf8');
 const backup = await readFile(new URL('../src/backup.ts', import.meta.url), 'utf8');
+const social = await readFile(new URL('../src/social.ts', import.meta.url), 'utf8');
+const store = await readFile(new URL('../src/store.ts', import.meta.url), 'utf8');
+const sync = await readFile(new URL('../src/sync.ts', import.meta.url), 'utf8');
 const workload = await readFile(new URL('../src/WorkloadControls.tsx', import.meta.url), 'utf8');
 const statusPresentation = await readFile(new URL('../src/statusPresentation.ts', import.meta.url), 'utf8');
 const resultResolution = await readFile(new URL('../src/resultResolution.ts', import.meta.url), 'utf8');
@@ -40,15 +44,35 @@ if (!statusPresentation.includes("status.dataset.presentedStatus = presented")
 if (!app.includes("candidate.reason.startsWith('無料Web検索から候補')")
   || !app.includes('setState((current) => mergeDiscoveredProfiles(current, discovered.profiles));')
   || !app.includes('setAutoRetryTick((current) => current + 1);')
-  || !app.includes('10 * 60 * 1000')
-  || !app.includes('if (existingRankTargets.length)')) {
-  throw new Error('Automatic refill can again lose successful discovery yield, re-search before retrying untouched candidates, or become stuck after a transient failure.');
+  || !app.includes('scheduleRetry(discovered.retryAfterSeconds * 1000)')
+  || !app.includes('if (existingRankTargets.length)')
+  || !app.includes('if (rankTargets.length > ranked.results.length) autoReplenishAttemptKeyRef.current = \'\';')) {
+  throw new Error('Automatic refill can again lose successful discovery yield, ignore a cross-device cooldown, or strand a second free-ranking batch.');
+}
+
+if (!app.includes('const selfAnalyzedToday = state.selfProfile.analyzedAt')
+  || !app.includes('const plannedSelf = !selfAnalyzedToday')
+  || !app.includes("return interaction.action !== 'review' && sameLocalDay(at, now);")
+  || !app.includes("interaction.action !== 'review'\n        && at.getFullYear()")) {
+  throw new Error('Automatic refill/Today progress can again reserve already-completed self work or count profile-only reviews as executable work.');
+}
+
+if (!app.includes('const candidateOperationBusy = discovering || ranking || enrichingX;')
+  || (app.match(/disabled=\{candidateOperationBusy\}/g) || []).length < 3
+  || !app.includes("setApiNote('別の候補処理が終わってから再評価してください')")) {
+  throw new Error('Manual discovery, paid X enrichment and AI ranking can again overlap and discard paid results after concurrent candidate mutation.');
 }
 
 if (!api.includes('completeFreeOnlyRankingBatch(validated.results, selected)')
   || !api.includes("recommendedAction: 'review'")
   || !api.includes('無料評価でこの候補の確実な判定が返らなかったため、本人確認を優先します。')) {
   throw new Error('A partial free-provider ranking response can again leave omitted candidates untouched and trigger repeated automatic evaluation.');
+}
+
+if (!api.includes('retryAfterSeconds?: number;')
+  || !api.includes('optionalBoundedInteger(result.retryAfterSeconds, 1, 86_400)')
+  || !router.includes('retryAfterSeconds: Math.max(1, Math.ceil(remainingMs / 1000))')) {
+  throw new Error('Cross-device automatic-discovery throttling can again block a local day without exposing when retry becomes safe.');
 }
 
 if (!backup.includes('monthlyLimitUsd: clampNumber(state?.budget?.monthlyLimitUsd, 0, 10, 3)')
@@ -62,6 +86,29 @@ if (!backup.includes('monthlyLimitUsd: clampNumber(state?.budget?.monthlyLimitUs
   || !backup.includes('MAX_SNOOZE_FUTURE_MS = 7 * 86_400_000')
   || !backup.includes('snoozedUntil: validSnoozeOptionalIso(raw.snoozedUntil)')) {
   throw new Error('Restored settings can again exceed supported UI/runtime bounds or poison candidates with an unbounded future snooze.');
+}
+
+if (!backup.includes('xReservedPaths.has(lowered)')
+  || !backup.includes('instagramReservedPaths.has(lowered)')
+  || !api.includes('!xReservedPaths.has(lowered)')
+  || !api.includes('!instagramReservedPaths.has(lowered)')
+  || !social.includes('xReservedPaths.has(lowered)')
+  || !social.includes('instagramReservedPaths.has(lowered)')) {
+  throw new Error('Reserved X/Instagram route names can again enter through restore/provider data or be opened as fake profile identities.');
+}
+
+if (!sync.includes('MAX_REMOTE_CLOCK_SKEW_MS = 5 * 60 * 1000')
+  || !sync.includes('validRemoteVersion(expectedUpdatedAt)')
+  || !router.includes('MAX_CLOCK_SKEW_MS = 5 * 60 * 1000')
+  || !router.includes('validPastishIso(row.updated_at)')
+  || !router.includes('expectedUpdatedAt must be a current valid ISO timestamp')) {
+  throw new Error('A corrupted far-future D1 snapshot version can again poison optimistic-lock state.');
+}
+
+if (!store.includes("const recordedAction: Interaction['action'] = cleanupKeep ? 'unfollow_review' : action;")
+  || !store.includes('if (cleanupKeep) {')
+  || !store.includes("recommendedAction: 'review' as const")) {
+  throw new Error('Cleanup keep can again collapse into profile-only review accounting or accidentally advance relationship engagement.');
 }
 
 if (!resultResolution.includes('const completedVisibleEngagement =')
@@ -85,4 +132,4 @@ if (!xOAuth.includes('let refreshable = false;')
   throw new Error('X OAuth status can again advertise a corrupt stored refresh token as a maintainable/usable connection.');
 }
 
-console.log('Regression fixes OK: provider defaults are aligned, state updates are race-safe, auto refill is retry-safe and partial-response-safe, restored values stay bounded, completed exact engagement is consumed, cached Instagram comments do not replay handled actions, and X OAuth status validates refresh-token usability.');
+console.log('Regression fixes OK: provider defaults are aligned, candidate operations are serialized, auto refill matches Today and continues multi-batch free ranking, cross-device cooldown retry is scheduled, reserved social paths and future sync versions fail closed, cleanup accounting stays distinct from profile review, exact engagement is consumed, cached Instagram comments do not replay handled actions, and X OAuth validates refresh-token usability.');
