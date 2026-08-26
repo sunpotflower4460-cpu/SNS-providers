@@ -111,7 +111,11 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
       const evidence = result.followEvidence?.complete
         ? ` · フォローバック確認${result.followEvidence.targetCount}人分を完了`
         : '';
-      setNote(`${source}から更新しました${cost}${evidence}`);
+      if (result.persistenceDegraded) {
+        setNote(result.reason || `${source}は取得できました${cost}${evidence}。ただし次回位置を保存できなかったため、D1を確認するまで再更新しないでください`);
+      } else {
+        setNote(`${source}から更新しました${cost}${evidence}`);
+      }
     } catch (error) {
       setNote(error instanceof Error ? error.message : 'Xデータを更新できませんでした');
     } finally {
