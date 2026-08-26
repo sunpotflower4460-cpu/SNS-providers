@@ -29,8 +29,11 @@ function requireAll(source, fragments, message) {
 requireAll(requestContext, [
   'missionRequestKey',
   'candidateRequestKey',
+  'xProfileRequestKey',
+  'candidate.platformUserId || null',
+  'candidate.profileSyncAttemptedAt || null',
   'selfRequestKey',
-], 'Deterministic async request-context fingerprints are missing.');
+], 'Deterministic async request-context fingerprints are missing identity/profile state.');
 
 requireAll(api, [
   'requestMissionKey',
@@ -38,6 +41,23 @@ requireAll(api, [
   'requestSelfKey: selfRequestKey(profileText, recentPostsText)',
   'AI ranking returned a result for an unrequested candidate',
 ], 'AI/discovery responses are no longer bound to the exact request context.');
+
+requireAll(api, [
+  'const requestCandidateKeys = Object.fromEntries(',
+  '[candidate.id, xProfileRequestKey(candidate)]',
+  "Object.defineProperty(contextualProfiles, 'requestCandidateKeys'",
+  'value: Object.freeze(requestCandidateKeys)',
+  'enumerable: false',
+], 'Paid X enrichment is no longer bound to the request-time candidate/profile context.');
+
+requireAll(store, [
+  'const requestCandidateKeys = profiles.requestCandidateKeys;',
+  'const requestKey = requestCandidateKeys[candidate.id];',
+  'if (!requestKey) return candidate;',
+  'if (requestKey !== xProfileRequestKey(candidate)) {',
+  'return { ...candidate, profileSyncAttemptedAt: attemptedAt };',
+  "if (!currentStableId && candidate.tags.includes('identity-conflict')) {",
+], 'Stale X enrichment can overwrite a newer same-ID profile, touch a candidate created after the request, or bind an unbound historical conflict to the current handle owner.');
 
 requireAll(api, [
   'value.results.length === 0',
@@ -125,13 +145,16 @@ requireAll(app, [
 ], 'Clipboard/Discover/Relations/Settings UI updates can overwrite newer async state.');
 
 requireAll(resultResolution, [
+  'if (!sameVisibleCandidateIdentity(visibleCandidate, current)) return state;',
+  'const visibleStableId = stablePlatformUserId(visible.platformUserId);',
+  'const currentStableId = stablePlatformUserId(current.platformUserId);',
   "visibleCandidate.recommendedAction === 'unfollow_review'",
   "current.recommendedAction === 'unfollow_review'",
   'const sameVisibleAction = current.recommendedAction === visibleCandidate.recommendedAction;',
   'const sameVisibleTarget =',
   "const recordedAction: Interaction['action'] = visibleReview && action === 'kept'",
   'recordInteraction(contextualState, current.id, recordedAction)',
-], 'Result-sheet actions can be reinterpreted by a newer async candidate recommendation or profile-only review can inflate engagement.');
+], 'Result-sheet actions can be applied to a replacement identity, reinterpreted by newer recommendations, or inflate engagement from profile-only review.');
 requireAll(app, [
   'resolveVisibleResult(current, pending, action)',
   '{pending && <ResultSheet candidate={pending}',
@@ -283,4 +306,4 @@ requireAll(instagramOwned, [
   'Instagram Graph API returned an empty or invalid JSON response',
 ], 'Instagram owned sync can trust malformed/future cache state, mutate invalid usernames, or accept invalid successful JSON.');
 
-console.log('Request-context invariants OK: stale async results are discarded, full-cycle X evidence is identity-bound across delayed restores, visible result-sheet semantics are preserved, profile-only reviews do not inflate engagement, routed bodies and frontend/Worker timeouts are bounded, social handoff and restore URLs stay canonical, X/Instagram payload identity/count/time coherence fails closed, cache freshness is tied to snapshot observation time, restored relationship clocks reject future poison, X enrichment uses future-safe backoff, persistence failures stay visible, and paid LLM preflight remains byte-conservative.');
+console.log('Request-context invariants OK: stale async AI/discovery/X-enrichment results are discarded, X enrichment is bound to request-time candidate profile context even for same immutable IDs, full-cycle X evidence and visible result sheets are identity-bound across delayed restores, profile-only reviews do not inflate engagement, routed bodies and frontend/Worker timeouts are bounded, social handoff and restore URLs stay canonical, X/Instagram payload identity/count/time coherence fails closed, cache freshness is tied to snapshot observation time, restored relationship clocks reject future poison, X enrichment uses future-safe backoff without mutating post-request candidates, persistence failures stay visible, and paid LLM preflight remains byte-conservative.');
