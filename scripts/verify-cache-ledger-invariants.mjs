@@ -46,13 +46,15 @@ requireAll(instagramOwned, [
 ], 'Instagram cache validation/eviction, deep snapshot integrity, or latest-comment target binding regressed.');
 
 requireAll(instagramOwnedStore, [
-  'const byStableId = new Map(',
+  'const byStableId = new Map<string, Candidate>();',
   'const stableExisting = incomingStableId ? byStableId.get(incomingStableId) : undefined;',
   'const existing = stableExisting || usernameExisting;',
-  'removedCandidateIds.add(usernameExisting.id);',
+  'conflictingRemovedIds.add(usernameExisting.id);',
+  'const legacyIdentityAliases = new Map<string, string>();',
+  'resolveIdentityAlias(interaction.candidateId, legacyIdentityAliases)',
   'username: engager.username,',
   'profileUrl: engager.profileUrl,',
-], 'Instagram handle renames can again duplicate one immutable commenter or transfer stale handle history.');
+], 'Instagram handle renames or legacy same-ID duplicates can again split one immutable commenter or transfer stale handle history.');
 
 requireAll(providerApi, [
   'readActiveMonthUsage(env.DB, userId)',
@@ -67,14 +69,19 @@ requireAll(budgetIntegrity, [
   "typeof(cost_usd) NOT IN ('integer','real') OR cost_usd < 0",
   'Number.isFinite(usedUsd)',
   'invalidCount !== 0',
-  'WITH current_usage AS (',
+  'unassignableCount !== 0',
+  'julianday(occurred_at) AS occurred_jd',
+  'occurred_jd >= julianday(?) AND occurred_jd < julianday(?)',
+  'timestamp_integrity AS (',
+  'occurred_jd IS NULL',
+  'WITH ledger_rows AS (',
   'WHERE invalid_count = 0',
+  'AND unassignable_count = 0',
   "AND typeof(used) IN ('integer','real')",
   'AND used >= 0',
   'AND used + ? <= ?',
-  'occurred_at >= ? AND occurred_at < ?',
   'new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1))',
-], 'Legacy D1 budget corruption can weaken the active-month HARD LIMIT or reservation atomicity.');
+], 'Legacy D1 budget corruption or non-canonical timestamps can weaken the active-UTC-month HARD LIMIT or reservation atomicity.');
 
 const enrichFetchIndex = providerApi.indexOf('const profiles = await fetchXProfiles(usernames, env.X_BEARER_TOKEN);');
 const enrichFinalizeIndex = providerApi.indexOf("await finalizeReservation(env, reservationId, 'user_read'", enrichFetchIndex);
@@ -100,9 +107,8 @@ requireAll(store, [
   'state.interactions.filter((interaction) => !identityResetIds.has(interaction.candidateId))',
 ], 'Official X enrichment can leave obsolete follow advice actionable or transfer CRM history across immutable identity changes.');
 
-const unboundedMonthQuery = /budget_ledger[^\n]{0,220}occurred_at >= \?(?![^\n]{0,120}occurred_at < \?)/;
-if (unboundedMonthQuery.test(budgetIntegrity)) {
-  throw new Error('A paid-budget query appears to have a lower month bound without an upper month bound.');
+if ((budgetIntegrity.match(/occurred_jd >= julianday\(\?\) AND occurred_jd < julianday\(\?\)/g) || []).length < 2) {
+  throw new Error('A paid-budget read or reservation lost one side of the active UTC month boundary.');
 }
 
-console.log('Cache/ledger invariants OK: malformed X/Instagram snapshots are rejected and evicted, raw paid owned-X/X-enrichment payloads are validated before reservation shrink/finalize, vanished paid reservations fail closed and are conservatively reconstructed when possible, legacy negative/text budget rows disable paid work, reservations remain atomic inside the active UTC month, Instagram latest comment targets stay event-bound, Instagram handle renames follow immutable identity, and official X identity/profile changes cannot leave stale CRM advice actionable.');
+console.log('Cache/ledger invariants OK: malformed X/Instagram snapshots are rejected and evicted, raw paid owned-X/X-enrichment payloads are validated before reservation shrink/finalize, vanished paid reservations fail closed and are conservatively reconstructed when possible, legacy negative/text or unassignable-timestamp budget rows disable paid work, reservations remain atomic by actual instant inside the active UTC month, Instagram latest comment targets stay event-bound, Instagram handle renames follow immutable identity and repair old duplicates, and official X identity/profile changes cannot leave stale CRM advice actionable.');
