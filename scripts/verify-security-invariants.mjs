@@ -244,9 +244,9 @@ if (!xOwnedStore.includes("if (candidate.skipped || candidate.platform !== 'x' |
 }
 if (!instagramOwnedStore.includes('isFreshCommentAfterDismissal')
   || !instagramOwnedStore.includes('if (existing.skipped && !freshContact) {')
-  || !instagramOwnedStore.includes('if (stableExisting && renamed) {')
+  || !instagramOwnedStore.includes('if (stableExisting && (renamed || identityConflictResolved)) {')
   || !instagramOwnedStore.includes('continue;')) {
-  throw new Error('Old/cached Instagram comments can revive explicitly dismissed candidates or a handle rename can lose the dismissal boundary.');
+  throw new Error('Old/cached Instagram comments can revive explicitly dismissed candidates or a handle rename/identity-conflict resolution can lose the dismissal boundary.');
 }
 if (!instagramOwnedStore.includes('latestIso(existing.lastInteractionAt, engager.lastCommentAt)')) {
   throw new Error('Instagram sync can regress a newer manual relationship interaction timestamp.');
