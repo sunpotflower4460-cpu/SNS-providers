@@ -1,3 +1,4 @@
+import { readActiveMonthUsage, reserveActiveMonthBudget } from './budgetIntegrity';
 import { fetchWithTimeout } from './fetchWithTimeout';
 
 interface Env {
@@ -151,7 +152,7 @@ export default {
           return json({ enabled: false, costUsd: 0, profiles: [], reason: 'X_USER_READ_USD is not configured; paid X reads fail closed.' }, 200, cors);
         }
         if (!budget.ledgerAvailable) {
-          return json({ enabled: false, costUsd: 0, profiles: [], reason: 'Budget ledger is unavailable; paid X reads are disabled.' }, 200, cors);
+          return json({ enabled: false, costUsd: 0, profiles: [], reason: 'Budget ledger is unavailable or invalid; paid X reads are disabled.' }, 200, cors);
         }
 
         const worstCaseCost = usernames.length * unitCost;
@@ -161,7 +162,7 @@ export default {
 
         const reservationId = await reserveBudget(env, userId, 'x', 'user_read_reservation', worstCaseCost, budget.effectiveLimit);
         if (!reservationId) {
-          return json({ enabled: false, costUsd: 0, profiles: [], reason: 'HARD LIMIT changed before the X request could be reserved.' }, 200, cors);
+          return json({ enabled: false, costUsd: 0, profiles: [], reason: 'HARD LIMIT or budget-ledger integrity changed before the X request could be reserved.' }, 200, cors);
         }
 
         try {
@@ -231,7 +232,7 @@ export default {
           ? 'Free-only ranking skipped all paid providers and used the best available free/local path.'
           : budget.ledgerAvailable
             ? 'Free providers unavailable, paid rates are not configured, or HARD LIMIT protected the budget.'
-            : 'Free providers unavailable and the budget ledger is unavailable, so all paid providers were blocked.';
+            : 'Free providers unavailable and the budget ledger is unavailable or invalid, so all paid providers were blocked.';
         return json({ provider: 'local', paid: false, costUsd: 0, reason, results }, 200, cors);
       }
 
@@ -366,39 +367,22 @@ function validRawXProfile(value: unknown): value is XUser {
 }
 
 async function monthUsage(env: Env, userId: string): Promise<BudgetSnapshot> {
-  try {
-    const { start, end } = utcMonthWindow();
-    const row = await env.DB.prepare(
-      'SELECT COALESCE(SUM(cost_usd), 0) AS used FROM budget_ledger WHERE user_id = ? AND occurred_at >= ? AND occurred_at < ?'
-    ).bind(userId, start, end).first<{ used: number }>();
-    return { usedUsd: Number(row?.used || 0), available: true };
-  } catch {
-    return { usedUsd: 0, available: false };
-  }
+  return readActiveMonthUsage(env.DB, userId);
 }
 
 async function reserveBudget(env: Env, userId: string, provider: string, operation: string, amountUsd: number, effectiveLimit: number) {
   if (amountUsd <= 0) return null;
   const id = crypto.randomUUID();
-  const { start, end } = utcMonthWindow();
-  const now = new Date().toISOString();
-  try {
-    const result = await env.DB.prepare(
-      `INSERT INTO budget_ledger (id, user_id, provider, operation, cost_usd, input_units, output_units, cache_hit, occurred_at)
-       SELECT ?, ?, ?, ?, ?, 0, 0, 0, ?
-       WHERE COALESCE((SELECT SUM(cost_usd) FROM budget_ledger WHERE user_id = ? AND occurred_at >= ? AND occurred_at < ?), 0) + ? <= ?`
-    ).bind(id, userId, provider, operation, amountUsd, now, userId, start, end, amountUsd, effectiveLimit).run();
-    return result.meta.changes > 0 ? id : null;
-  } catch {
-    return null;
-  }
-}
-
-function utcMonthWindow() {
-  const now = new Date();
-  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
-  return { start: start.toISOString(), end: end.toISOString() };
+  const reserved = await reserveActiveMonthBudget(env.DB, {
+    id,
+    userId,
+    provider,
+    operation,
+    amountUsd,
+    effectiveLimit,
+    occurredAt: new Date().toISOString(),
+  });
+  return reserved ? id : null;
 }
 
 async function finalizeReservation(env: Env, reservationId: string, operation: string, actualCostUsd: number, usage?: Usage) {
