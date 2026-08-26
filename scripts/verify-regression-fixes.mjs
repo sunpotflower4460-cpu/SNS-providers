@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 
 const providerApi = await readFile(new URL('../worker/src/index.ts', import.meta.url), 'utf8');
 const wrangler = await readFile(new URL('../worker/wrangler.jsonc', import.meta.url), 'utf8');
+const xOAuth = await readFile(new URL('../worker/src/xOAuth.ts', import.meta.url), 'utf8');
 const app = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8');
 const api = await readFile(new URL('../src/api.ts', import.meta.url), 'utf8');
 const backup = await readFile(new URL('../src/backup.ts', import.meta.url), 'utf8');
@@ -77,4 +78,11 @@ if (!instagramOwnedStore.includes('isNewerCommentSignal(existing, engager.lastCo
   throw new Error('Cached Instagram comments can again recreate already-completed reply actions without a newer inbound signal.');
 }
 
-console.log('Regression fixes OK: provider defaults are aligned, state updates are race-safe, auto refill is retry-safe and partial-response-safe, restored values stay bounded, completed exact engagement is consumed, and cached Instagram comments do not replay handled actions.');
+if (!xOAuth.includes('let refreshable = false;')
+  || !xOAuth.includes('await decryptToken(env, row.refresh_token_enc);')
+  || !xOAuth.includes('const usable = accessUsable || refreshable;')
+  || !xOAuth.includes('refreshable: usable && refreshable')) {
+  throw new Error('X OAuth status can again advertise a corrupt stored refresh token as a maintainable/usable connection.');
+}
+
+console.log('Regression fixes OK: provider defaults are aligned, state updates are race-safe, auto refill is retry-safe and partial-response-safe, restored values stay bounded, completed exact engagement is consumed, cached Instagram comments do not replay handled actions, and X OAuth status validates refresh-token usability.');
