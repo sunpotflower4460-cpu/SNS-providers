@@ -29,10 +29,18 @@ requireAll(xOwned, [
   'validPagingState(value.resumePaging)',
   'snapshot.syncedAt === snapshotRow.synced_at',
   'snapshot.syncedAt !== row.synced_at',
+  'let rowState: PagingState | null = null;',
+  'return rowState || empty;',
+  'A malformed snapshot is not allowed to poison a valid dedicated paging row.',
+  'following_cursor = excluded.following_cursor',
   'const pagingPersisted = await savePaging(env, userId, nextPaging, syncedAt);',
   'const cachePersisted = await saveCache(env, userId, result);',
   'persistenceDegraded: true',
-], 'Owned-X cache/raw-payload validation, paging recovery, cross-list identity coherence, or bounded UTC-month budget accounting regressed.');
+], 'Owned-X cache/raw-payload validation, independent paging recovery, cross-list identity coherence, or bounded UTC-month budget accounting regressed.');
+
+if (xOwned.includes('following_cursor = excluded.followingCursor')) {
+  throw new Error('Owned-X paging UPSERT again references a non-existent camelCase SQLite column.');
+}
 
 const rawValidationIndex = xOwned.indexOf('safe to shrink the conservative reservation');
 const coherenceIndex = xOwned.indexOf('coherentRawXUsersAcrossLists(followersResult.data, followingResult.data)');
@@ -142,4 +150,4 @@ if ((budgetIntegrity.match(/occurred_jd >= julianday\(\?\) AND occurred_jd < jul
   throw new Error('A paid-budget read or reservation lost one side of the active UTC month boundary.');
 }
 
-console.log('Cache/ledger invariants OK: malformed X/Instagram snapshots are rejected and evicted, cache freshness is bound to the snapshot observation time, X paging can recover from the paid snapshot checkpoint, raw paid owned-X/X-enrichment payloads and cross-endpoint X identities are validated before reservation shrink/finalize, vanished paid reservations fail closed and are conservatively reconstructed when possible, legacy negative/text or unassignable-timestamp budget rows disable paid work, reservations remain atomic by actual instant inside the active UTC month, X/Instagram handle renames follow immutable identity and repair old duplicates, Instagram latest comment targets stay event-bound, and official X identity/profile changes cannot leave stale CRM advice actionable.');
+console.log('Cache/ledger invariants OK: malformed X/Instagram snapshots are rejected and evicted, cache freshness is bound to the snapshot observation time, X paging checkpoints fail independently and can recover from either durable source, raw paid owned-X/X-enrichment payloads and cross-endpoint X identities are validated before reservation shrink/finalize, vanished paid reservations fail closed and are conservatively reconstructed when possible, legacy negative/text or unassignable-timestamp budget rows disable paid work, reservations remain atomic by actual instant inside the active UTC month, X/Instagram handle renames follow immutable identity and repair old duplicates, Instagram latest comment targets stay event-bound, and official X identity/profile changes cannot leave stale CRM advice actionable.');
