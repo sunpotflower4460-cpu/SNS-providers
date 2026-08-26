@@ -22,6 +22,22 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
   const [note, setNote] = useState(apiConfigured ? 'Xの接続状態を確認しています…' : 'X接続はまだ利用できません');
 
   useEffect(() => {
+    const currentUrl = new URL(window.location.href);
+    const oauthResult = currentUrl.searchParams.get('x_oauth');
+    if (oauthResult) {
+      if (oauthResult === 'connected') {
+        // The callback may represent reauthorization or a switch to another X account.
+        // Server-side derived cache is cleared in both cases, so the old local @username
+        // and stats must not be displayed as if they belonged to the new connection.
+        onChange((current) => ({ ...current, xAccount: {} }));
+        setNote('X接続を更新しました。Xの情報を更新すると現在のアカウント情報を表示します');
+      } else {
+        setNote('X接続を完了できませんでした。もう一度接続をお試しください');
+      }
+      currentUrl.searchParams.delete('x_oauth');
+      window.history.replaceState(window.history.state, '', `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`);
+    }
+
     if (!apiConfigured) return;
     let cancelled = false;
     let requestGeneration = 0;
