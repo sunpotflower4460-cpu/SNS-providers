@@ -35,6 +35,26 @@ export function candidateRequestKey(candidate: Candidate) {
   ]);
 }
 
+// Paid X profile enrichment is narrower than AI ranking. Relationship progress may change
+// while the network request is in flight without making the returned official profile stale,
+// so bind only the local record identity and profile fields that the enrichment can replace.
+// This still catches the important same-ID race: another owned-X sync can refresh bio/metrics
+// before an older enrichment response arrives, and that older response must not roll them back.
+export function xProfileRequestKey(candidate: Candidate) {
+  return JSON.stringify([
+    candidate.id,
+    candidate.platform,
+    candidate.platformUserId || null,
+    candidate.username.toLowerCase(),
+    candidate.displayName,
+    candidate.bio,
+    candidate.verified ?? null,
+    candidate.publicMetrics || null,
+    candidate.profileSyncedAt || null,
+    candidate.profileSyncAttemptedAt || null,
+  ]);
+}
+
 export function selfRequestKey(profileText: string, recentPostsText: string) {
   return JSON.stringify([
     profileText.trim().slice(0, 10_000),
