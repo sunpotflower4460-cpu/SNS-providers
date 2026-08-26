@@ -13,6 +13,7 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
     if (!username) continue;
     const existing = byUsername.get(username);
     const freshContact = !existing?.skipped || isFreshCommentAfterDismissal(existing, engager.lastCommentAt);
+    const newCommentSignal = existing ? isNewerCommentSignal(existing, engager.lastCommentAt) : Boolean(engager.lastCommentAt);
     const relationshipScore = Math.min(85, 28 + engager.commentCount * 9 + Math.max(0, engager.mediaCount - 1) * 5);
     const match = Math.min(88, 68 + Math.min(20, engager.commentCount * 4));
     const baseReason = engager.commentCount > 1
@@ -24,14 +25,23 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
     const strategy = engager.lastCommentText
       ? `直近コメント「${engager.lastCommentText.slice(0, 120)}」の文脈から、まず自然に返信・プロフィール確認を優先。いきなり営業DMには進めません。`
       : '既に相手から反応があるため、まずコメント文脈の確認や自然な返信を優先します。';
-    const existingEngagementUrl = existing?.engagementUrl;
-    const engagementUrl = engager.latestMediaPermalink || existingEngagementUrl;
-    const recommendedAction: Candidate['recommendedAction'] = engagementUrl ? 'reply' : 'review';
 
     if (existing) {
       // A cached/old comment must not undo an explicit user dismissal. Only a comment
       // whose timestamp is newer than the dismissal/last known signal may reactivate it.
       if (existing.skipped && !freshContact) continue;
+
+      // Do not replay the same inbound comment after the user already handled it. A
+      // completed reply/like clears the exact target; cached syncs must not recreate the
+      // old action unless Instagram reports a genuinely newer comment timestamp.
+      const engagementUrl = newCommentSignal
+        ? engager.latestMediaPermalink || existing.engagementUrl
+        : existing.engagementUrl;
+      const recommendedAction: Candidate['recommendedAction'] = newCommentSignal && engagementUrl
+        ? 'reply'
+        : existing.recommendedAction;
+      const refreshOpportunityCopy = newCommentSignal || (existing.skipped && freshContact);
+
       updates.set(existing.id, {
         ...existing,
         skipped: false,
@@ -39,8 +49,8 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
         relationshipScore: Math.max(existing.relationshipScore, relationshipScore),
         match: Math.max(existing.match, match),
         stage: promoteStage(existing.stage),
-        reason,
-        strategy,
+        reason: refreshOpportunityCopy ? reason : existing.reason,
+        strategy: refreshOpportunityCopy ? strategy : existing.strategy,
         recommendedAction,
         draft: recommendedAction === 'reply' ? existing.draft : undefined,
         platformUserId: engager.id || existing.platformUserId,
@@ -51,6 +61,8 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
       continue;
     }
 
+    const engagementUrl = engager.latestMediaPermalink || undefined;
+    const recommendedAction: Candidate['recommendedAction'] = engagementUrl ? 'reply' : 'review';
     additions.push({
       id: `instagram-engager-${crypto.randomUUID()}`,
       platform: 'instagram',
@@ -95,6 +107,15 @@ function isFreshCommentAfterDismissal(candidate: Candidate, incomingAt: string |
     .filter(Number.isFinite);
   if (!baselines.length) return false;
   return incoming > Math.max(...baselines);
+}
+
+function isNewerCommentSignal(candidate: Candidate, incomingAt: string | null) {
+  if (!incomingAt) return false;
+  const incoming = new Date(incomingAt).getTime();
+  if (!Number.isFinite(incoming)) return false;
+  if (!candidate.lastInteractionAt) return true;
+  const handled = new Date(candidate.lastInteractionAt).getTime();
+  return !Number.isFinite(handled) || incoming > handled;
 }
 
 function latestIso(current?: string, incoming?: string | null) {
