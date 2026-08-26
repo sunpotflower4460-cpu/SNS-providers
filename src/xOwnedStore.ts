@@ -12,6 +12,7 @@ export function applyOwnedXSyncWithDiscovery(state: AppState, result: XOwnedSync
   const identityChangedIds = ownedXIdentityChanges(state, result);
   const identitySafeState = resetOwnedXIdentityChanges(state, result, identityChangedIds);
   let synced = applyOwnedXSync(identitySafeState, result);
+  synced = preservePostSnapshotFollowState(identitySafeState, synced, result);
   synced = reconcileSelfInputs(state, synced, result);
   synced = applyFullCycleFollowEvidence(synced, result, identityChangedIds);
   if (!result.enabled || !result.followers?.length) return synced;
@@ -134,6 +135,30 @@ function resetOwnedXIdentityChanges(state: AppState, result: XOwnedSyncResponse,
   };
 }
 
+function preservePostSnapshotFollowState(before: AppState, after: AppState, result: XOwnedSyncResponse): AppState {
+  if (!result.enabled || !result.startedAt) return after;
+  const startedAtMs = new Date(result.startedAt).getTime();
+  if (!Number.isFinite(startedAtMs)) return after;
+  const beforeById = new Map(before.candidates.map((candidate) => [candidate.id, candidate]));
+  let changed = false;
+  const candidates = after.candidates.map((candidate) => {
+    const prior = beforeById.get(candidate.id);
+    if (!prior?.followedAt || candidate.followBack !== false || prior.followBack === false) return candidate;
+    const followedAtMs = new Date(prior.followedAt).getTime();
+    if (!Number.isFinite(followedAtMs) || followedAtMs <= startedAtMs) return candidate;
+    // This follow began after the server captured the X observation boundary. The follower
+    // snapshot (including a 20-hour cache) cannot prove a negative about that newer follow.
+    // Preserve the latest local unknown state until a later X cycle actually observes it.
+    changed = true;
+    return {
+      ...candidate,
+      followBack: prior.followBack,
+      recommendedAction: candidate.recommendedAction === 'unfollow_review' ? 'review' as const : candidate.recommendedAction,
+    };
+  });
+  return changed ? { ...after, candidates } : after;
+}
+
 function reconcileSelfInputs(original: AppState, synced: AppState, result: XOwnedSyncResponse): AppState {
   if (!result.enabled || !result.profile) return synced;
 
@@ -173,6 +198,7 @@ function applyFullCycleFollowEvidence(state: AppState, result: XOwnedSyncRespons
 
   const now = Date.now();
   const waitDays = Math.max(1, Math.min(180, state.relationshipPolicy.followBackReviewAfterDays));
+  const snapshotStartedAtMs = result.startedAt ? new Date(result.startedAt).getTime() : Number.NaN;
   const candidates = state.candidates.map((candidate) => {
     if (candidate.skipped || candidate.platform !== 'x' || !candidate.followedAt) return candidate;
     if (identityChangedIds.has(candidate.id)) return candidate;
@@ -196,6 +222,10 @@ function applyFullCycleFollowEvidence(state: AppState, result: XOwnedSyncRespons
     if (!unseen.has(candidate.id)) return candidate;
 
     const followedAt = new Date(candidate.followedAt).getTime();
+    // A complete cycle can still be stale relative to a follow recorded while this sync
+    // was running (or after a cached snapshot was created). Never turn that newer follow
+    // into a negative; a later cycle must observe it first.
+    if (Number.isFinite(snapshotStartedAtMs) && Number.isFinite(followedAt) && followedAt > snapshotStartedAtMs) return candidate;
     const days = Number.isFinite(followedAt) ? Math.max(0, Math.floor((now - followedAt) / 86_400_000)) : 0;
     const lastInteractionAt = candidate.lastInteractionAt ? new Date(candidate.lastInteractionAt).getTime() : Number.NaN;
     const daysSinceInteraction = Number.isFinite(lastInteractionAt) ? Math.floor((now - lastInteractionAt) / 86_400_000) : Number.POSITIVE_INFINITY;
