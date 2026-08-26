@@ -173,8 +173,9 @@ export default {
           return json({ enabled: true, costUsd, profiles }, 200, cors);
         } catch (error) {
           // The request may already have reached X and become billable before a network,
-          // response, validation, or parsing failure surfaced. Keep the conservative reservation.
-          await markReservationUncertain(env, reservationId, 'user_read_uncertain');
+          // response, validation, parsing, or ledger-finalization failure surfaced. Keep
+          // or reconstruct the conservative reservation before surfacing the failure.
+          await markReservationUncertain(env, reservationId, 'user_read_uncertain', userId, 'x', worstCaseCost);
           throw error;
         }
       }
@@ -401,16 +402,37 @@ function utcMonthWindow() {
 }
 
 async function finalizeReservation(env: Env, reservationId: string, operation: string, actualCostUsd: number, usage?: Usage) {
-  await env.DB.prepare(
+  const result = await env.DB.prepare(
     'UPDATE budget_ledger SET operation = ?, cost_usd = ?, input_units = ?, output_units = ? WHERE id = ?'
   ).bind(operation, actualCostUsd, usage?.prompt_tokens || 0, usage?.completion_tokens || 0, reservationId).run();
+  if (result.meta.changes !== 1) throw new Error('Paid budget reservation disappeared before finalization');
 }
 
-async function markReservationUncertain(env: Env, reservationId: string, operation: string) {
+async function markReservationUncertain(
+  env: Env,
+  reservationId: string,
+  operation: string,
+  userId: string,
+  provider: string,
+  reservedUsd: number,
+) {
   try {
-    await env.DB.prepare('UPDATE budget_ledger SET operation = ? WHERE id = ?').bind(operation, reservationId).run();
+    const updated = await env.DB.prepare('UPDATE budget_ledger SET operation = ? WHERE id = ?')
+      .bind(operation, reservationId)
+      .run();
+    if (updated.meta.changes > 0) return;
+
+    // If the reservation row vanished between the paid provider call and finalization,
+    // rebuild the conservative charge rather than silently letting paid work disappear
+    // from the HARD LIMIT ledger. The provider call has already happened at this point.
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO budget_ledger
+        (id, user_id, provider, operation, cost_usd, input_units, output_units, cache_hit, occurred_at)
+       VALUES (?, ?, ?, ?, ?, 0, 0, 0, ?)`
+    ).bind(reservationId, userId, provider, operation, Math.max(0, reservedUsd), new Date().toISOString()).run();
   } catch {
-    // The original reservation and its conservative amount remain in D1 when possible.
+    // The caller still fails closed. A D1 outage can prevent durable accounting, but we
+    // never report the paid provider attempt as a normal successful finalized charge.
   }
 }
 
@@ -476,9 +498,9 @@ async function runPaidRankingWithReservation(
     return { status: 'success' as const, ...result, costUsd };
   } catch {
     // Once the request has been attempted, the provider may have billed it even if
-    // transport/JSON handling failed locally. Retain the conservative preflight amount
-    // and explicitly stop any second paid provider from being attempted in this request.
-    await markReservationUncertain(env, reservationId, 'rank_uncertain');
+    // transport/JSON handling or ledger finalization failed locally. Retain/reconstruct
+    // the conservative preflight amount and stop any second paid provider this request.
+    await markReservationUncertain(env, reservationId, 'rank_uncertain', userId, provider, preflightUsd);
     return { status: 'uncertain' as const };
   }
 }
