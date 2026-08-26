@@ -199,10 +199,10 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
     return result;
   } catch (error) {
     // Once a paid X data request has started, retain the conservative reservation:
-    // transport/JSON failures do not prove the provider did not bill the read. Raw X
-    // payload validation happens before finalizeReservation(), so malformed provider data
-    // leaves the original worst-case amount intact.
-    await markReservationUncertain(env, reservationId);
+    // transport/JSON/finalization failures do not prove the provider did not bill the read.
+    // If the row itself disappeared, reconstruct the conservative charge rather than
+    // silently allowing the paid sync to vanish from HARD LIMIT accounting.
+    await markReservationUncertain(env, reservationId, userId, worstCaseCost);
     const message = error instanceof Error ? error.message : 'Owned X sync failed';
     throw new Error(message);
   }
@@ -447,18 +447,27 @@ async function reserveBudget(env: XOwnedEnv, userId: string, amountUsd: number, 
 }
 
 async function finalizeReservation(env: XOwnedEnv, reservationId: string, actualCostUsd: number, resources: number) {
-  await env.DB.prepare(
+  const result = await env.DB.prepare(
     'UPDATE budget_ledger SET operation = ?, cost_usd = ?, input_units = ? WHERE id = ?'
   ).bind('owned_sync', actualCostUsd, resources, reservationId).run();
+  if (result.meta.changes !== 1) throw new Error('Owned-X budget reservation disappeared before finalization');
 }
 
-async function markReservationUncertain(env: XOwnedEnv, reservationId: string) {
+async function markReservationUncertain(env: XOwnedEnv, reservationId: string, userId: string, reservedUsd: number) {
   try {
-    await env.DB.prepare('UPDATE budget_ledger SET operation = ? WHERE id = ?')
+    const updated = await env.DB.prepare('UPDATE budget_ledger SET operation = ? WHERE id = ?')
       .bind('owned_sync_uncertain', reservationId)
       .run();
+    if (updated.meta.changes > 0) return;
+
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO budget_ledger
+        (id, user_id, provider, operation, cost_usd, input_units, output_units, cache_hit, occurred_at)
+       VALUES (?, ?, 'x', 'owned_sync_uncertain', ?, 0, 0, 0, ?)`
+    ).bind(reservationId, userId, Math.max(0, reservedUsd), new Date().toISOString()).run();
   } catch {
-    // Preserve the original conservative reservation if even the marker update fails.
+    // The caller still fails closed. If D1 itself is unavailable we cannot durably repair
+    // the ledger, but we never report this paid sync as a normal finalized success.
   }
 }
 
