@@ -244,11 +244,17 @@ if (social.includes('window.open(candidate.profileUrl') || !social.includes('can
   throw new Error('Social handoff can trust stored URLs instead of canonical official-platform destinations.');
 }
 
-if (!xOAuth.includes('await clearOwnedXDerivedState(env, userId);\n  await persistTokenResponse(env, userId, token);')
+if (!/await clearOwnedXDerivedState\(env, userId\);\s*await persistTokenResponse\(env, userId, token\);/.test(xOAuth)
   || !xOAuth.includes("DELETE FROM x_owned_snapshots WHERE user_id = ?")
   || !xOAuth.includes("DELETE FROM x_owned_paging WHERE user_id = ?")
   || !xOAuth.includes("DELETE FROM x_follow_cycle_targets WHERE user_id = ?")) {
   throw new Error('X account changes can retain stale owned-account cache or paging evidence.');
+}
+if (!xOAuth.includes("import { releaseSyncLease, reserveSyncLease } from './syncLease';")
+  || !xOAuth.includes('const X_IDENTITY_LEASE_MS = 3 * 60 * 1000;')
+  || (xOAuth.match(/reserveSyncLease\(env\.DB, userId, 'x_owned_sync', X_IDENTITY_LEASE_MS\)/g) || []).length < 2
+  || (xOAuth.match(/releaseSyncLease\(env\.DB, leaseResult\.lease\)/g) || []).length < 2) {
+  throw new Error('X OAuth replacement/disconnect can race an in-flight owned sync and let old-account derived state reappear.');
 }
 if (!xAccountControls.includes("onChange((current) => ({ ...current, xAccount: {} }))")
   || !xAccountControls.includes('status.connected && state.xAccount.username')) {
@@ -288,8 +294,8 @@ if (!xOAuth.includes('validateGrantedScopes(row.scope)')
   || !xOAuth.includes('OAuth session expired or malformed')) {
   throw new Error('Stored/session X OAuth state can bypass scope, ciphertext, expiry, or session-age validation.');
 }
-if (!/DELETE FROM x_oauth_tokens[\s\S]{0,500}?try \{[\s\S]{0,250}?clearOwnedXDerivedState/.test(xOAuth)) {
+if (!/DELETE FROM x_oauth_tokens[\s\S]{0,900}?try \{[\s\S]{0,350}?clearOwnedXDerivedState/.test(xOAuth)) {
   throw new Error('X disconnect can report failure after the authoritative token row was already deleted.');
 }
 
-console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, single-user namespace enforcement, protected X OAuth status, UTF-8 + monotonic validated D1 snapshot versions, DB-level non-negative HARD LIMIT constraints, pre-validated/session-safe control-token changes, fallback-only in-memory optimistic-lock state, account-bound X/Instagram caches, local-OAuth-before-paid-X reservation, durable conservative paid-reservation recovery, fresh-event-only candidate revival, normalized+deduplicated local/JSON/D1 restores, in-flight restore conflict protection, restore-aware Settings, async latest-state merges, conservative CRM progression, first-observed X follows, explicit manual reactivation, cleared manual unfollows, valid X identifiers, canonical official-platform handoff, guarded social drafts + self-profile rewrite, validated provider/X success payloads, full-pool AI prefiltering, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, strict stored/session OAuth validation, requested+granted X scopes=${scopes.join(', ')}`);
+console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, single-user namespace enforcement, protected X OAuth status, UTF-8 + monotonic validated D1 snapshot versions, DB-level non-negative HARD LIMIT constraints, pre-validated/session-safe control-token changes, fallback-only in-memory optimistic-lock state, account-bound X/Instagram caches, serialized X identity mutation vs owned reads, local-OAuth-before-paid-X reservation, durable conservative paid-reservation recovery, fresh-event-only candidate revival, normalized+deduplicated local/JSON/D1 restores, in-flight restore conflict protection, restore-aware Settings, async latest-state merges, conservative CRM progression, first-observed X follows, explicit manual reactivation, cleared manual unfollows, valid X identifiers, canonical official-platform handoff, guarded social drafts + self-profile rewrite, validated provider/X success payloads, full-pool AI prefiltering, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, strict stored/session OAuth validation, requested+granted X scopes=${scopes.join(', ')}`);
