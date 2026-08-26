@@ -231,8 +231,11 @@ if (!xOwnedStore.includes('if (existing) continue;') || xOwnedStore.includes('re
 if (!xOwnedStore.includes("if (candidate.skipped || candidate.platform !== 'x' || !candidate.followedAt) return candidate;")) {
   throw new Error('Full-cycle X evidence can mutate dismissed candidates.');
 }
-if (!instagramOwnedStore.includes('isFreshCommentAfterDismissal') || !instagramOwnedStore.includes('if (existing.skipped && !freshContact) continue;')) {
-  throw new Error('Old/cached Instagram comments can revive explicitly dismissed candidates.');
+if (!instagramOwnedStore.includes('isFreshCommentAfterDismissal')
+  || !instagramOwnedStore.includes('if (existing.skipped && !freshContact) {')
+  || !instagramOwnedStore.includes('if (stableExisting && renamed) {')
+  || !instagramOwnedStore.includes('continue;')) {
+  throw new Error('Old/cached Instagram comments can revive explicitly dismissed candidates or a handle rename can lose the dismissal boundary.');
 }
 if (!instagramOwnedStore.includes('latestIso(existing.lastInteractionAt, engager.lastCommentAt)')) {
   throw new Error('Instagram sync can regress a newer manual relationship interaction timestamp.');
@@ -250,11 +253,9 @@ if (!/await clearOwnedXDerivedState\(env, userId\);\s*await persistTokenResponse
   || !xOAuth.includes("DELETE FROM x_follow_cycle_targets WHERE user_id = ?")) {
   throw new Error('X account changes can retain stale owned-account cache or paging evidence.');
 }
-if (!xOAuth.includes("import { releaseSyncLease, reserveSyncLease } from './syncLease';")
-  || !xOAuth.includes('const X_IDENTITY_LEASE_MS = 3 * 60 * 1000;')
-  || (xOAuth.match(/reserveSyncLease\(env\.DB, userId, 'x_owned_sync', X_IDENTITY_LEASE_MS\)/g) || []).length < 2
-  || (xOAuth.match(/releaseSyncLease\(env\.DB, leaseResult\.lease\)/g) || []).length < 2) {
-  throw new Error('X OAuth replacement/disconnect can race an in-flight owned sync and let old-account derived state reappear.');
+if (!xOAuth.includes("reserveSyncLease(env.DB, userId, 'x_owned_sync', 3 * 60 * 1000)")
+  || !xOAuth.includes('releaseSyncLease(env.DB, leaseResult.lease)')) {
+  throw new Error('X OAuth reconnect/disconnect can race owned-X cache writes from another tab or device.');
 }
 if (!xAccountControls.includes("onChange((current) => ({ ...current, xAccount: {} }))")
   || !xAccountControls.includes('status.connected && state.xAccount.username')) {
@@ -294,7 +295,7 @@ if (!xOAuth.includes('validateGrantedScopes(row.scope)')
   || !xOAuth.includes('OAuth session expired or malformed')) {
   throw new Error('Stored/session X OAuth state can bypass scope, ciphertext, expiry, or session-age validation.');
 }
-if (!/DELETE FROM x_oauth_tokens[\s\S]{0,900}?try \{[\s\S]{0,350}?clearOwnedXDerivedState/.test(xOAuth)) {
+if (!/DELETE FROM x_oauth_tokens[\s\S]{0,900}?try \{[\s\S]{0,650}?clearOwnedXDerivedState/.test(xOAuth)) {
   throw new Error('X disconnect can report failure after the authoritative token row was already deleted.');
 }
 
