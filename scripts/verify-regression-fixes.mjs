@@ -4,6 +4,7 @@ const providerApi = await readFile(new URL('../worker/src/index.ts', import.meta
 const wrangler = await readFile(new URL('../worker/wrangler.jsonc', import.meta.url), 'utf8');
 const xOAuth = await readFile(new URL('../worker/src/xOAuth.ts', import.meta.url), 'utf8');
 const router = await readFile(new URL('../worker/src/router.ts', import.meta.url), 'utf8');
+const syncLease = await readFile(new URL('../worker/src/syncLease.ts', import.meta.url), 'utf8');
 const app = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8');
 const api = await readFile(new URL('../src/api.ts', import.meta.url), 'utf8');
 const backup = await readFile(new URL('../src/backup.ts', import.meta.url), 'utf8');
@@ -75,6 +76,16 @@ if (!api.includes('retryAfterSeconds?: number;')
   throw new Error('Cross-device automatic-discovery throttling can again block a local day without exposing when retry becomes safe.');
 }
 
+if (!syncLease.includes('ON CONFLICT(id) DO UPDATE SET')
+  || !syncLease.includes('WHERE budget_ledger.occurred_at < ?')
+  || !syncLease.includes('DELETE FROM budget_ledger WHERE id = ? AND operation = ?')
+  || !syncLease.includes('crypto.randomUUID()')
+  || !router.includes("reserveSyncLease(env.DB, userId, 'x_owned_sync', 3 * 60 * 1000)")
+  || !router.includes("reserveSyncLease(env.DB, userId, 'instagram_owned_sync', 5 * 60 * 1000)")
+  || (router.match(/releaseSyncLease\(env\.DB, leaseResult\.lease\)/g) || []).length < 2) {
+  throw new Error('First-party X/Instagram sync can again overlap across devices, duplicate provider reads, or let an expired owner delete a newer lease.');
+}
+
 if (!backup.includes('monthlyLimitUsd: clampNumber(state?.budget?.monthlyLimitUsd, 0, 10, 3)')
   || !backup.includes('followBackReviewAfterDays: clampInteger(policy?.followBackReviewAfterDays, 7, 90')
   || !backup.includes('dailyQueueLimit: clampInteger(policy?.dailyQueueLimit, 1, 150')
@@ -132,4 +143,4 @@ if (!xOAuth.includes('let refreshable = false;')
   throw new Error('X OAuth status can again advertise a corrupt stored refresh token as a maintainable/usable connection.');
 }
 
-console.log('Regression fixes OK: provider defaults are aligned, candidate operations are serialized, auto refill matches Today and continues multi-batch free ranking, cross-device cooldown retry is scheduled, reserved social paths and future sync versions fail closed, cleanup accounting stays distinct from profile review, exact engagement is consumed, cached Instagram comments do not replay handled actions, and X OAuth validates refresh-token usability.');
+console.log('Regression fixes OK: provider defaults are aligned, candidate operations are serialized, auto refill matches Today and continues multi-batch free ranking, cross-device discovery retry and first-party sync leases are enforced, reserved social paths and future sync versions fail closed, cleanup accounting stays distinct from profile review, exact engagement is consumed, cached Instagram comments do not replay handled actions, and X OAuth validates refresh-token usability.');
