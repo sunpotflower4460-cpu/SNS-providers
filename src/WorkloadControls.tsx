@@ -160,7 +160,12 @@ function suggestWorkload(state: AppState): WorkloadValues {
   const cleanupLimit = Math.min(cleanup, 6, Math.max(0, total - conversation));
   const lightLimit = Math.min(light, 15, Math.max(0, total - conversation - cleanupLimit));
   const selfLimit = Math.min(self, Math.max(0, total - conversation - cleanupLimit - lightLimit));
-  const connect = Math.min(strongFollow, 60, Math.max(0, total - conversation - cleanupLimit - lightLimit - selfLimit));
+  const observedConnect = Math.min(strongFollow, 60, Math.max(0, total - conversation - cleanupLimit - lightLimit - selfLimit));
+  // These values are category ceilings, not quotas. Keep enough follow capacity for free
+  // automatic replenishment to turn newly discovered candidates into executable Today work;
+  // otherwise applying a low-supply suggestion could set every relationship category to 0
+  // and permanently prevent the refill loop from creating useful work.
+  const connect = Math.min(60, Math.max(observedConnect, Math.min(20, total)));
 
   return {
     total,
