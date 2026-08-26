@@ -196,10 +196,14 @@ if (!instagramOwnedStore.includes('const newCommentSignal = existing ? isNewerCo
 }
 
 if (!instagramOwnedStore.includes('const identityResetIds = new Set<string>();')
+  || !instagramOwnedStore.includes('const stableExisting = incomingStableId ? byStableId.get(incomingStableId) : undefined;')
+  || !instagramOwnedStore.includes('const existing = stableExisting || usernameExisting;')
   || !instagramOwnedStore.includes('const identityChanged = Boolean(existingStableId && incomingStableId && existingStableId !== incomingStableId);')
-  || !instagramOwnedStore.includes('interactions: identityResetIds.size')
-  || !instagramOwnedStore.includes('const platformUserId = incomingStableId || existingStableId || engager.id || existing.platformUserId;')) {
-  throw new Error('Instagram username reuse or fallback IDs can again transfer old CRM history or overwrite a known immutable Graph ID.');
+  || !instagramOwnedStore.includes('const platformUserId = incomingStableId || existingStableId || engager.id || existing.platformUserId;')
+  || !instagramOwnedStore.includes('const legacyIdentityAliases = new Map<string, string>();')
+  || !instagramOwnedStore.includes('resolveIdentityAlias(interaction.candidateId, legacyIdentityAliases)')
+  || !instagramOwnedStore.includes('if (existing.skipped && !freshContact) {')) {
+  throw new Error('Instagram username reuse, handle renames, legacy same-ID duplicates, or fallback IDs can again transfer CRM history or overwrite a known immutable Graph ID.');
 }
 
 if (!xOAuth.includes('let refreshable = false;')
@@ -209,4 +213,4 @@ if (!xOAuth.includes('let refreshable = false;')
   throw new Error('X OAuth status can again advertise a corrupt stored refresh token as a maintainable/usable connection.');
 }
 
-console.log('Regression fixes OK: provider defaults are aligned, manual and automatic candidate operations are serialized, Today completion ignores profile-only reviews and counts one aggregate self-analysis action, auto refill keeps self-work quota stable and continues multi-batch free ranking, automatic discovery guards reject future poison, slow cloud restores cannot erase newer local work, cross-device discovery retry and first-party sync leases are enforced, reserved social paths and future sync versions fail closed, X/Instagram immutable identity changes cannot inherit old CRM/evidence, cleanup accounting stays distinct from profile review, exact engagement is consumed, Instagram binds the newest comment to its own concrete post target only, and X OAuth validates refresh-token usability.');
+console.log('Regression fixes OK: provider defaults are aligned, manual and automatic candidate operations are serialized, Today completion ignores profile-only reviews and counts one aggregate self-analysis action, auto refill keeps self-work quota stable and continues multi-batch free ranking, automatic discovery guards reject future poison, slow cloud restores cannot erase newer local work, cross-device discovery retry and first-party sync leases are enforced, reserved social paths and future sync versions fail closed, X/Instagram immutable identity changes cannot inherit old CRM/evidence, cleanup accounting stays distinct from profile review, exact engagement is consumed, Instagram binds the newest comment to its own concrete post target, repairs handle-renamed legacy duplicates without reactivating stale dismissals, and X OAuth validates refresh-token usability.');
