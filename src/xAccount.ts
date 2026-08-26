@@ -41,12 +41,19 @@ interface XCoverageSlice {
   rotated?: boolean;
 }
 
+export interface XFollowEvidenceTarget {
+  key: string;
+  username: string;
+  platformUserId: string | null;
+}
+
 export interface XFollowEvidence {
   complete: boolean;
   cycle: number;
   targetCount: number;
   seenKeys: string[];
   unseenKeys: string[];
+  targets: XFollowEvidenceTarget[];
 }
 
 export interface XOwnedSyncResponse {
@@ -252,13 +259,29 @@ function validFollowEvidence(value: unknown): value is XFollowEvidence {
     || !boundedNonNegativeInteger(value.targetCount, 500)
     || !Array.isArray(value.seenKeys)
     || !Array.isArray(value.unseenKeys)
+    || !Array.isArray(value.targets)
     || value.seenKeys.length > 500
     || value.unseenKeys.length > 500
+    || value.targets.length > 500
     || !value.seenKeys.every(validEvidenceKey)
-    || !value.unseenKeys.every(validEvidenceKey)) return false;
-  if (!value.complete) return value.seenKeys.length === 0 && value.unseenKeys.length === 0;
+    || !value.unseenKeys.every(validEvidenceKey)
+    || !value.targets.every(validEvidenceTarget)) return false;
+  if (!value.complete) return value.seenKeys.length === 0 && value.unseenKeys.length === 0 && value.targets.length === 0;
   const allKeys = [...value.seenKeys, ...value.unseenKeys];
-  return allKeys.length === value.targetCount && new Set(allKeys).size === allKeys.length;
+  const targetKeys = value.targets.map((target) => target.key);
+  return allKeys.length === value.targetCount
+    && value.targets.length === value.targetCount
+    && new Set(allKeys).size === allKeys.length
+    && new Set(targetKeys).size === targetKeys.length
+    && targetKeys.every((key) => allKeys.includes(key));
+}
+
+function validEvidenceTarget(value: unknown): value is XFollowEvidenceTarget {
+  return isRecord(value)
+    && validEvidenceKey(value.key)
+    && typeof value.username === 'string'
+    && /^[A-Za-z0-9_]{1,15}$/.test(value.username)
+    && (value.platformUserId === null || (typeof value.platformUserId === 'string' && /^\d{1,30}$/.test(value.platformUserId)));
 }
 
 function validEvidenceKey(value: unknown) {
