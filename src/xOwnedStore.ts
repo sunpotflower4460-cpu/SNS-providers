@@ -16,7 +16,11 @@ export function applyOwnedXSyncWithDiscovery(state: AppState, result: XOwnedSync
   // identity-bound CRM data first, then skip this cycle's evidence for it. The next fresh
   // cycle will be prepared with the new platformUserId and can safely establish follow-back.
   const identityChangedIds = ownedXIdentityChanges(stableIdentityState, result);
-  const identitySafeState = resetOwnedXIdentityChanges(stableIdentityState, result, identityChangedIds);
+  const identityResetState = resetOwnedXIdentityChanges(stableIdentityState, result, identityChangedIds);
+  // A recycled handle can move through more than two immutable owners. If multiple stale
+  // records are reset to the same newly observed ID in one response, collapse them again
+  // immediately instead of leaving duplicate current identities until the next sync.
+  const identitySafeState = reconcileOwnedXStableIdentities(identityResetState, result);
   let synced = applyOwnedXSync(identitySafeState, result);
   synced = preservePostSnapshotFollowState(identitySafeState, synced, result);
   synced = reconcileSelfInputs(state, synced, result);
@@ -107,7 +111,13 @@ function reconcileOwnedXStableIdentities(state: AppState, result: XOwnedSyncResp
   }
 
   const canonicalX = xCandidates.filter((candidate) => !legacyIdentityAliases.has(candidate.id));
-  const byUsername = new Map(canonicalX.map((candidate) => [candidate.username.toLowerCase(), candidate]));
+  const byUsername = new Map<string, Candidate[]>();
+  for (const candidate of canonicalX) {
+    const username = candidate.username.toLowerCase();
+    const group = byUsername.get(username) || [];
+    group.push(candidate);
+    byUsername.set(username, group);
+  }
   const updates = new Map<string, Candidate>();
   const conflictingRemovedIds = new Set<string>();
   const syncedAt = result.syncedAt || new Date().toISOString();
@@ -116,17 +126,20 @@ function reconcileOwnedXStableIdentities(state: AppState, result: XOwnedSyncResp
     const stableExisting = byStableId.get(user.id);
     if (!stableExisting) continue;
     const username = user.username.toLowerCase();
-    const usernameExisting = byUsername.get(username);
-    if (usernameExisting && usernameExisting.id !== stableExisting.id) {
-      // The current official handle belongs to stableExisting. A different candidate that
+    const usernameExisting = byUsername.get(username) || [];
+    for (const conflicting of usernameExisting) {
+      if (conflicting.id === stableExisting.id) continue;
+      // The current official handle belongs to stableExisting. Every other candidate that
       // still occupies this handle is either an old no-ID observation or a different prior
-      // identity. Remove it without transferring interactions across identities.
-      conflictingRemovedIds.add(usernameExisting.id);
-      updates.delete(usernameExisting.id);
+      // immutable identity. Remove all of them, not just whichever happened to win Map order.
+      conflictingRemovedIds.add(conflicting.id);
+      updates.delete(conflicting.id);
     }
 
     const renamed = stableExisting.username.toLowerCase() !== username;
+    const identityConflictResolved = stableExisting.tags.includes('identity-conflict');
     const profileChanged = renamed
+      || identityConflictResolved
       || stableExisting.bio !== user.description
       || stableExisting.verified !== user.verified
       || stableExisting.displayName !== (user.name || user.username);
@@ -145,6 +158,15 @@ function reconcileOwnedXStableIdentities(state: AppState, result: XOwnedSyncResp
       publicMetrics: user.publicMetrics,
       profileSyncedAt: syncedAt,
       profileSyncAttemptedAt: syncedAt,
+      ...(identityConflictResolved ? {
+        engagementUrl: undefined,
+        followBack: null,
+        recommendedAction: 'review' as const,
+        draft: undefined,
+        reason: 'X公式同期で、現在の@usernameと公式ユーザーIDの組み合わせを確認しました。以前のハンドル競合は解消しましたが、次の行動は現在のプロフィールを確認してから判断します。',
+        strategy: '現在の公式プロフィールと発信を確認し、過去の別アカウント履歴を混ぜずに関係を再評価します。',
+        tags: stableExisting.tags.filter((tag) => tag !== 'identity-conflict'),
+      } : {}),
     });
   }
 
@@ -295,6 +317,10 @@ function applyFullCycleFollowEvidence(state: AppState, result: XOwnedSyncRespons
   const snapshotStartedAtMs = result.startedAt ? new Date(result.startedAt).getTime() : Number.NaN;
   const candidates = state.candidates.map((candidate) => {
     if (candidate.skipped || candidate.platform !== 'x' || !candidate.followedAt) return candidate;
+    // Restored handle conflicts are deliberately non-executable until official identity
+    // reconciliation resolves them. Never let an older/cached full-cycle result turn the
+    // quarantine back into follow-back or unfollow advice.
+    if (candidate.tags.includes('identity-conflict')) return candidate;
     if (identityChangedIds.has(candidate.id)) return candidate;
     const target = targetByKey.get(candidate.id);
     // The async X result may arrive after a JSON/D1 restore replaced the candidate that
