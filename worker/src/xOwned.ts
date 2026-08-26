@@ -424,7 +424,7 @@ async function savePaging(env: XOwnedEnv, userId: string, paging: PagingState, u
        VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_id) DO UPDATE SET
          followers_cursor = excluded.followers_cursor,
-         following_cursor = excluded.followingCursor,
+         following_cursor = excluded.following_cursor,
          followers_cycle = excluded.followers_cycle,
          following_cycle = excluded.following_cycle,
          updated_at = excluded.updated_at`
