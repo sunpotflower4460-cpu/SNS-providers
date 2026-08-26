@@ -7,6 +7,12 @@ interface BackupEnvelope {
   state: AppState;
 }
 
+interface CandidateDedupeResult {
+  candidates: Candidate[];
+  aliases: Map<string, string>;
+  invalidInteractionCandidateIds: Set<string>;
+}
+
 const relationshipDefaults: RelationshipPolicy = {
   followBackReviewAfterDays: 30,
   preserveHighMatch: true,
@@ -70,12 +76,19 @@ export function normalizeAppState(state: AppState): AppState {
   const normalizedCandidates = Array.isArray(state?.candidates)
     ? state.candidates.map(normalizeCandidate).filter((candidate): candidate is Candidate => Boolean(candidate))
     : [];
-  const candidates = dedupeCandidates(normalizedCandidates);
+  const deduped = dedupeCandidates(normalizedCandidates);
+  const candidates = deduped.candidates;
   const candidateIds = new Set(candidates.map((candidate) => candidate.id));
   const normalizedInteractions = Array.isArray(state?.interactions)
     ? state.interactions.map(normalizeInteraction).filter((interaction): interaction is Interaction => interaction !== null)
     : [];
-  const interactions = dedupeById(normalizedInteractions.filter((interaction) => candidateIds.has(interaction.candidateId)));
+  const interactions = dedupeById(normalizedInteractions
+    .map((interaction) => {
+      const candidateId = resolveCandidateAlias(interaction.candidateId, deduped.aliases);
+      return candidateId === interaction.candidateId ? interaction : { ...interaction, candidateId };
+    })
+    .filter((interaction) => candidateIds.has(interaction.candidateId)
+      && !deduped.invalidInteractionCandidateIds.has(interaction.candidateId)));
   const secondaryGoals = Array.isArray(state?.mission?.secondaryGoals)
     ? state.mission.secondaryGoals.map((goal) => safeText(goal, 180)).filter(Boolean).slice(0, 20)
     : [];
@@ -163,7 +176,7 @@ function normalizeCandidate(raw: Candidate): Candidate | null {
     bio: safeText(raw.bio, 5000),
     profileUrl: raw.platform === 'x' ? `https://x.com/${username}` : `https://www.instagram.com/${username}/`,
     engagementUrl: safeSocialUrl(raw.platform, raw.engagementUrl),
-    platformUserId: safeText(raw.platformUserId, 100) || undefined,
+    platformUserId: normalizePlatformUserId(raw.platform, raw.platformUserId, username),
     verified: Boolean(raw.verified),
     publicMetrics: normalizeMetrics(raw.publicMetrics),
     profileSyncedAt: validPastishOptionalIso(raw.profileSyncedAt),
@@ -260,6 +273,16 @@ function sanitizeUsername(platform: Candidate['platform'], value: unknown) {
   return /^[A-Za-z0-9._]{1,30}$/.test(username) ? username : '';
 }
 
+function normalizePlatformUserId(platform: Candidate['platform'], value: unknown, username: string) {
+  if (typeof value !== 'string') return undefined;
+  const id = value.trim();
+  if (/^\d{1,30}$/.test(id)) return id;
+  if (platform === 'instagram' && id.toLowerCase() === `username:${username.toLowerCase()}`) {
+    return `username:${username.toLowerCase()}`;
+  }
+  return undefined;
+}
+
 function safeSocialUrl(platform: Candidate['platform'], value?: string) {
   if (!value || typeof value !== 'string' || value.length > 2000) return undefined;
   try {
@@ -286,16 +309,121 @@ function safeSocialUrl(platform: Candidate['platform'], value?: string) {
   }
 }
 
-function dedupeCandidates(candidates: Candidate[]) {
-  const seenIds = new Set<string>();
-  const seenProfiles = new Set<string>();
-  return candidates.filter((candidate) => {
+function dedupeCandidates(candidates: Candidate[]): CandidateDedupeResult {
+  const aliases = new Map<string, string>();
+  const invalidInteractionCandidateIds = new Set<string>();
+
+  // Candidate IDs are logical primary keys. If a corrupted restore reuses one ID for two
+  // different immutable people (or even two platforms), there is no safe way to know which
+  // identity its old interaction rows belong to. Keep one deterministic candidate but drop
+  // interaction history for that ambiguous ID instead of transferring it to the wrong person.
+  const byId = new Map<string, Candidate>();
+  for (const candidate of candidates) {
+    const existing = byId.get(candidate.id);
+    if (!existing) {
+      byId.set(candidate.id, candidate);
+      continue;
+    }
+    const existingStable = stableCandidateIdentity(existing);
+    const incomingStable = stableCandidateIdentity(candidate);
+    if (existing.platform !== candidate.platform
+      || (existingStable && incomingStable && existingStable !== incomingStable)) {
+      invalidInteractionCandidateIds.add(candidate.id);
+    }
+    byId.set(candidate.id, preferRestoredCandidate(existing, candidate));
+  }
+
+  // Numeric platform user IDs are authoritative across handle renames. Merge those first
+  // and retain an alias chain so interactions from an old handle follow the same person.
+  const afterStableIdentity: Candidate[] = [];
+  const byStableIdentity = new Map<string, Candidate>();
+  for (const candidate of byId.values()) {
+    const stableIdentity = stableCandidateIdentity(candidate);
+    if (!stableIdentity) {
+      afterStableIdentity.push(candidate);
+      continue;
+    }
+    const existing = byStableIdentity.get(stableIdentity);
+    if (!existing) {
+      byStableIdentity.set(stableIdentity, candidate);
+      afterStableIdentity.push(candidate);
+      continue;
+    }
+    const preferred = preferRestoredCandidate(existing, candidate);
+    const duplicate = preferred.id === existing.id ? candidate : existing;
+    aliases.set(duplicate.id, preferred.id);
+    byStableIdentity.set(stableIdentity, preferred);
+    if (preferred.id !== existing.id) replaceCandidate(afterStableIdentity, existing.id, preferred);
+  }
+
+  // Username is only a safe fallback identity while it does not contradict two known
+  // immutable IDs. If the same handle is present with different numeric IDs, keep both
+  // records separate so a recycled handle cannot inherit the previous person's CRM history.
+  const profileGroups = new Map<string, Candidate[]>();
+  for (const candidate of afterStableIdentity) {
     const profileKey = `${candidate.platform}:${candidate.username.toLowerCase()}`;
-    if (seenIds.has(candidate.id) || seenProfiles.has(profileKey)) return false;
-    seenIds.add(candidate.id);
-    seenProfiles.add(profileKey);
-    return true;
-  });
+    const group = profileGroups.get(profileKey) || [];
+    group.push(candidate);
+    profileGroups.set(profileKey, group);
+  }
+
+  const finalCandidates: Candidate[] = [];
+  for (const group of profileGroups.values()) {
+    if (group.length === 1) {
+      finalCandidates.push(group[0]);
+      continue;
+    }
+    const knownIdentities = new Set(group.map(stableCandidateIdentity).filter(Boolean));
+    if (knownIdentities.size > 1) {
+      finalCandidates.push(...group);
+      continue;
+    }
+    let preferred = group[0];
+    for (const candidate of group.slice(1)) preferred = preferRestoredCandidate(preferred, candidate);
+    for (const candidate of group) {
+      if (candidate.id !== preferred.id) aliases.set(candidate.id, preferred.id);
+    }
+    finalCandidates.push(preferred);
+  }
+
+  return { candidates: finalCandidates, aliases, invalidInteractionCandidateIds };
+}
+
+function stableCandidateIdentity(candidate: Candidate) {
+  const id = candidate.platformUserId?.trim() || '';
+  return /^\d{1,30}$/.test(id) ? `${candidate.platform}:${id}` : '';
+}
+
+function preferRestoredCandidate(left: Candidate, right: Candidate) {
+  const leftInteraction = safeTime(left.lastInteractionAt);
+  const rightInteraction = safeTime(right.lastInteractionAt);
+  if (leftInteraction !== rightInteraction) return rightInteraction > leftInteraction ? right : left;
+  if (left.relationshipScore !== right.relationshipScore) return right.relationshipScore > left.relationshipScore ? right : left;
+  if (Boolean(left.skipped) !== Boolean(right.skipped)) return left.skipped ? right : left;
+  const leftProfile = safeTime(left.profileSyncedAt);
+  const rightProfile = safeTime(right.profileSyncedAt);
+  if (leftProfile !== rightProfile) return rightProfile > leftProfile ? right : left;
+  return left.id.localeCompare(right.id) <= 0 ? left : right;
+}
+
+function replaceCandidate(candidates: Candidate[], existingId: string, replacement: Candidate) {
+  const index = candidates.findIndex((candidate) => candidate.id === existingId);
+  if (index >= 0) candidates[index] = replacement;
+}
+
+function resolveCandidateAlias(candidateId: string, aliases: Map<string, string>) {
+  let current = candidateId;
+  const seen = new Set<string>();
+  while (aliases.has(current) && !seen.has(current)) {
+    seen.add(current);
+    current = aliases.get(current)!;
+  }
+  return current;
+}
+
+function safeTime(value?: string | null) {
+  const time = value ? new Date(value).getTime() : Number.NaN;
+  return Number.isFinite(time) ? time : Number.NEGATIVE_INFINITY;
 }
 
 function dedupeById<T extends { id: string }>(items: T[]) {
