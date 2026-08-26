@@ -95,7 +95,7 @@ requireAll(providerApi, [
   '75_000, `${provider} ranking`',
   "markReservationUncertain(env, reservationId, 'user_read_uncertain', userId, 'x', worstCaseCost)",
   "markReservationUncertain(env, reservationId, 'rank_uncertain', userId, provider, preflightUsd)",
-  "if (result.meta.changes !== 1) throw new Error('Budget reservation disappeared before finalization')",
+  "if (result.meta.changes !== 1) throw new Error('Paid budget reservation disappeared before finalization')",
 ], 'Paid X/LLM Worker calls can wait indefinitely or lose conservative timeout/finalization accounting.');
 
 requireAll(router, [
