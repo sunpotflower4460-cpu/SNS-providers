@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { apiConfigured, fetchBudget } from './api';
 import { normalizeAppState, validateAppState } from './backup';
+import { detachExternalAccountSummaries } from './restoreSafety';
 import { clearRemoteStateVersion, clearSyncToken, downloadRemoteState, getRemoteStateVersion, getSyncToken, setSyncToken, uploadRemoteState } from './sync';
 import { syncBudget } from './store';
 import type { AppState, AppStateUpdater } from './types';
@@ -108,10 +109,10 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
         return;
       }
 
-      const restored = normalizeAppState(result.state);
+      const restored = detachExternalAccountSummaries(normalizeAppState(result.state));
       validateAppState(restored);
       onRestore(restored);
-      setStatus(`クラウドのデータを確認して復元しました · ${result.updatedAt ? new Date(result.updatedAt).toLocaleString('ja-JP') : '日時不明'}${persistenceWarning}`);
+      setStatus(`クラウドのデータを確認して復元しました · ${result.updatedAt ? new Date(result.updatedAt).toLocaleString('ja-JP') : '日時不明'} · SNSアカウントの現在情報は次回の公式同期で更新します${persistenceWarning}`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'クラウドからの復元に失敗しました');
     } finally {
