@@ -83,12 +83,16 @@ export function normalizeAppState(state: AppState): AppState {
     ? state.interactions.map(normalizeInteraction).filter((interaction): interaction is Interaction => interaction !== null)
     : [];
   const interactions = dedupeById(normalizedInteractions
+    // A duplicate logical ID that points at conflicting immutable identities is ambiguous
+    // before alias resolution. Drop those rows while their original candidateId is still
+    // visible; otherwise an alias to a safe survivor could accidentally launder the old
+    // history into a different person.
+    .filter((interaction) => !deduped.invalidInteractionCandidateIds.has(interaction.candidateId))
     .map((interaction) => {
       const candidateId = resolveCandidateAlias(interaction.candidateId, deduped.aliases);
       return candidateId === interaction.candidateId ? interaction : { ...interaction, candidateId };
     })
-    .filter((interaction) => candidateIds.has(interaction.candidateId)
-      && !deduped.invalidInteractionCandidateIds.has(interaction.candidateId)));
+    .filter((interaction) => candidateIds.has(interaction.candidateId)));
   const secondaryGoals = Array.isArray(state?.mission?.secondaryGoals)
     ? state.mission.secondaryGoals.map((goal) => safeText(goal, 180)).filter(Boolean).slice(0, 20)
     : [];
