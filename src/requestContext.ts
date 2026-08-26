@@ -12,11 +12,15 @@ export function missionRequestKey(mission: Mission) {
 export function candidateRequestKey(candidate: Candidate) {
   return JSON.stringify([
     candidate.id,
+    candidate.platform,
+    // A social handle is mutable and can be recycled. Bind every async candidate result to
+    // the immutable official platform ID when known so a response created for person A can
+    // never be accepted after the same logical candidate/handle has become person B.
+    candidate.platformUserId || null,
     candidate.username,
     candidate.bio.slice(0, 1200),
     candidate.tags.slice(0, 20),
     candidate.kind,
-    candidate.platform,
     candidate.match,
     candidate.publicMetrics || null,
     candidate.stage,
