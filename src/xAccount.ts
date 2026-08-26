@@ -190,6 +190,7 @@ function validOwnedSyncResponse(value: unknown): value is XOwnedSyncResponse {
   if (new Date(value.startedAt).getTime() > new Date(value.syncedAt).getTime()) return false;
   if (!Array.isArray(value.followers) || value.followers.length > 500 || !value.followers.every(validOwnedUser) || !uniqueUsers(value.followers)) return false;
   if (!Array.isArray(value.following) || value.following.length > 500 || !value.following.every(validOwnedUser) || !uniqueUsers(value.following)) return false;
+  if (!coherentUsersAcrossLists(value.followers, value.following)) return false;
   if (!Array.isArray(value.posts) || value.posts.length > 50 || !value.posts.every(validOwnedPost) || !uniqueIds(value.posts)) return false;
   if (!validCoverage(value.coverage) || !validRequested(value.requested) || !validPacing(value.pacing)) return false;
   if (value.followEvidence != null && !validFollowEvidence(value.followEvidence)) return false;
@@ -321,6 +322,20 @@ function uniqueUsers(users: XOwnedUser[]) {
     if (ids.has(user.id) || usernames.has(username)) return false;
     ids.add(user.id);
     usernames.add(username);
+  }
+  return true;
+}
+
+function coherentUsersAcrossLists(followers: XOwnedUser[], following: XOwnedUser[]) {
+  const usernameById = new Map<string, string>();
+  const idByUsername = new Map<string, string>();
+  for (const user of [...followers, ...following]) {
+    const username = user.username.toLowerCase();
+    const knownUsername = usernameById.get(user.id);
+    const knownId = idByUsername.get(username);
+    if ((knownUsername && knownUsername !== username) || (knownId && knownId !== user.id)) return false;
+    usernameById.set(user.id, username);
+    idByUsername.set(username, user.id);
   }
   return true;
 }
