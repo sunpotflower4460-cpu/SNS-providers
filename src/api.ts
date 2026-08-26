@@ -205,10 +205,13 @@ export async function rankCandidates(
   if (validated.results.some((item) => !selectedById.has(item.id))) {
     throw new Error('AI ranking returned a result for an unrequested candidate');
   }
+  const completedResults = paidAllowed
+    ? validated.results
+    : completeFreeOnlyRankingBatch(validated.results, selected);
   const requestMissionKey = missionRequestKey(mission);
   return {
     ...validated,
-    results: validated.results.map((item) => {
+    results: completedResults.map((item) => {
       const candidate = selectedById.get(item.id)!;
       const exactTargetRequired = item.recommendedAction === 'like' || item.recommendedAction === 'reply';
       const missingExactTarget = exactTargetRequired && !candidate.engagementUrl;
@@ -224,6 +227,21 @@ export async function rankCandidates(
       };
     }),
   };
+}
+
+function completeFreeOnlyRankingBatch(results: RankResult[], selected: Candidate[]): RankResult[] {
+  const returned = new Set(results.map((result) => result.id));
+  const omitted = selected
+    .filter((candidate) => !returned.has(candidate.id))
+    .map((candidate): RankResult => ({
+      id: candidate.id,
+      match: candidate.match,
+      kind: candidate.kind,
+      recommendedAction: 'review',
+      reason: '無料評価でこの候補の確実な判定が返らなかったため、本人確認を優先します。',
+      strategy: 'プロフィールと現在の発信を確認し、判断材料が増えたときに再評価します。',
+    }));
+  return omitted.length ? [...results, ...omitted] : results;
 }
 
 export async function analyzeSelfProfile(mission: Mission, profileText: string, recentPostsText: string, monthlyLimitUsd: number, userId = 'local-user') {
