@@ -7,6 +7,8 @@ export type SyncLeaseResult =
   | { ok: true; lease: SyncLease }
   | { ok: false; reason: string };
 
+const MAX_LEASE_CLOCK_SKEW_MS = 5 * 60 * 1000;
+
 /**
  * Reserve a short cross-device lease using the existing zero-cost ledger table.
  *
@@ -25,6 +27,7 @@ export async function reserveSyncLease(
   const owner = `${operation}:${crypto.randomUUID()}`;
   const now = new Date();
   const cutoff = new Date(now.getTime() - normalizedTtl).toISOString();
+  const futureLimit = new Date(now.getTime() + MAX_LEASE_CLOCK_SKEW_MS).toISOString();
 
   try {
     const result = await db.prepare(
@@ -40,8 +43,8 @@ export async function reserveSyncLease(
          output_units = 0,
          cache_hit = 0,
          occurred_at = excluded.occurred_at
-       WHERE budget_ledger.occurred_at < ?`
-    ).bind(id, userId, owner, now.toISOString(), cutoff).run();
+       WHERE budget_ledger.occurred_at < ? OR budget_ledger.occurred_at > ?`
+    ).bind(id, userId, owner, now.toISOString(), cutoff, futureLimit).run();
 
     if (result.meta.changes > 0) return { ok: true, lease: { id, owner } };
     return { ok: false, reason: '別の端末またはタブで同じSNS更新を実行中です。完了後にもう一度お試しください。' };
