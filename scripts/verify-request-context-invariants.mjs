@@ -11,6 +11,7 @@ const social = await readFile(new URL('../src/social.ts', import.meta.url), 'utf
 const fetchTimeout = await readFile(new URL('../src/fetchWithTimeout.ts', import.meta.url), 'utf8');
 const syncClient = await readFile(new URL('../src/sync.ts', import.meta.url), 'utf8');
 const xAccount = await readFile(new URL('../src/xAccount.ts', import.meta.url), 'utf8');
+const xOwnedStore = await readFile(new URL('../src/xOwnedStore.ts', import.meta.url), 'utf8');
 const instagramAccount = await readFile(new URL('../src/instagramAccount.ts', import.meta.url), 'utf8');
 const xAccountControls = await readFile(new URL('../src/XAccountControls.tsx', import.meta.url), 'utf8');
 const providerApi = await readFile(new URL('../worker/src/index.ts', import.meta.url), 'utf8');
@@ -92,9 +93,10 @@ requireAll(providerApi, [
   'fetchWithTimeout',
   "30_000, 'X profile enrichment'",
   '75_000, `${provider} ranking`',
-  "markReservationUncertain(env, reservationId, 'user_read_uncertain')",
-  "markReservationUncertain(env, reservationId, 'rank_uncertain')",
-], 'Paid X/LLM Worker calls can wait indefinitely or lose conservative timeout accounting.');
+  "markReservationUncertain(env, reservationId, 'user_read_uncertain', userId, 'x', worstCaseCost)",
+  "markReservationUncertain(env, reservationId, 'rank_uncertain', userId, provider, preflightUsd)",
+  "if (result.meta.changes !== 1) throw new Error('Budget reservation disappeared before finalization')",
+], 'Paid X/LLM Worker calls can wait indefinitely or lose conservative timeout/finalization accounting.');
 
 requireAll(router, [
   'const MAX_ROUTED_BODY_BYTES = 2_100_000;',
@@ -214,10 +216,20 @@ requireAll(xAccount, [
   'followersCoverage.fetched !== value.followers.length',
   '(requested.followers as number) < value.followers.length',
   'validPastishIso(value.syncedAt)',
-  'if (!value.complete) return value.seenKeys.length === 0 && value.unseenKeys.length === 0;',
-  'allKeys.length === value.targetCount',
+  'value.targets.length > 500',
+  'value.targets.every(validEvidenceTarget)',
+  'value.targets.length === value.targetCount',
+  'targetKeys.every((key) => allKeys.includes(key))',
   "value.source === 'cache' && value.costUsd !== 0",
-], 'Owned-X client validation can accept duplicate, oversized, temporally invalid or coverage-inconsistent payloads.');
+], 'Owned-X client validation can accept duplicate, oversized, temporally invalid, unbound follow-evidence, or coverage-inconsistent payloads.');
+
+requireAll(xOwnedStore, [
+  'const targetByKey = new Map(evidence.targets.map((target) => [target.key, target]));',
+  'if (!target || !matchesFollowEvidenceTarget(candidate, target)) return candidate;',
+  'candidate.username.toLowerCase() !== target.username.toLowerCase()',
+  'if (target.platformUserId) return candidate.platformUserId === target.platformUserId;',
+  'return !candidate.platformUserId;',
+], 'A delayed full-cycle X result can apply old seen/unseen proof to a candidate replaced by JSON/D1 restore.');
 
 requireAll(instagramAccount, [
   'value.engagers.length > 80',
@@ -266,4 +278,4 @@ requireAll(instagramOwned, [
   'Instagram Graph API returned an empty or invalid JSON response',
 ], 'Instagram owned sync can trust malformed/future cache state, mutate invalid usernames, or accept invalid successful JSON.');
 
-console.log('Request-context invariants OK: stale async results are discarded, visible result-sheet semantics are preserved, profile-only reviews do not inflate engagement, routed bodies and frontend/Worker timeouts are bounded, social handoff and restore URLs stay canonical, X/Instagram payload identity/count/time coherence fails closed, restored relationship clocks reject future poison, X enrichment uses future-safe backoff, persistence failures stay visible, and paid LLM preflight remains byte-conservative.');
+console.log('Request-context invariants OK: stale async results are discarded, full-cycle X evidence is identity-bound across delayed restores, visible result-sheet semantics are preserved, profile-only reviews do not inflate engagement, routed bodies and frontend/Worker timeouts are bounded, social handoff and restore URLs stay canonical, X/Instagram payload identity/count/time coherence fails closed, restored relationship clocks reject future poison, X enrichment uses future-safe backoff, persistence failures stay visible, and paid LLM preflight remains byte-conservative.');
