@@ -40,6 +40,7 @@ interface StateSyncRequest {
 
 const MAX_ROUTED_BODY_BYTES = 2_100_000;
 const AUTO_DISCOVERY_COOLDOWN_MS = 20 * 60 * 60 * 1000;
+const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 const ROUTER_CORS_PATHS = new Set([
   '/api/budget',
@@ -161,6 +162,7 @@ export default {
             .bind(userId)
             .first<{ state_json: string; updated_at: string }>();
           if (!row) return json({ found: false, state: null, updatedAt: null }, 200, request, env);
+          if (!validPastishIso(row.updated_at)) throw new Error('Stored state version is invalid or too far in the future');
           return json({ found: true, state: JSON.parse(row.state_json), updatedAt: row.updated_at }, 200, request, env);
         } catch (error) {
           const message = error instanceof Error ? error.message : 'State download failed';
@@ -179,8 +181,8 @@ export default {
           if (body.expectedUpdatedAt !== null && typeof body.expectedUpdatedAt !== 'string') {
             return json({ error: 'expectedUpdatedAt must be a string or null' }, 400, request, env);
           }
-          if (typeof body.expectedUpdatedAt === 'string' && !validIso(body.expectedUpdatedAt)) {
-            return json({ error: 'expectedUpdatedAt must be a valid ISO timestamp' }, 400, request, env);
+          if (typeof body.expectedUpdatedAt === 'string' && !validPastishIso(body.expectedUpdatedAt)) {
+            return json({ error: 'expectedUpdatedAt must be a current valid ISO timestamp' }, 400, request, env);
           }
 
           const stateJson = JSON.stringify(body.state);
@@ -235,6 +237,7 @@ export default {
               credits: 0,
               profiles: [],
               reason: guard.reason,
+              ...(guard.retryAfterSeconds ? { retryAfterSeconds: guard.retryAfterSeconds } : {}),
             }, 200, request, env);
           }
           automaticGuardId = guard.id;
@@ -331,8 +334,9 @@ function sanitizeUserId(value: string) {
   return userId;
 }
 
-function validIso(value: string) {
-  return Number.isFinite(new Date(value).getTime());
+function validPastishIso(value: string) {
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) && time <= Date.now() + MAX_CLOCK_SKEW_MS;
 }
 
 function nextSnapshotVersion(previous: string | null | undefined) {
@@ -356,9 +360,20 @@ async function reserveAutomaticDiscovery(env: Env, userId: string) {
        )`
     ).bind(id, userId, now.toISOString(), userId, cutoff).run();
     if (result.meta.changes > 0) return { ok: true as const, id };
+
+    const latest = await env.DB.prepare(
+      `SELECT occurred_at FROM budget_ledger
+       WHERE user_id = ? AND provider = 'tavily' AND operation = 'search_auto_guard' AND occurred_at >= ?
+       ORDER BY occurred_at DESC LIMIT 1`
+    ).bind(userId, cutoff).first<{ occurred_at: string }>();
+    const latestMs = latest?.occurred_at ? new Date(latest.occurred_at).getTime() : Number.NaN;
+    const remainingMs = Number.isFinite(latestMs)
+      ? Math.max(1_000, latestMs + AUTO_DISCOVERY_COOLDOWN_MS - now.getTime())
+      : AUTO_DISCOVERY_COOLDOWN_MS;
     return {
       ok: false as const,
       reason: '自動候補補充は直近20時間以内に実行済みです。必要ならDiscoverから手動探索できます。',
+      retryAfterSeconds: Math.max(1, Math.ceil(remainingMs / 1000)),
     };
   } catch {
     return {
