@@ -1,10 +1,13 @@
 import { readFile } from 'node:fs/promises';
 
 const backup = await readFile(new URL('../src/backup.ts', import.meta.url), 'utf8');
+const backupControls = await readFile(new URL('../src/BackupControls.tsx', import.meta.url), 'utf8');
 const daily = await readFile(new URL('../src/daily.ts', import.meta.url), 'utf8');
+const instagramOwnedStore = await readFile(new URL('../src/instagramOwnedStore.ts', import.meta.url), 'utf8');
+const restoreSafety = await readFile(new URL('../src/restoreSafety.ts', import.meta.url), 'utf8');
+const syncControls = await readFile(new URL('../src/SyncControls.tsx', import.meta.url), 'utf8');
 const xAccount = await readFile(new URL('../src/xAccount.ts', import.meta.url), 'utf8');
 const xOwnedStore = await readFile(new URL('../src/xOwnedStore.ts', import.meta.url), 'utf8');
-const instagramOwnedStore = await readFile(new URL('../src/instagramOwnedStore.ts', import.meta.url), 'utf8');
 
 const requiredRestoreGuards = [
   'const knownIdentities = new Set(group.map(stableCandidateIdentity).filter(Boolean));',
@@ -65,4 +68,16 @@ for (const fragment of requiredInstagramGuards) {
   }
 }
 
-console.log('Restore identity invariants OK: immutable-ID conflicts preserve CRM history, stay out of X follow evidence/Today actions, and resolve deterministically from official X/Instagram identity data.');
+if (!restoreSafety.includes('export function detachExternalAccountSummaries')
+  || !restoreSafety.includes('xAccount: {}')
+  || !restoreSafety.includes('instagramAccount: undefined')) {
+  throw new Error('External restore can retain SNS account summaries derived from an older connected identity.');
+}
+if (!backupControls.includes('detachExternalAccountSummaries(await readBackup(file))')) {
+  throw new Error('JSON backup restore can reapply stale X/Instagram account summary identity.');
+}
+if (!syncControls.includes('detachExternalAccountSummaries(normalizeAppState(result.state))')) {
+  throw new Error('D1 restore can reapply stale X/Instagram account summary identity.');
+}
+
+console.log('Restore identity invariants OK: immutable-ID conflicts preserve CRM history, stay out of X follow evidence/Today actions, resolve deterministically from official X/Instagram identity data, and external restores discard stale SNS account summaries.');
