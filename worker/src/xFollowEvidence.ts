@@ -9,12 +9,19 @@ export interface FollowerIdentity {
   username: string;
 }
 
+export interface FollowCycleTargetBinding {
+  key: string;
+  username: string;
+  platformUserId: string | null;
+}
+
 export interface FollowCycleEvidence {
   complete: boolean;
   cycle: number;
   targetCount: number;
   seenKeys: string[];
   unseenKeys: string[];
+  targets: FollowCycleTargetBinding[];
 }
 
 interface TargetRow {
@@ -106,12 +113,13 @@ export async function updateFollowCycleEvidence(
         targetCount: targets.length,
         seenKeys: [],
         unseenKeys: [],
+        targets: [],
       };
     }
 
     const completed = await db.prepare(
-      'SELECT target_key, seen FROM x_follow_cycle_targets WHERE user_id = ? AND cycle = ?'
-    ).bind(userId, cycle).all<{ target_key: string; seen: number }>();
+      'SELECT target_key, platform_user_id, username, seen FROM x_follow_cycle_targets WHERE user_id = ? AND cycle = ?'
+    ).bind(userId, cycle).all<TargetRow>();
     const completedRows = completed.results || [];
     if (!completedRows.length) return null;
 
@@ -121,6 +129,16 @@ export async function updateFollowCycleEvidence(
       targetCount: completedRows.length,
       seenKeys: completedRows.filter((row) => Boolean(row.seen)).map((row) => row.target_key),
       unseenKeys: completedRows.filter((row) => !row.seen).map((row) => row.target_key),
+      // Bind every result key to the identity that was tracked when this cycle began.
+      // The client reapplies async sync results to its latest AppState, so keys alone are
+      // insufficient: a JSON/D1 restore could reuse one candidate ID for different data
+      // while the X request is in flight. Re-checking this binding prevents stale evidence
+      // from mutating a replacement candidate.
+      targets: completedRows.map((row) => ({
+        key: row.target_key,
+        username: row.username,
+        platformUserId: row.platform_user_id,
+      })),
     };
   } catch {
     // Once any page's positive evidence fails to persist, invalidate the entire cycle.
