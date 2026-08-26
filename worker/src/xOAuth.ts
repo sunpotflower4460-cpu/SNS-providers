@@ -153,7 +153,17 @@ export async function getValidXAccessToken(env: XOAuthEnv, userId = 'local-user'
 
   const refreshToken = await decryptToken(env, row.refresh_token_enc);
   const refreshed = await refreshAccessToken(env, refreshToken);
-  await persistTokenResponse(env, userId, refreshed, row.refresh_token_enc, row.scope);
+  try {
+    await persistTokenResponse(env, userId, refreshed, row.refresh_token_enc, row.scope);
+  } catch {
+    // OAuth providers may rotate/invalidate the old refresh token as soon as a refresh
+    // succeeds. If the new token set cannot be persisted, keeping the old D1 row would make
+    // the connection look refreshable even though a later paid owned-read could fail only
+    // after budget reservation. Invalidate the stale credential best-effort and require a
+    // fresh user authorization before any paid provider request is allowed to start.
+    await invalidateStoredConnectionAfterRefreshPersistenceFailure(env, userId);
+    throw new Error('Xの接続更新は完了しましたが、新しい認証情報を安全に保存できませんでした。Xを接続し直してから再度お試しください。');
+  }
   if (!refreshed.access_token) throw new Error('X refresh response did not include access_token');
   return refreshed.access_token;
 }
@@ -177,6 +187,20 @@ export async function disconnectXOAuth(env: XOAuthEnv, userId = 'local-user') {
     return { ok: true };
   } finally {
     await releaseSyncLease(env.DB, leaseResult.lease);
+  }
+}
+
+async function invalidateStoredConnectionAfterRefreshPersistenceFailure(env: XOAuthEnv, userId: string) {
+  try {
+    await env.DB.prepare('DELETE FROM x_oauth_tokens WHERE user_id = ?').bind(userId).run();
+  } catch {
+    // The original persistence failure may be a wider D1 outage. The caller still aborts
+    // before the paid reservation/provider boundary, so no X owned-read starts in this run.
+  }
+  try {
+    await clearOwnedXDerivedState(env, userId);
+  } catch {
+    // A later successful reconnect clears these rows before the replacement token is stored.
   }
 }
 
