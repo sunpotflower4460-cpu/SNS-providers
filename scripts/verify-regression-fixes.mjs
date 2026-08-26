@@ -101,7 +101,7 @@ if (!sync.includes('MAX_REMOTE_CLOCK_SKEW_MS = 5 * 60 * 1000')
   || !sync.includes('validRemoteVersion(expectedUpdatedAt)')
   || !router.includes('MAX_CLOCK_SKEW_MS = 5 * 60 * 1000')
   || !router.includes('validPastishIso(row.updated_at)')
-  || !router.includes('expectedUpdatedAt must be a current valid ISO timestamp')) {
+  || !router.includes('expectedUpdatedAt must be a valid ISO timestamp and not too far in the future')) {
   throw new Error('A corrupted far-future D1 snapshot version can again poison optimistic-lock state.');
 }
 
