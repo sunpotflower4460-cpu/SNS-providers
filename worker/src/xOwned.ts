@@ -93,6 +93,11 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
   if (!budget.ledgerAvailable) return disabled('Budget ledger is unavailable; paid X reads are disabled.');
   if (budget.remainingUsd < userReadRate) return disabled('HARD LIMIT leaves insufficient budget for the authenticated-user lookup.');
 
+  // Capture the observation boundary before any X request starts. Negative evidence from
+  // this sync/cache must never be applied later to a follow that the user began after this
+  // point, because the fetched follower snapshot could not have observed that newer follow.
+  const startedAt = new Date().toISOString();
+
   // Token lookup/refresh is not a paid owned-data read. Resolve it before reserving
   // budget so a missing/corrupt OAuth connection cannot consume the monthly cap.
   const accessToken = await getValidXAccessToken(env, userId);
@@ -156,6 +161,7 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
       enabled: true,
       source: 'x',
       costUsd: actualCost,
+      startedAt,
       syncedAt,
       profile: normalizeUser(profile),
       followers: followersResult.data.map(normalizeUser),
@@ -548,8 +554,11 @@ function validOwnedSnapshot(value: unknown) {
     || value.enabled !== true
     || value.source !== 'x'
     || !nonNegativeFinite(value.costUsd)
+    || typeof value.startedAt !== 'string'
+    || !validPastishIso(value.startedAt)
     || typeof value.syncedAt !== 'string'
     || !validPastishIso(value.syncedAt)
+    || new Date(value.startedAt).getTime() > new Date(value.syncedAt).getTime()
     || !validOwnedUser(value.profile)
     || !Array.isArray(value.followers)
     || value.followers.length > 500
