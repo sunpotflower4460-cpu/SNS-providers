@@ -20,6 +20,8 @@ jobs:
       - run: npm run typecheck
       - run: npm run security:check
       - run: npm run ux:check
+      - name: Verify recent bug-fix regressions
+        run: node scripts/verify-regression-fixes.mjs
       - run: npm run pwa:check
       - run: npm run build
       - name: Verify local-root production build
