@@ -27,7 +27,13 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
   }
 
   const canonicalInstagramCandidates = instagramCandidates.filter((candidate) => !legacyIdentityAliases.has(candidate.id));
-  const byUsername = new Map(canonicalInstagramCandidates.map((candidate) => [candidate.username.toLowerCase(), candidate]));
+  const byUsername = new Map<string, Candidate[]>();
+  for (const candidate of canonicalInstagramCandidates) {
+    const username = candidate.username.toLowerCase();
+    const group = byUsername.get(username) || [];
+    group.push(candidate);
+    byUsername.set(username, group);
+  }
   const additions: Candidate[] = [];
   const updates = new Map<string, Candidate>();
   const identityResetIds = new Set<string>();
@@ -38,18 +44,31 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
     if (!username) continue;
     const incomingStableId = stableInstagramId(engager.id);
     const stableExisting = incomingStableId ? byStableId.get(incomingStableId) : undefined;
-    const usernameExisting = byUsername.get(username);
+    const usernameGroup = byUsername.get(username) || [];
+    const knownUsernameIdentities = new Set(usernameGroup.map((candidate) => stableInstagramId(candidate.platformUserId)).filter(Boolean));
 
-    // A numeric Graph user ID is the authoritative identity. If the same person renamed
-    // their Instagram handle, merge the new comment signal into that existing CRM record
-    // instead of creating a second candidate. If the new handle also points at a stale
-    // different-ID candidate, discard that ambiguous stale record rather than attaching
-    // its history to the current immutable identity.
-    if (stableExisting && usernameExisting && stableExisting.id !== usernameExisting.id) {
-      conflictingRemovedIds.add(usernameExisting.id);
-      updates.delete(usernameExisting.id);
+    // A numeric Graph user ID is authoritative identity. If it already matches one CRM
+    // record, remove every other record occupying the current handle rather than relying on
+    // Map insertion order. If the handle has several conflicting known IDs and Graph now
+    // reports an entirely new ID, none of those old records is a safe survivor: detach all
+    // old identities and create a fresh current-person record below.
+    let existing: Candidate | undefined = stableExisting;
+    if (stableExisting) {
+      for (const conflicting of usernameGroup) {
+        if (conflicting.id === stableExisting.id) continue;
+        conflictingRemovedIds.add(conflicting.id);
+        updates.delete(conflicting.id);
+      }
+    } else if (incomingStableId && knownUsernameIdentities.size > 1) {
+      for (const conflicting of usernameGroup) {
+        conflictingRemovedIds.add(conflicting.id);
+        updates.delete(conflicting.id);
+      }
+      existing = undefined;
+    } else {
+      existing = usernameGroup[0];
     }
-    const existing = stableExisting || usernameExisting;
+
     const freshContact = !existing?.skipped || isFreshCommentAfterDismissal(existing, engager.lastCommentAt);
     const newCommentSignal = existing ? isNewerCommentSignal(existing, engager.lastCommentAt) : Boolean(engager.lastCommentAt);
     const relationshipScore = Math.min(85, 28 + engager.commentCount * 9 + Math.max(0, engager.mediaCount - 1) * 5);
@@ -68,6 +87,7 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
       const existingStableId = stableInstagramId(existing.platformUserId);
       const identityChanged = Boolean(existingStableId && incomingStableId && existingStableId !== incomingStableId);
       const renamed = existing.username.toLowerCase() !== username;
+      const identityConflictResolved = Boolean(stableExisting && existing.tags.includes('identity-conflict'));
 
       if (identityChanged) {
         identityResetIds.add(existing.id);
@@ -104,16 +124,28 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
       // A cached/old comment must not undo an explicit user dismissal. Only a comment
       // whose timestamp is newer than the dismissal/last known signal may reactivate it.
       // Identity metadata is different: if Graph proves the same immutable person merely
-      // changed handle, keep the dismissed record dismissed but update its current route.
+      // changed handle (or resolves a restored handle conflict), keep the dismissal but
+      // update the current route and remove the identity quarantine.
       if (existing.skipped && !freshContact) {
-        if (stableExisting && renamed) {
+        if (stableExisting && (renamed || identityConflictResolved)) {
           updates.set(existing.id, {
             ...existing,
             username: engager.username,
             displayName: sameUsername(existing.displayName, existing.username) ? engager.username : existing.displayName,
             profileUrl: engager.profileUrl,
+            engagementUrl: undefined,
             platformUserId: incomingStableId || existing.platformUserId,
             profileSyncedAt: syncedAt,
+            recommendedAction: 'review',
+            draft: undefined,
+            followBack: null,
+            reason: identityConflictResolved
+              ? 'Instagram公式同期で、現在の@usernameと公式ユーザーIDの組み合わせを確認しました。以前のハンドル競合は解消しましたが、過去の別アカウント履歴は引き継ぎません。'
+              : existing.reason,
+            strategy: identityConflictResolved
+              ? '現在の公式プロフィールとコメント文脈を確認し、過去の別アカウント履歴を混ぜずに関係を再評価します。'
+              : existing.strategy,
+            tags: existing.tags.filter((tag) => tag !== 'identity-conflict'),
           });
         }
         continue;
@@ -126,14 +158,16 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
       // engagementUrl would send the user to the wrong post when the new media permalink
       // is unavailable, so that case intentionally falls back to review.
       const newEngagementUrl = newCommentSignal ? engager.latestMediaPermalink || undefined : undefined;
-      const engagementUrl = newCommentSignal ? newEngagementUrl : existing.engagementUrl;
+      const engagementUrl = newCommentSignal ? newEngagementUrl : identityConflictResolved ? undefined : existing.engagementUrl;
       const recommendedAction: Candidate['recommendedAction'] = newCommentSignal
         ? newEngagementUrl ? 'reply' : 'review'
-        : existing.recommendedAction;
-      const refreshOpportunityCopy = newCommentSignal || (existing.skipped && freshContact);
+        : identityConflictResolved ? 'review' : existing.recommendedAction;
+      const refreshOpportunityCopy = newCommentSignal || (existing.skipped && freshContact) || identityConflictResolved;
       const exactTargetStrategy = newCommentSignal && !newEngagementUrl
         ? '新しいInstagramコメントは確認できましたが、対象投稿URLを取得できなかったため古い投稿を流用せず、プロフィールから内容を確認します。'
-        : strategy;
+        : identityConflictResolved
+          ? 'Instagram公式同期で現在の公式ユーザーIDを確認しました。過去の別アカウント履歴を混ぜず、現在のコメント文脈から関係を再評価します。'
+          : strategy;
       // A username-based fallback ID is not immutable. Never let it overwrite a numeric
       // Graph user ID already known for this candidate; upgrade fallback -> numeric when
       // possible, but only compare two numeric IDs for identity-change detection above.
@@ -149,21 +183,26 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
         relationshipScore: Math.max(existing.relationshipScore, relationshipScore),
         match: Math.max(existing.match, match),
         stage: promoteStage(existing.stage),
-        reason: refreshOpportunityCopy ? reason : existing.reason,
+        reason: refreshOpportunityCopy
+          ? identityConflictResolved
+            ? `Instagram公式同期で現在の@usernameと公式ユーザーIDを確認しました。${baseReason}`
+            : reason
+          : existing.reason,
         strategy: refreshOpportunityCopy ? exactTargetStrategy : existing.strategy,
         recommendedAction,
-        draft: recommendedAction === 'reply' ? existing.draft : undefined,
+        draft: recommendedAction === 'reply' && !identityConflictResolved ? existing.draft : undefined,
         platformUserId,
         profileSyncedAt: syncedAt,
         lastInteractionAt: latestIso(existing.lastInteractionAt, engager.lastCommentAt),
-        tags: [...new Set([...existing.tags, 'inbound', 'commenter'])],
+        tags: [...new Set([...existing.tags.filter((tag) => tag !== 'identity-conflict'), 'inbound', 'commenter'])],
+        ...(identityConflictResolved ? { followBack: null } : {}),
       });
       continue;
     }
 
     const engagementUrl = engager.latestMediaPermalink || undefined;
     const recommendedAction: Candidate['recommendedAction'] = engagementUrl ? 'reply' : 'review';
-    additions.push({
+    const candidate: Candidate = {
       id: `instagram-engager-${crypto.randomUUID()}`,
       platform: 'instagram',
       username: engager.username,
@@ -182,7 +221,10 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
       tags: ['inbound', 'commenter'],
       recommendedAction,
       lastInteractionAt: latestIso(undefined, engager.lastCommentAt) || syncedAt,
-    });
+    };
+    additions.push(candidate);
+    byUsername.set(username, [candidate]);
+    if (incomingStableId) byStableId.set(incomingStableId, candidate);
   }
 
   const candidates = state.candidates
