@@ -363,6 +363,12 @@ function advancePaging(paging: PagingState, allocation: { followers: number; fol
 
 async function loadPaging(env: XOwnedEnv, userId: string): Promise<PagingState> {
   const empty = emptyPaging();
+  let rowState: PagingState | null = null;
+  let rowUpdatedMs = Number.NEGATIVE_INFINITY;
+
+  // Treat the dedicated paging row and snapshot checkpoint as independent redundancy.
+  // A corrupt/missing snapshot must never erase a valid cursor, and a broken paging table
+  // must not prevent recovery from the successfully cached paid snapshot.
   try {
     const row = await env.DB.prepare(
       'SELECT followers_cursor, following_cursor, followers_cycle, following_cycle, updated_at FROM x_owned_paging WHERE user_id = ?'
@@ -373,31 +379,42 @@ async function loadPaging(env: XOwnedEnv, userId: string): Promise<PagingState> 
       following_cycle: number;
       updated_at: string;
     }>();
-    const rowState = row ? pagingFromStoredRow(row) : null;
-    const rowUpdatedMs = row && validPastishIso(row.updated_at) ? new Date(row.updated_at).getTime() : Number.NEGATIVE_INFINITY;
+    if (row && validPastishIso(row.updated_at)) {
+      rowState = pagingFromStoredRow(row);
+      if (rowState) rowUpdatedMs = new Date(row.updated_at).getTime();
+    }
+  } catch {
+    // The snapshot checkpoint below can still recover progress.
+  }
 
-    // A successfully cached paid snapshot is also a durable resume checkpoint. This
-    // repairs the important partial-persistence case where x_owned_paging failed after the
-    // provider read but x_owned_snapshots succeeded, avoiding a later duplicate paid page.
+  try {
     const snapshotRow = await env.DB.prepare('SELECT snapshot_json, synced_at FROM x_owned_snapshots WHERE user_id = ?')
       .bind(userId)
       .first<{ snapshot_json: string; synced_at: string }>();
     if (snapshotRow) {
-      const snapshot = JSON.parse(snapshotRow.snapshot_json) as unknown;
-      if (validOwnedSnapshot(snapshot)
-        && isRecord(snapshot)
-        && validPagingState(snapshot.resumePaging)
-        && snapshot.syncedAt === snapshotRow.synced_at) {
-        const snapshotMs = new Date(snapshot.syncedAt as string).getTime();
-        if (Number.isFinite(snapshotMs) && snapshotMs >= rowUpdatedMs) {
-          return pagingFromValue(snapshot.resumePaging);
+      try {
+        const snapshot = JSON.parse(snapshotRow.snapshot_json) as unknown;
+        if (validOwnedSnapshot(snapshot)
+          && isRecord(snapshot)
+          && validPagingState(snapshot.resumePaging)
+          && snapshot.syncedAt === snapshotRow.synced_at) {
+          const snapshotMs = new Date(snapshot.syncedAt as string).getTime();
+          if (Number.isFinite(snapshotMs) && snapshotMs >= rowUpdatedMs) {
+            return pagingFromValue(snapshot.resumePaging);
+          }
+        } else {
+          await deleteCache(env, userId);
         }
+      } catch {
+        // A malformed snapshot is not allowed to poison a valid dedicated paging row.
+        await deleteCache(env, userId);
       }
     }
-    return rowState || empty;
   } catch {
-    return empty;
+    // Keep a valid dedicated paging row if snapshot storage itself is unavailable.
   }
+
+  return rowState || empty;
 }
 
 async function savePaging(env: XOwnedEnv, userId: string, paging: PagingState, updatedAt: string) {
@@ -407,7 +424,7 @@ async function savePaging(env: XOwnedEnv, userId: string, paging: PagingState, u
        VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_id) DO UPDATE SET
          followers_cursor = excluded.followers_cursor,
-         following_cursor = excluded.following_cursor,
+         following_cursor = excluded.followingCursor,
          followers_cycle = excluded.followers_cycle,
          following_cycle = excluded.following_cycle,
          updated_at = excluded.updated_at`
