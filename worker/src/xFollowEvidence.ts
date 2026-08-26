@@ -24,6 +24,13 @@ export interface FollowCycleEvidence {
   targets: FollowCycleTargetBinding[];
 }
 
+export class FollowEvidenceStorageUnavailableError extends Error {
+  constructor() {
+    super('X follow evidence storage is unavailable');
+    this.name = 'FollowEvidenceStorageUnavailableError';
+  }
+}
+
 interface TargetRow {
   target_key: string;
   platform_user_id: string | null;
@@ -64,9 +71,9 @@ export async function prepareFollowCycleTargets(
     }
   } catch {
     // Partial/stale target rows must never survive a failed cycle initialization. If we
-    // cannot invalidate them either, abort the sync rather than risk later negative proof.
+    // cannot invalidate them either, abort before any paid provider read begins.
     if (!(await invalidateCycle(db, userId, cycle))) {
-      throw new Error('X follow evidence storage is unavailable');
+      throw new FollowEvidenceStorageUnavailableError();
     }
   }
 }
@@ -84,6 +91,9 @@ export async function updateFollowCycleEvidence(
     ).bind(userId, cycle).all<TargetRow>();
     const targets = rows.results || [];
     if (!targets.length) return null;
+    if (targets.length > MAX_TARGETS || !targets.every(validTargetRow) || !uniqueTargetRows(targets)) {
+      throw new Error('corrupt follow evidence rows');
+    }
 
     const followerIds = new Set(followers.map((item) => item.id).filter(Boolean));
     const followerUsernames = new Set(followers.map((item) => item.username.toLowerCase()).filter(Boolean));
@@ -122,6 +132,9 @@ export async function updateFollowCycleEvidence(
     ).bind(userId, cycle).all<TargetRow>();
     const completedRows = completed.results || [];
     if (!completedRows.length) return null;
+    if (completedRows.length > MAX_TARGETS || !completedRows.every(validTargetRow) || !uniqueTargetRows(completedRows)) {
+      throw new Error('corrupt completed follow evidence rows');
+    }
 
     return {
       complete: true,
@@ -141,11 +154,11 @@ export async function updateFollowCycleEvidence(
       })),
     };
   } catch {
-    // Once any page's positive evidence fails to persist, invalidate the entire cycle.
-    // Continuing with partially written rows could turn a person seen on that page into
+    // Once any page's positive evidence fails to persist or validate, invalidate the entire
+    // cycle. Continuing with partial/corrupt rows could turn a person seen on that page into
     // a false "not following back" result when the final page is reached.
     if (!(await invalidateCycle(db, userId, cycle))) {
-      throw new Error('X follow evidence storage is unavailable');
+      throw new FollowEvidenceStorageUnavailableError();
     }
     return null;
   }
@@ -158,6 +171,24 @@ async function invalidateCycle(db: D1Database, userId: string, cycle: number) {
   } catch {
     return false;
   }
+}
+
+function validTargetRow(row: TargetRow) {
+  return typeof row.target_key === 'string'
+    && Boolean(sanitizeKey(row.target_key))
+    && (row.platform_user_id === null || (typeof row.platform_user_id === 'string' && Boolean(sanitizePlatformUserId(row.platform_user_id))))
+    && typeof row.username === 'string'
+    && Boolean(sanitizeUsername(row.username))
+    && (row.seen === 0 || row.seen === 1);
+}
+
+function uniqueTargetRows(rows: TargetRow[]) {
+  const keys = new Set<string>();
+  for (const row of rows) {
+    if (keys.has(row.target_key)) return false;
+    keys.add(row.target_key);
+  }
+  return true;
 }
 
 function normalizeTargets(input: TrackedXAccount[]): NormalizedTarget[] {
