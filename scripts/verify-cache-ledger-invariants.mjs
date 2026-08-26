@@ -22,10 +22,17 @@ requireAll(xOwned, [
   'validRawXUser(response.data)',
   'response.data.every(validRawXUser)',
   'response.data.every(validRawXPost)',
-  'safeCursor(nextToken) === null',
+  'validListMeta(response.meta, data.length, maxResults)',
   'coherentRawXUsersAcrossLists(followersResult.data, followingResult.data)',
   'coherentOwnedUsersAcrossLists(value.followers, value.following)',
-], 'Owned-X cache/raw-payload validation, cross-list identity coherence, eviction, or bounded UTC-month budget accounting regressed.');
+  'resumePaging: nextPaging',
+  'validPagingState(value.resumePaging)',
+  'snapshot.syncedAt === snapshotRow.synced_at',
+  'snapshot.syncedAt !== row.synced_at',
+  'const pagingPersisted = await savePaging(env, userId, nextPaging, syncedAt);',
+  'const cachePersisted = await saveCache(env, userId, result);',
+  'persistenceDegraded: true',
+], 'Owned-X cache/raw-payload validation, paging recovery, cross-list identity coherence, or bounded UTC-month budget accounting regressed.');
 
 const rawValidationIndex = xOwned.indexOf('safe to shrink the conservative reservation');
 const coherenceIndex = xOwned.indexOf('coherentRawXUsersAcrossLists(followersResult.data, followingResult.data)');
@@ -38,7 +45,9 @@ requireAll(xAccount, [
   'coherentUsersAcrossLists(value.followers, value.following)',
   'const usernameById = new Map<string, string>();',
   'const idByUsername = new Map<string, string>();',
-], 'Owned-X client validation can accept contradictory follower/following identity pairs.');
+  'validPagingState(value.resumePaging)',
+  'persistenceDegraded?: boolean;',
+], 'Owned-X client validation can accept contradictory identity/checkpoint metadata or hide degraded persistence.');
 
 requireAll(xOwnedStore, [
   'const stableIdentityState = reconcileOwnedXStableIdentities(state, result);',
@@ -63,7 +72,9 @@ requireAll(instagramOwned, [
   'uniqueEngagers(value.engagers)',
   'validInstagramMediaUrl(value.latestMediaPermalink)',
   'existing.latestMediaPermalink = item.permalink || null;',
-], 'Instagram cache validation/eviction, deep snapshot integrity, or latest-comment target binding regressed.');
+  'snapshot.syncedAt !== row.synced_at',
+  'JSON.stringify(snapshot), snapshot.syncedAt',
+], 'Instagram cache validation/eviction, observation-time binding, deep snapshot integrity, or latest-comment target binding regressed.');
 
 requireAll(instagramOwnedStore, [
   'const byStableId = new Map<string, Candidate>();',
@@ -131,4 +142,4 @@ if ((budgetIntegrity.match(/occurred_jd >= julianday\(\?\) AND occurred_jd < jul
   throw new Error('A paid-budget read or reservation lost one side of the active UTC month boundary.');
 }
 
-console.log('Cache/ledger invariants OK: malformed X/Instagram snapshots are rejected and evicted, raw paid owned-X/X-enrichment payloads and cross-endpoint X identities are validated before reservation shrink/finalize, vanished paid reservations fail closed and are conservatively reconstructed when possible, legacy negative/text or unassignable-timestamp budget rows disable paid work, reservations remain atomic by actual instant inside the active UTC month, X/Instagram handle renames follow immutable identity and repair old duplicates, Instagram latest comment targets stay event-bound, and official X identity/profile changes cannot leave stale CRM advice actionable.');
+console.log('Cache/ledger invariants OK: malformed X/Instagram snapshots are rejected and evicted, cache freshness is bound to the snapshot observation time, X paging can recover from the paid snapshot checkpoint, raw paid owned-X/X-enrichment payloads and cross-endpoint X identities are validated before reservation shrink/finalize, vanished paid reservations fail closed and are conservatively reconstructed when possible, legacy negative/text or unassignable-timestamp budget rows disable paid work, reservations remain atomic by actual instant inside the active UTC month, X/Instagram handle renames follow immutable identity and repair old duplicates, Instagram latest comment targets stay event-bound, and official X identity/profile changes cannot leave stale CRM advice actionable.');
