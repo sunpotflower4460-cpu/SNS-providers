@@ -39,7 +39,9 @@ export default function DailyQueue({ state, onOpenCandidate, onOpenMe, onOpenDis
   const activeCandidateCount = state.candidates.filter((candidate) => !candidate.skipped).length;
   const completedToday = useMemo(() => state.interactions.some((interaction) => {
     const at = new Date(interaction.at);
-    return Number.isFinite(at.getTime()) && localDayKey(at) === localDay;
+    return interaction.action !== 'review'
+      && Number.isFinite(at.getTime())
+      && localDayKey(at) === localDay;
   }), [state.interactions, localDay]);
 
   function openItem(item: (typeof items)[number]) {
