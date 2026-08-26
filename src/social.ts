@@ -1,5 +1,8 @@
 import type { Candidate } from './types';
 
+const xReservedPaths = new Set(['home', 'explore', 'notifications', 'messages', 'search', 'i', 'settings', 'compose', 'intent']);
+const instagramReservedPaths = new Set(['p', 'reel', 'reels', 'stories', 'explore', 'accounts', 'direct', 'about', 'developer']);
+
 export function openCandidate(candidate: Candidate) {
   const engagementUrl = safeEngagementUrl(candidate.platform, candidate.engagementUrl);
   if ((candidate.recommendedAction === 'reply' || candidate.recommendedAction === 'like') && engagementUrl) {
@@ -48,11 +51,12 @@ export function platformLabel(platform: Candidate['platform']) {
 
 function canonicalProfileUrl(platform: Candidate['platform'], rawUsername: string) {
   const username = rawUsername.trim().replace(/^@/, '');
+  const lowered = username.toLowerCase();
   if (platform === 'x') {
-    if (!/^[A-Za-z0-9_]{1,15}$/.test(username)) return '';
+    if (xReservedPaths.has(lowered) || !/^[A-Za-z0-9_]{1,15}$/.test(username)) return '';
     return `https://x.com/${username}`;
   }
-  if (!/^[A-Za-z0-9._]{1,30}$/.test(username)) return '';
+  if (instagramReservedPaths.has(lowered) || !/^[A-Za-z0-9._]{1,30}$/.test(username)) return '';
   return `https://www.instagram.com/${username}/`;
 }
 
