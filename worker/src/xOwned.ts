@@ -1,3 +1,4 @@
+import { readActiveMonthUsage, reserveActiveMonthBudget } from './budgetIntegrity';
 import { fetchWithTimeout } from './fetchWithTimeout';
 import { prepareFollowCycleTargets, updateFollowCycleEvidence, type TrackedXAccount } from './xFollowEvidence';
 import { getValidXAccessToken, xOAuthStatus, type XOAuthEnv } from './xOAuth';
@@ -90,7 +91,7 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
   }
 
   const budget = await budgetForRequest(env, userId, body.monthlyLimitUsd);
-  if (!budget.ledgerAvailable) return disabled('Budget ledger is unavailable; paid X reads are disabled.');
+  if (!budget.ledgerAvailable) return disabled('Budget ledger is unavailable or invalid; paid X reads are disabled.');
   if (budget.remainingUsd < userReadRate) return disabled('HARD LIMIT leaves insufficient budget for the authenticated-user lookup.');
 
   // Capture the observation boundary before any X request starts. Negative evidence from
@@ -112,7 +113,7 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
   const paging = await loadPaging(env, userId);
 
   const reservationId = await reserveBudget(env, userId, worstCaseCost, budget.effectiveLimit);
-  if (!reservationId) return disabled('HARD LIMIT changed before the X sync budget could be reserved.');
+  if (!reservationId) return disabled('HARD LIMIT or budget-ledger integrity changed before the X sync budget could be reserved.');
 
   try {
     const profile = await fetchMe(accessToken);
@@ -425,31 +426,21 @@ async function budgetForRequest(env: XOwnedEnv, userId: string, requestedLimitUs
 }
 
 async function monthUsage(env: XOwnedEnv, userId: string): Promise<BudgetSnapshot> {
-  try {
-    const { start, end } = utcMonthWindow();
-    const row = await env.DB.prepare(
-      'SELECT COALESCE(SUM(cost_usd), 0) AS used FROM budget_ledger WHERE user_id = ? AND occurred_at >= ? AND occurred_at < ?'
-    ).bind(userId, start, end).first<{ used: number }>();
-    return { usedUsd: Number(row?.used || 0), available: true };
-  } catch {
-    return { usedUsd: 0, available: false };
-  }
+  return readActiveMonthUsage(env.DB, userId);
 }
 
 async function reserveBudget(env: XOwnedEnv, userId: string, amountUsd: number, effectiveLimit: number) {
   const id = crypto.randomUUID();
-  const { start, end } = utcMonthWindow();
-  const now = new Date().toISOString();
-  try {
-    const result = await env.DB.prepare(
-      `INSERT INTO budget_ledger (id, user_id, provider, operation, cost_usd, input_units, output_units, cache_hit, occurred_at)
-       SELECT ?, ?, 'x', 'owned_sync_reservation', ?, 0, 0, 0, ?
-       WHERE COALESCE((SELECT SUM(cost_usd) FROM budget_ledger WHERE user_id = ? AND occurred_at >= ? AND occurred_at < ?), 0) + ? <= ?`
-    ).bind(id, userId, amountUsd, now, userId, start, end, amountUsd, effectiveLimit).run();
-    return result.meta.changes > 0 ? id : null;
-  } catch {
-    return null;
-  }
+  const reserved = await reserveActiveMonthBudget(env.DB, {
+    id,
+    userId,
+    provider: 'x',
+    operation: 'owned_sync_reservation',
+    amountUsd,
+    effectiveLimit,
+    occurredAt: new Date().toISOString(),
+  });
+  return reserved ? id : null;
 }
 
 async function finalizeReservation(env: XOwnedEnv, reservationId: string, actualCostUsd: number, resources: number) {
@@ -480,13 +471,6 @@ async function markReservationUncertain(env: XOwnedEnv, reservationId: string, u
 function configuredLimit(env: XOwnedEnv) {
   const parsed = Number(env.DEFAULT_MONTHLY_BUDGET_USD || '3');
   return Number.isFinite(parsed) ? Math.max(0, parsed) : 3;
-}
-
-function utcMonthWindow() {
-  const now = new Date();
-  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
-  return { start: start.toISOString(), end: end.toISOString() };
 }
 
 function daysRemainingInUtcMonth() {
