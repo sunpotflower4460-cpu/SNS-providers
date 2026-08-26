@@ -82,7 +82,10 @@ export async function updateFollowCycleEvidence(
     const followerUsernames = new Set(followers.map((item) => item.username.toLowerCase()).filter(Boolean));
     const newlySeen = targets.filter((target) => {
       if (target.seen) return false;
-      if (target.platform_user_id && followerIds.has(target.platform_user_id)) return true;
+      // Once an immutable X user ID is known, username is only display/routing metadata.
+      // Falling back to the handle after an ID mismatch can confuse a recycled handle for
+      // the original person and create false positive follow-back evidence.
+      if (target.platform_user_id) return followerIds.has(target.platform_user_id);
       return followerUsernames.has(target.username.toLowerCase());
     });
 
