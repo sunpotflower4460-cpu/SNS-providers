@@ -113,6 +113,11 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
         : '';
       if (result.persistenceDegraded) {
         setNote(result.reason || `${source}は取得できました${cost}${evidence}。ただし次回位置を保存できなかったため、D1を確認するまで再更新しないでください`);
+      } else if (result.followEvidenceDegraded) {
+        // The paid page itself is safely checkpointed; only this follow-back proof cycle was
+        // discarded. Do not tell the user to retry immediately—the next normal refresh can
+        // continue from the saved cursor without re-reading the same paid page.
+        setNote(result.reason || `${source}は更新しました${cost}。フォローバック確認だけ安全のため今回の判定を破棄し、次の確認周回から再開します`);
       } else {
         setNote(`${source}から更新しました${cost}${evidence}`);
       }
