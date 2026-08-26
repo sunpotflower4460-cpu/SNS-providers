@@ -173,10 +173,8 @@ function applyFullCycleFollowEvidence(state: AppState, result: XOwnedSyncRespons
   const now = Date.now();
   const waitDays = Math.max(1, Math.min(180, state.relationshipPolicy.followBackReviewAfterDays));
   const candidates = state.candidates.map((candidate) => {
-    if (candidate.skipped
-      || candidate.platform !== 'x'
-      || !candidate.followedAt
-      || identityChangedIds.has(candidate.id)) return candidate;
+    if (candidate.skipped || candidate.platform !== 'x' || !candidate.followedAt) return candidate;
+    if (identityChangedIds.has(candidate.id)) return candidate;
     if (seen.has(candidate.id)) {
       return {
         ...candidate,
