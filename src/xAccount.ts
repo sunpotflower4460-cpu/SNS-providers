@@ -69,6 +69,7 @@ export interface XOwnedSyncResponse {
   costUsd: number;
   reason?: string;
   persistenceDegraded?: boolean;
+  followEvidenceDegraded?: boolean;
   startedAt?: string;
   syncedAt?: string;
   profile?: XOwnedUser;
@@ -183,7 +184,8 @@ function validOwnedSyncResponse(value: unknown): value is XOwnedSyncResponse {
     || typeof value.enabled !== 'boolean'
     || !['x', 'cache', 'disabled'].includes(String(value.source || ''))
     || !nonNegativeFinite(value.costUsd)
-    || (value.persistenceDegraded != null && typeof value.persistenceDegraded !== 'boolean')) return false;
+    || (value.persistenceDegraded != null && typeof value.persistenceDegraded !== 'boolean')
+    || (value.followEvidenceDegraded != null && typeof value.followEvidenceDegraded !== 'boolean')) return false;
 
   if (!value.enabled) {
     return value.source === 'disabled'
@@ -204,6 +206,9 @@ function validOwnedSyncResponse(value: unknown): value is XOwnedSyncResponse {
   if (!Array.isArray(value.posts) || value.posts.length > 50 || !value.posts.every(validOwnedPost) || !uniqueIds(value.posts)) return false;
   if (!validCoverage(value.coverage) || !validRequested(value.requested) || !validPagingState(value.resumePaging) || !validPacing(value.pacing)) return false;
   if (value.followEvidence != null && !validFollowEvidence(value.followEvidence)) return false;
+  // A degraded evidence cycle must never carry seen/unseen proof. The server quarantines
+  // the cycle and intentionally returns null evidence so no stale D1 row can affect CRM.
+  if (value.followEvidenceDegraded === true && value.followEvidence != null) return false;
 
   const coverage = value.coverage as Record<string, unknown>;
   const followersCoverage = coverage.followers as Record<string, unknown>;
