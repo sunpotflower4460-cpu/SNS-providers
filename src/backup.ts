@@ -15,7 +15,7 @@ const relationshipDefaults: RelationshipPolicy = {
   dailyConversationLimit: 8,
   dailyLightEngagementLimit: 8,
   dailyCleanupLimit: 5,
-  dailySelfImproveLimit: 2,
+  dailySelfImproveLimit: 1,
   autoReplenishEnabled: true,
 };
 
@@ -142,7 +142,7 @@ function normalizeRelationshipPolicy(policy: RelationshipPolicy | undefined): Re
     dailyConversationLimit: clampInteger(policy?.dailyConversationLimit, 0, 30, relationshipDefaults.dailyConversationLimit || 8),
     dailyLightEngagementLimit: clampInteger(policy?.dailyLightEngagementLimit, 0, 30, relationshipDefaults.dailyLightEngagementLimit || 8),
     dailyCleanupLimit: clampInteger(policy?.dailyCleanupLimit, 0, 30, relationshipDefaults.dailyCleanupLimit || 5),
-    dailySelfImproveLimit: clampInteger(policy?.dailySelfImproveLimit, 0, 5, relationshipDefaults.dailySelfImproveLimit || 2),
+    dailySelfImproveLimit: clampInteger(policy?.dailySelfImproveLimit, 0, 1, relationshipDefaults.dailySelfImproveLimit || 1),
     autoReplenishEnabled: typeof policy?.autoReplenishEnabled === 'boolean'
       ? policy.autoReplenishEnabled
       : relationshipDefaults.autoReplenishEnabled,
