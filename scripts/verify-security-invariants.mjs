@@ -96,8 +96,11 @@ if (!syncClient.includes('expectedUpdatedAt: string | null = getRemoteStateVersi
   throw new Error('D1 upload no longer uses the last known optimistic-lock version for the active key.');
 }
 
-if (!providerApi.includes("markReservationUncertain(env, reservationId, 'user_read_uncertain')") || !providerApi.includes("markReservationUncertain(env, reservationId, 'rank_uncertain')")) {
-  throw new Error('Paid-provider uncertainty no longer retains conservative budget reservations.');
+if (!providerApi.includes("markReservationUncertain(env, reservationId, 'user_read_uncertain', userId, 'x', worstCaseCost)")
+  || !providerApi.includes("markReservationUncertain(env, reservationId, 'rank_uncertain', userId, provider, preflightUsd)")
+  || !providerApi.includes("if (result.meta.changes !== 1) throw new Error('Paid budget reservation disappeared before finalization')")
+  || !providerApi.includes('INSERT OR IGNORE INTO budget_ledger')) {
+  throw new Error('Paid-provider uncertainty no longer retains or reconstructs conservative budget reservations.');
 }
 if (providerApi.includes('DELETE FROM budget_ledger WHERE id = ?')) {
   throw new Error('A paid-provider failure path can delete an existing budget reservation.');
@@ -117,8 +120,11 @@ const ownedReservationIndex = xOwned.indexOf('const reservationId = await reserv
 if (ownedTokenIndex < 0 || ownedReservationIndex < 0 || ownedTokenIndex > ownedReservationIndex) {
   throw new Error('Owned-X can reserve paid budget before local OAuth token resolution succeeds.');
 }
-if (!xOwned.includes('await markReservationUncertain(env, reservationId);') || !xOwned.includes("'owned_sync_uncertain'")) {
-  throw new Error('Owned-X paid-read failures no longer retain an explicitly uncertain conservative reservation.');
+if (!xOwned.includes('await markReservationUncertain(env, reservationId, userId, worstCaseCost);')
+  || !xOwned.includes("'owned_sync_uncertain'")
+  || !xOwned.includes("if (result.meta.changes !== 1) throw new Error('Owned-X budget reservation disappeared before finalization')")
+  || !xOwned.includes('INSERT OR IGNORE INTO budget_ledger')) {
+  throw new Error('Owned-X paid-read failures no longer retain or reconstruct an explicitly uncertain conservative reservation.');
 }
 
 for (const source of [router, providerApi]) {
@@ -182,6 +188,11 @@ if (!backupControls.includes('latestStateRef.current = state')
   || !instagramAccountControls.includes('onChange((current) => applyInstagramEngagers(current, result))')
   || !syncControls.includes('onRestore((current) => syncBudget(current, budget.usedUsd, budget.limitUsd))')) {
   throw new Error('Async settings/X/Instagram completions can overwrite newer local state with a stale request-time snapshot.');
+}
+if (!syncControls.includes('const latestStateRef = useRef(state);')
+  || !syncControls.includes('if (stateFingerprint(latestStateRef.current) !== localFingerprintAtStart)')
+  || !syncControls.includes('復元中にこの端末のデータが変更されたため、上書きせず停止しました')) {
+  throw new Error('A slow D1 restore can overwrite newer local work that completed while the download was in flight.');
 }
 
 if (!store.includes("interaction.action === 'kept'") || !store.includes('advanceRelationshipStage') || !store.includes("target.recommendedAction === 'unfollow_review'")) {
@@ -281,4 +292,4 @@ if (!/DELETE FROM x_oauth_tokens[\s\S]{0,500}?try \{[\s\S]{0,250}?clearOwnedXDer
   throw new Error('X disconnect can report failure after the authoritative token row was already deleted.');
 }
 
-console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, single-user namespace enforcement, protected X OAuth status, UTF-8 + monotonic validated D1 snapshot versions, DB-level non-negative HARD LIMIT constraints, pre-validated/session-safe control-token changes, fallback-only in-memory optimistic-lock state, account-bound X/Instagram caches, local-OAuth-before-paid-X reservation, fresh-event-only candidate revival, normalized+deduplicated local/JSON/D1 restores, restore-aware Settings, async latest-state merges, conservative CRM progression, first-observed X follows, explicit manual reactivation, cleared manual unfollows, valid X identifiers, canonical official-platform handoff, guarded social drafts + self-profile rewrite, validated provider/X success payloads, full-pool AI prefiltering, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, strict stored/session OAuth validation, requested+granted X scopes=${scopes.join(', ')}`);
+console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, single-user namespace enforcement, protected X OAuth status, UTF-8 + monotonic validated D1 snapshot versions, DB-level non-negative HARD LIMIT constraints, pre-validated/session-safe control-token changes, fallback-only in-memory optimistic-lock state, account-bound X/Instagram caches, local-OAuth-before-paid-X reservation, durable conservative paid-reservation recovery, fresh-event-only candidate revival, normalized+deduplicated local/JSON/D1 restores, in-flight restore conflict protection, restore-aware Settings, async latest-state merges, conservative CRM progression, first-observed X follows, explicit manual reactivation, cleared manual unfollows, valid X identifiers, canonical official-platform handoff, guarded social drafts + self-profile rewrite, validated provider/X success payloads, full-pool AI prefiltering, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, strict stored/session OAuth validation, requested+granted X scopes=${scopes.join(', ')}`);
