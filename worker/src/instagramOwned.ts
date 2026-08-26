@@ -50,6 +50,7 @@ interface EngagerAccumulator {
 }
 
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+const INSTAGRAM_RESERVED_PATHS = new Set(['p', 'reel', 'reels', 'stories', 'explore', 'accounts', 'direct', 'about', 'developer']);
 
 export async function syncInstagramEngagers(env: InstagramOwnedEnv, body: InstagramOwnedSyncRequest) {
   const userId = sanitizeUserId(body.userId || 'local-user');
@@ -70,6 +71,9 @@ export async function syncInstagramEngagers(env: InstagramOwnedEnv, body: Instag
   const media = await fetchMedia(accessToken, apiVersion, instagramUserId, maxMedia);
   const commentPages = await Promise.all(media.map((item) => fetchComments(accessToken, apiVersion, item.id, maxCommentsPerMedia)));
 
+  // Username is the stable merge key within one response. Some Graph responses can omit
+  // from.id on individual comments; keying by id-or-username would split one person into
+  // two accumulators and make the final unique-username validation reject the whole sync.
   const engagers = new Map<string, EngagerAccumulator>();
   let commentEvents = 0;
   for (let index = 0; index < media.length; index += 1) {
@@ -80,9 +84,9 @@ export async function syncInstagramEngagers(env: InstagramOwnedEnv, body: Instag
       const fromId = comment.from?.id?.trim() || '';
       const username = sanitizeUsername(comment.from?.username || '');
       if (!username || fromId === instagramUserId) continue;
-      const key = fromId || username.toLowerCase();
+      const key = username.toLowerCase();
       const existing = engagers.get(key) || {
-        id: fromId || `username:${username.toLowerCase()}`,
+        id: fromId || `username:${key}`,
         username,
         commentCount: 0,
         mediaIds: new Set<string>(),
@@ -90,6 +94,12 @@ export async function syncInstagramEngagers(env: InstagramOwnedEnv, body: Instag
         lastCommentAt: null,
         latestMediaPermalink: null,
       };
+      if (fromId) {
+        if (existing.id.startsWith('username:')) existing.id = fromId;
+        else if (existing.id !== fromId) {
+          throw new Error('Instagram Graph API returned inconsistent commenter identity for one username');
+        }
+      }
       existing.commentCount += 1;
       existing.mediaIds.add(item.id);
       if (isLater(comment.timestamp, existing.lastCommentAt)) {
@@ -144,8 +154,15 @@ async function fetchMedia(token: string, version: string, instagramUserId: strin
     fields: 'id,caption,permalink,timestamp',
     limit: String(limit),
   });
-  const result = await graphFetch<GraphPage<InstagramMedia>>(`https://graph.instagram.com/${version}/${encodeURIComponent(instagramUserId)}/media?${params.toString()}`, token);
-  return (result.data || []).slice(0, limit);
+  const result = await graphFetch<GraphPage<unknown>>(`https://graph.instagram.com/${version}/${encodeURIComponent(instagramUserId)}/media?${params.toString()}`, token);
+  if (result.data == null) return [];
+  if (!Array.isArray(result.data)
+    || result.data.length > limit
+    || !result.data.every(validRawMedia)
+    || !uniqueRawIds(result.data)) {
+    throw new Error('Instagram media endpoint returned malformed or duplicate media data');
+  }
+  return result.data as InstagramMedia[];
 }
 
 async function fetchComments(token: string, version: string, mediaId: string, limit: number) {
@@ -153,8 +170,15 @@ async function fetchComments(token: string, version: string, mediaId: string, li
     fields: 'from,text,timestamp',
     limit: String(limit),
   });
-  const result = await graphFetch<GraphPage<InstagramComment>>(`https://graph.instagram.com/${version}/${encodeURIComponent(mediaId)}/comments?${params.toString()}`, token);
-  return (result.data || []).slice(0, limit);
+  const result = await graphFetch<GraphPage<unknown>>(`https://graph.instagram.com/${version}/${encodeURIComponent(mediaId)}/comments?${params.toString()}`, token);
+  if (result.data == null) return [];
+  if (!Array.isArray(result.data)
+    || result.data.length > limit
+    || !result.data.every(validRawComment)
+    || !uniqueRawIds(result.data)) {
+    throw new Error('Instagram comments endpoint returned malformed or duplicate comment data');
+  }
+  return result.data as InstagramComment[];
 }
 
 async function graphFetch<T>(url: string, token: string): Promise<T> {
@@ -169,7 +193,7 @@ async function graphFetch<T>(url: string, token: string): Promise<T> {
     const detail = body && typeof body === 'object' && body.error?.message ? `: ${body.error.message.slice(0, 180)}` : '';
     throw new Error(`Instagram Graph API returned ${response.status}${detail}`);
   }
-  if (!body || typeof body !== 'object') throw new Error('Instagram Graph API returned an empty or invalid JSON response');
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Instagram Graph API returned an empty or invalid JSON response');
   return body as T;
 }
 
@@ -222,6 +246,32 @@ async function recordUsage(env: InstagramOwnedEnv, userId: string, mediaCount: n
   }
 }
 
+function validRawMedia(value: unknown): value is InstagramMedia {
+  return isRecord(value)
+    && typeof value.id === 'string'
+    && /^\d{1,30}$/.test(value.id)
+    && (value.caption == null || (typeof value.caption === 'string' && value.caption.length <= 30_000))
+    && (value.permalink == null || (typeof value.permalink === 'string' && validInstagramMediaUrl(value.permalink)))
+    && (value.timestamp == null || (typeof value.timestamp === 'string' && validPastishIso(value.timestamp)));
+}
+
+function validRawComment(value: unknown): value is InstagramComment {
+  if (!isRecord(value)
+    || typeof value.id !== 'string'
+    || !/^\d{1,30}$/.test(value.id)
+    || (value.text != null && (typeof value.text !== 'string' || value.text.length > 10_000))
+    || (value.timestamp != null && (typeof value.timestamp !== 'string' || !validPastishIso(value.timestamp)))) return false;
+  if (value.from == null) return true;
+  if (!isRecord(value.from)) return false;
+  return (value.from.id == null || (typeof value.from.id === 'string' && /^\d{1,30}$/.test(value.from.id)))
+    && (value.from.username == null || (typeof value.from.username === 'string' && Boolean(sanitizeUsername(value.from.username))));
+}
+
+function uniqueRawIds(items: unknown[]) {
+  const ids = items.map((item) => isRecord(item) && typeof item.id === 'string' ? item.id : '');
+  return ids.every(Boolean) && new Set(ids).size === ids.length;
+}
+
 function validInstagramSnapshot(value: unknown, expectedAccountId: string) {
   if (!isRecord(value)
     || value.enabled !== true
@@ -249,7 +299,7 @@ function validEngager(value: unknown) {
     && typeof value.id === 'string'
     && /^(?:\d{1,30}|username:[A-Za-z0-9._]{1,30})$/.test(value.id)
     && typeof value.username === 'string'
-    && /^[A-Za-z0-9._]{1,30}$/.test(value.username)
+    && Boolean(sanitizeUsername(value.username))
     && typeof value.profileUrl === 'string'
     && validInstagramProfileUrl(value.profileUrl, value.username)
     && boundedPositiveInteger(value.commentCount, 600)
@@ -332,6 +382,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function sanitizeUsername(value: string) {
   const username = value.trim().replace(/^@/, '');
+  const lowered = username.toLowerCase();
+  if (INSTAGRAM_RESERVED_PATHS.has(lowered)) return '';
   return /^[A-Za-z0-9._]{1,30}$/.test(username) ? username : '';
 }
 
