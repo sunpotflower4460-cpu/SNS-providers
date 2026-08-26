@@ -135,9 +135,19 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
       allocation.posts >= 5 ? fetchPostsPage(accessToken, profile.id, allocation.posts) : emptyList<XPost>(),
     ]);
 
+    // The two lists are fetched concurrently. A handle rename or inconsistent upstream
+    // snapshot can otherwise make the same immutable ID appear under two usernames (or
+    // one username under two IDs) across endpoints even though each list is valid alone.
+    // Fail before shrinking the conservative reservation so ambiguous identity data never
+    // reaches CRM/cache and the paid attempt remains conservatively accounted.
+    if (!coherentRawXUsersAcrossLists(followersResult.data, followingResult.data)) {
+      throw new Error('X follower/following endpoints returned contradictory user identity data');
+    }
+
     // All raw paid X payloads have been schema/identity/count validated inside the fetch
-    // helpers before this point. Only now is it safe to shrink the conservative reservation
-    // from the requested worst-case amount to the observed resource count.
+    // helpers and across the follower/following boundary before this point. Only now is it
+    // safe to shrink the conservative reservation from the requested worst-case amount to
+    // the observed resource count.
     const followerCount = followersResult.data.length;
     const followingCount = followingResult.data.length;
     const postCount = postsResult.data.length;
@@ -525,6 +535,20 @@ function uniqueRawXUsers(users: XUser[]) {
   return true;
 }
 
+function coherentRawXUsersAcrossLists(followers: XUser[], following: XUser[]) {
+  const usernameById = new Map<string, string>();
+  const idByUsername = new Map<string, string>();
+  for (const user of [...followers, ...following]) {
+    const username = user.username.toLowerCase();
+    const knownUsername = usernameById.get(user.id);
+    const knownId = idByUsername.get(username);
+    if ((knownUsername && knownUsername !== username) || (knownId && knownId !== user.id)) return false;
+    usernameById.set(user.id, username);
+    idByUsername.set(username, user.id);
+  }
+  return true;
+}
+
 function uniqueRawXPosts(posts: XPost[]) {
   return new Set(posts.map((post) => post.id)).size === posts.length;
 }
@@ -552,6 +576,7 @@ function validOwnedSnapshot(value: unknown) {
     || value.following.length > 500
     || !value.following.every(validOwnedUser)
     || !uniqueUsers(value.following)
+    || !coherentOwnedUsersAcrossLists(value.followers, value.following)
     || !Array.isArray(value.posts)
     || value.posts.length > 50
     || !value.posts.every(validOwnedPost)
@@ -687,6 +712,21 @@ function uniqueUsers(users: unknown[]) {
     if (ids.has(user.id) || usernames.has(username)) return false;
     ids.add(user.id);
     usernames.add(username);
+  }
+  return true;
+}
+
+function coherentOwnedUsersAcrossLists(followers: unknown[], following: unknown[]) {
+  const usernameById = new Map<string, string>();
+  const idByUsername = new Map<string, string>();
+  for (const value of [...followers, ...following]) {
+    if (!isRecord(value) || typeof value.id !== 'string' || typeof value.username !== 'string') return false;
+    const username = value.username.toLowerCase();
+    const knownUsername = usernameById.get(value.id);
+    const knownId = idByUsername.get(username);
+    if ((knownUsername && knownUsername !== username) || (knownId && knownId !== value.id)) return false;
+    usernameById.set(value.id, username);
+    idByUsername.set(username, value.id);
   }
   return true;
 }
