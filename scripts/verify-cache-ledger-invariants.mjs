@@ -91,16 +91,24 @@ requireAll(xAccount, [
   'persistenceDegraded?: boolean;',
   'followEvidenceDegraded?: boolean;',
   'value.followEvidenceDegraded === true && value.followEvidence != null',
-], 'Owned-X client validation can accept contradictory identity/checkpoint metadata, degraded evidence with stale proof, or hide degraded persistence.');
+  "!candidate.tags.includes('identity-conflict')",
+], 'Owned-X client validation/tracking can accept contradictory identity/checkpoint metadata, degraded evidence with stale proof, or ambiguous recycled handles.');
 
 requireAll(xOwnedStore, [
   'const stableIdentityState = reconcileOwnedXStableIdentities(state, result);',
+  'const identityResetState = resetOwnedXIdentityChanges(stableIdentityState, result, identityChangedIds);',
+  'const identitySafeState = reconcileOwnedXStableIdentities(identityResetState, result);',
   'const legacyIdentityAliases = new Map<string, string>();',
   'const stableExisting = byStableId.get(user.id);',
-  'conflictingRemovedIds.add(usernameExisting.id);',
+  'const byUsername = new Map<string, Candidate[]>();',
+  'for (const conflicting of usernameExisting) {',
+  'conflictingRemovedIds.add(conflicting.id);',
   'resolveIdentityAlias(interaction.candidateId, legacyIdentityAliases)',
+  "const identityConflictResolved = stableExisting.tags.includes('identity-conflict');",
+  "tags: stableExisting.tags.filter((tag) => tag !== 'identity-conflict')",
+  "if (candidate.tags.includes('identity-conflict')) return candidate;",
   'existingByStableId.get(follower.id) || existingByUsername.get(username)',
-], 'X handle renames or legacy same-ID duplicates can again split one immutable relationship or transfer stale handle history.');
+], 'X handle renames, recycled handles, or legacy same-ID duplicates can again split one immutable relationship, revive ambiguous follow evidence, or transfer stale handle history.');
 
 requireAll(xOwned, [
   "if (result.meta.changes !== 1) throw new Error('Owned-X budget reservation disappeared before finalization')",
@@ -123,13 +131,19 @@ requireAll(instagramOwned, [
 requireAll(instagramOwnedStore, [
   'const byStableId = new Map<string, Candidate>();',
   'const stableExisting = incomingStableId ? byStableId.get(incomingStableId) : undefined;',
-  'const existing = stableExisting || usernameExisting;',
-  'conflictingRemovedIds.add(usernameExisting.id);',
+  'const byUsername = new Map<string, Candidate[]>();',
+  'const usernameGroup = byUsername.get(username) || [];',
+  'const knownUsernameIdentities = new Set(usernameGroup.map((candidate) => stableInstagramId(candidate.platformUserId)).filter(Boolean));',
+  'for (const conflicting of usernameGroup) {',
+  'conflictingRemovedIds.add(conflicting.id);',
+  'else if (incomingStableId && knownUsernameIdentities.size > 1) {',
+  "const identityConflictResolved = Boolean(stableExisting && existing.tags.includes('identity-conflict'));",
+  "existing.tags.filter((tag) => tag !== 'identity-conflict')",
   'const legacyIdentityAliases = new Map<string, string>();',
   'resolveIdentityAlias(interaction.candidateId, legacyIdentityAliases)',
   'username: engager.username,',
   'profileUrl: engager.profileUrl,',
-], 'Instagram handle renames or legacy same-ID duplicates can again split one immutable commenter or transfer stale handle history.');
+], 'Instagram handle renames, recycled handles, or legacy same-ID duplicates can again split one immutable commenter, revive stale reply routing, or transfer old handle history.');
 
 requireAll(providerApi, [
   'readActiveMonthUsage(env.DB, userId)',
@@ -186,4 +200,4 @@ if ((budgetIntegrity.match(/occurred_jd >= julianday\(\?\) AND occurred_jd < jul
   throw new Error('A paid-budget read or reservation lost one side of the active UTC month boundary.');
 }
 
-console.log('Cache/ledger invariants OK: malformed X/Instagram snapshots are rejected and evicted, cache freshness is bound to snapshot observation time, X paging checkpoints fail independently and recover from either durable source, paid X provider snapshots validate before exact-cost finalization, finalized costs are never relabeled uncertain by local evidence failures, corrupt follow-evidence rows fail closed and irrecoverable evidence cycles are quarantined without rereading the paid page, raw paid X-enrichment identities validate before finalize, legacy invalid budget rows disable paid work, reservations remain atomic inside the active UTC month, X/Instagram renames follow immutable identity, and stale CRM advice cannot remain actionable.');
+console.log('Cache/ledger invariants OK: malformed X/Instagram snapshots are rejected and evicted, cache freshness is bound to snapshot observation time, X paging checkpoints fail independently and recover from either durable source, paid X provider snapshots validate before exact-cost finalization, finalized costs are never relabeled uncertain by local evidence failures, corrupt follow-evidence rows fail closed and irrecoverable evidence cycles are quarantined without rereading the paid page, raw paid X-enrichment identities validate before finalize, legacy invalid budget rows disable paid work, reservations remain atomic inside the active UTC month, X/Instagram renames follow immutable identity, recycled-handle conflicts resolve deterministically, and stale CRM advice cannot remain actionable.');
