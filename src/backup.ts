@@ -32,6 +32,7 @@ const allowedInteractionActions = new Set([...allowedActions, 'followed', 'skipp
 const allowedBudgetModes = new Set(['free', 'eco', 'balanced', 'growth']);
 const allowedInsightCategories = new Set(['profile', 'content', 'network']);
 const allowedInsightPriorities = new Set(['high', 'medium', 'low']);
+const MAX_SNOOZE_FUTURE_MS = 7 * 86_400_000;
 
 export function downloadBackup(state: AppState) {
   const payload: BackupEnvelope = {
@@ -91,7 +92,7 @@ export function normalizeAppState(state: AppState): AppState {
     candidates,
     interactions,
     budget: {
-      monthlyLimitUsd: clampNumber(state?.budget?.monthlyLimitUsd, 0, 100, 3),
+      monthlyLimitUsd: clampNumber(state?.budget?.monthlyLimitUsd, 0, 10, 3),
       hardLimit: true,
       usedUsd: clampNumber(state?.budget?.usedUsd, 0, 1_000_000, 0),
       xUsd: clampNumber(state?.budget?.xUsd, 0, 1_000_000, 0),
@@ -132,14 +133,14 @@ export function validateAppState(state: AppState) {
 
 function normalizeRelationshipPolicy(policy: RelationshipPolicy | undefined): RelationshipPolicy {
   return {
-    followBackReviewAfterDays: clampInteger(policy?.followBackReviewAfterDays, 7, 180, relationshipDefaults.followBackReviewAfterDays),
+    followBackReviewAfterDays: clampInteger(policy?.followBackReviewAfterDays, 7, 90, relationshipDefaults.followBackReviewAfterDays),
     preserveHighMatch: typeof policy?.preserveHighMatch === 'boolean' ? policy.preserveHighMatch : relationshipDefaults.preserveHighMatch,
-    dailyQueueLimit: clampInteger(policy?.dailyQueueLimit, 1, 200, relationshipDefaults.dailyQueueLimit || 30),
-    dailyConnectionLimit: clampInteger(policy?.dailyConnectionLimit, 0, 200, relationshipDefaults.dailyConnectionLimit || 20),
-    dailyConversationLimit: clampInteger(policy?.dailyConversationLimit, 0, 100, relationshipDefaults.dailyConversationLimit || 8),
-    dailyLightEngagementLimit: clampInteger(policy?.dailyLightEngagementLimit, 0, 100, relationshipDefaults.dailyLightEngagementLimit || 8),
-    dailyCleanupLimit: clampInteger(policy?.dailyCleanupLimit, 0, 100, relationshipDefaults.dailyCleanupLimit || 5),
-    dailySelfImproveLimit: clampInteger(policy?.dailySelfImproveLimit, 0, 20, relationshipDefaults.dailySelfImproveLimit || 2),
+    dailyQueueLimit: clampInteger(policy?.dailyQueueLimit, 1, 150, relationshipDefaults.dailyQueueLimit || 30),
+    dailyConnectionLimit: clampInteger(policy?.dailyConnectionLimit, 0, 120, relationshipDefaults.dailyConnectionLimit || 20),
+    dailyConversationLimit: clampInteger(policy?.dailyConversationLimit, 0, 30, relationshipDefaults.dailyConversationLimit || 8),
+    dailyLightEngagementLimit: clampInteger(policy?.dailyLightEngagementLimit, 0, 30, relationshipDefaults.dailyLightEngagementLimit || 8),
+    dailyCleanupLimit: clampInteger(policy?.dailyCleanupLimit, 0, 30, relationshipDefaults.dailyCleanupLimit || 5),
+    dailySelfImproveLimit: clampInteger(policy?.dailySelfImproveLimit, 0, 5, relationshipDefaults.dailySelfImproveLimit || 2),
     autoReplenishEnabled: typeof policy?.autoReplenishEnabled === 'boolean'
       ? policy.autoReplenishEnabled
       : relationshipDefaults.autoReplenishEnabled,
@@ -178,7 +179,7 @@ function normalizeCandidate(raw: Candidate): Candidate | null {
     followBack: typeof raw.followBack === 'boolean' ? raw.followBack : null,
     lastInteractionAt: validPastishOptionalIso(raw.lastInteractionAt),
     skipped: Boolean(raw.skipped),
-    snoozedUntil: validOptionalIso(raw.snoozedUntil),
+    snoozedUntil: validSnoozeOptionalIso(raw.snoozedUntil),
   } as Candidate;
 }
 
@@ -347,10 +348,11 @@ function safeText(value: unknown, maxLength: number) {
   return typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
 }
 
-function validOptionalIso(value?: string) {
+function validSnoozeOptionalIso(value?: string) {
   if (!value || typeof value !== 'string') return undefined;
   const time = new Date(value).getTime();
-  return Number.isFinite(time) ? new Date(time).toISOString() : undefined;
+  if (!Number.isFinite(time) || time > Date.now() + MAX_SNOOZE_FUTURE_MS) return undefined;
+  return new Date(time).toISOString();
 }
 
 function validPastishOptionalIso(value?: string) {
