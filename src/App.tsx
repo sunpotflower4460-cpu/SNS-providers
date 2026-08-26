@@ -60,8 +60,10 @@ function App() {
   const [analyzingSelf, setAnalyzingSelf] = useState(false);
   const [apiNote, setApiNote] = useState(apiConfigured ? 'API接続待機' : 'ローカルモード');
   const [persistenceError, setPersistenceError] = useState('');
+  const [autoRetryTick, setAutoRetryTick] = useState(0);
   const autoReplenishingRef = useRef(false);
   const autoReplenishAttemptKeyRef = useRef('');
+  const autoReplenishRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const localDay = useLocalDayKey();
   const statusNote = persistenceError || apiNote;
 
@@ -69,6 +71,10 @@ function App() {
     const saved = saveState(state);
     setPersistenceError(saved.ok ? '' : saved.reason);
   }, [state]);
+
+  useEffect(() => () => {
+    if (autoReplenishRetryTimerRef.current) clearTimeout(autoReplenishRetryTimerRef.current);
+  }, []);
 
   useEffect(() => {
     if (!apiConfigured) return;
@@ -101,24 +107,76 @@ function App() {
     const attemptKey = `${localDay}:${missionKey}`;
     if (autoReplenishAttemptKeyRef.current === attemptKey) return;
 
+    const snapshot = state;
+    const now = Date.now();
+    const existingRankTargets = snapshot.candidates.filter((candidate) => {
+      if (candidate.skipped
+        || candidate.recommendedAction !== 'review'
+        || !candidate.reason.startsWith('無料Web検索から候補')) return false;
+      if (!candidate.snoozedUntil) return true;
+      const until = new Date(candidate.snoozedUntil).getTime();
+      return !Number.isFinite(until) || until <= now;
+    });
+
     autoReplenishAttemptKeyRef.current = attemptKey;
     autoReplenishingRef.current = true;
+
+    const clearRetryTimer = () => {
+      if (!autoReplenishRetryTimerRef.current) return;
+      clearTimeout(autoReplenishRetryTimerRef.current);
+      autoReplenishRetryTimerRef.current = null;
+    };
+    const scheduleRetry = () => {
+      clearRetryTimer();
+      autoReplenishRetryTimerRef.current = setTimeout(() => {
+        if (autoReplenishAttemptKeyRef.current === attemptKey) autoReplenishAttemptKeyRef.current = '';
+        autoReplenishRetryTimerRef.current = null;
+        setAutoRetryTick((current) => current + 1);
+      }, 10 * 60 * 1000);
+    };
+
+    if (existingRankTargets.length) {
+      setRanking(true);
+      setApiNote(`未評価候補 ${existingRankTargets.length}件を無料で自動評価中…`);
+      void (async () => {
+        try {
+          const ranked = await rankCandidates(snapshot.mission, existingRankTargets, snapshot.budget.monthlyLimitUsd, 'local-user', false);
+          setState((current) => applyRankResults(current, ranked.results, ranked.costUsd));
+          clearRetryTimer();
+          autoReplenishAttemptKeyRef.current = '';
+          setApiNote(`自動評価完了 · ${ranked.provider}で${ranked.results.length}件評価 · $0`);
+        } catch (error) {
+          scheduleRetry();
+          setApiNote(error instanceof Error ? `自動評価: ${error.message}` : '自動候補評価に失敗しました');
+        } finally {
+          autoReplenishingRef.current = false;
+          setRanking(false);
+        }
+      })();
+      return;
+    }
+
     setDiscovering(true);
     setRanking(true);
     setApiNote(`実行可能候補 ${demand.current}/${demand.remainingTarget}件 · 無料で自動補充中…`);
-    const snapshot = state;
 
     void (async () => {
+      let discoverySucceeded = false;
       try {
         const discovered = await discoverSocialCandidates(snapshot.mission, 'local-user', true);
         if (!discovered.enabled) {
           setApiNote(discovered.reason || '自動候補補充は現在利用できません');
           return;
         }
+        discoverySucceeded = true;
 
         const merged = mergeDiscoveredProfiles(snapshot, discovered.profiles);
         const addedCount = Math.max(0, merged.candidates.length - snapshot.candidates.length);
-        const now = Date.now();
+        // Persist free-search yield immediately. If the later free ranking request fails,
+        // the discovered profiles remain available and the retry path can rank them
+        // without spending another Tavily search credit.
+        setState((current) => mergeDiscoveredProfiles(current, discovered.profiles));
+
         const rankTargets = merged.candidates.filter((candidate) => {
           if (candidate.skipped || candidate.recommendedAction !== 'review') return false;
           if (!candidate.snoozedUntil) return true;
@@ -127,7 +185,7 @@ function App() {
         });
 
         if (!rankTargets.length) {
-          setState((current) => mergeDiscoveredProfiles(current, discovered.profiles));
+          clearRetryTimer();
           setApiNote(`自動補充完了 · 新規${addedCount}件 · 追加評価対象なし · $0`);
           return;
         }
@@ -139,16 +197,22 @@ function App() {
           const withDiscovery = mergeDiscoveredProfiles(current, discovered.profiles);
           return applyRankResults(withDiscovery, ranked.results, ranked.costUsd);
         });
+        clearRetryTimer();
         setApiNote(`自動補充完了 · 新規${addedCount}件 · ${ranked.provider}で${ranked.results.length}件評価 · $0`);
       } catch (error) {
-        setApiNote(error instanceof Error ? `自動補充: ${error.message}` : '自動候補補充に失敗しました');
+        // A successful discovery is already persisted above. Retrying later will first
+        // evaluate those untouched profiles rather than issuing another search.
+        scheduleRetry();
+        setApiNote(error instanceof Error
+          ? `${discoverySucceeded ? '自動評価' : '自動補充'}: ${error.message}`
+          : discoverySucceeded ? '自動候補評価に失敗しました' : '自動候補補充に失敗しました');
       } finally {
         autoReplenishingRef.current = false;
         setDiscovering(false);
         setRanking(false);
       }
     })();
-  }, [localDay, state, discovering, ranking]);
+  }, [autoRetryTick, localDay, state, discovering, ranking]);
 
   const active = useMemo(() => {
     const now = Date.now();
