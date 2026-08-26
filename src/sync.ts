@@ -82,7 +82,8 @@ export async function uploadRemoteState(
       expectedUpdatedAt,
     }),
   });
-  if (result.ok !== true || !validRemoteVersion(result.updatedAt)) throw new Error('D1 upload returned an invalid version response');
+  // Keep basic ISO validation explicit, then apply the stronger clock-skew boundary.
+  if (result.ok !== true || !validIso(result.updatedAt) || !validRemoteVersion(result.updatedAt)) throw new Error('D1 upload returned an invalid version response');
   const versionPersisted = setRemoteStateVersion(result.updatedAt);
   return { ...result, versionPersisted };
 }
@@ -93,7 +94,7 @@ export async function downloadRemoteState(token = getSyncToken(), userId = 'loca
   const result = await syncFetch<DownloadResponse>(`/api/sync/state?userId=${encodeURIComponent(userId)}`, token);
   if (typeof result.found !== 'boolean') throw new Error('D1 download returned an invalid found flag');
   if (result.found) {
-    if (!result.state || !validRemoteVersion(result.updatedAt)) throw new Error('D1 download returned an incomplete or invalid state snapshot');
+    if (!result.state || !validRemoteVersion(result.updatedAt)) throw new Error('D1 download returned an incomplete state snapshot');
     result.state = normalizeAppState(result.state);
     validateAppState(result.state);
   } else if (result.state !== null || result.updatedAt !== null) {
@@ -121,8 +122,12 @@ async function syncFetch<T>(path: string, token: string, init?: RequestInit): Pr
   return body as T;
 }
 
+function validIso(value: string | null | undefined): value is string {
+  return Boolean(value) && Number.isFinite(new Date(value!).getTime());
+}
+
 function validRemoteVersion(value: string | null | undefined): value is string {
-  if (!value) return false;
+  if (!validIso(value)) return false;
   const time = new Date(value).getTime();
-  return Number.isFinite(time) && time <= Date.now() + MAX_REMOTE_CLOCK_SKEW_MS;
+  return time <= Date.now() + MAX_REMOTE_CLOCK_SKEW_MS;
 }
