@@ -237,14 +237,13 @@ function App() {
 
   const doneToday = useMemo(() => {
     const now = new Date();
-    return state.interactions.filter((interaction) => {
+    const relationshipDone = state.interactions.filter((interaction) => {
       const at = new Date(interaction.at);
-      return interaction.action !== 'review'
-        && at.getFullYear() === now.getFullYear()
-        && at.getMonth() === now.getMonth()
-        && at.getDate() === now.getDate();
+      return interaction.action !== 'review' && sameLocalDay(at, now);
     }).length;
-  }, [state.interactions, localDay]);
+    const selfDone = state.selfProfile.analyzedAt && sameLocalDay(new Date(state.selfProfile.analyzedAt), now) ? 1 : 0;
+    return relationshipDone + selfDone;
+  }, [state.interactions, state.selfProfile.analyzedAt, localDay]);
 
   function onOpen(candidate: Candidate) {
     setPending(candidate);
@@ -729,12 +728,11 @@ function autoReplenishDemand(state: AppState) {
   const conversation = clampInt(state.relationshipPolicy.dailyConversationLimit, 8, 0, 30);
   const light = clampInt(state.relationshipPolicy.dailyLightEngagementLimit, 8, 0, 30);
   const cleanup = clampInt(state.relationshipPolicy.dailyCleanupLimit, 5, 0, 30);
-  const selfLimit = clampInt(state.relationshipPolicy.dailySelfImproveLimit, 2, 0, 5);
+  const selfLimit = clampInt(state.relationshipPolicy.dailySelfImproveLimit, 1, 0, 1);
   const now = new Date();
-  const selfAnalyzedToday = state.selfProfile.analyzedAt
-    ? sameLocalDay(new Date(state.selfProfile.analyzedAt), now)
-    : false;
-  const plannedSelf = !selfAnalyzedToday && state.insights.length > 0 ? Math.min(selfLimit, state.insights.length) : 0;
+  // Reserve the same single self-work slot before and after it is completed. Otherwise
+  // finishing Me analysis would silently increase today's relationship quota by one.
+  const plannedSelf = selfLimit > 0 && state.insights.length > 0 ? 1 : 0;
   const relationshipCapacity = connect + conversation + light + cleanup;
   const relationshipTarget = Math.max(0, Math.min(total - plannedSelf, relationshipCapacity));
   const completedToday = state.interactions.filter((interaction) => {
