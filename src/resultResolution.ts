@@ -18,6 +18,12 @@ export function resolveVisibleResult(
   const current = state.candidates.find((candidate) => candidate.id === visibleCandidate.id);
   if (!current || current.skipped) return state;
 
+  // Candidate IDs are local record IDs, not social-network identity. A handle can be
+  // recycled while a result sheet is open. Only record the visible user's action when the
+  // current record is still provably the same person: equal immutable IDs when available,
+  // or the same platform+handle only while neither side has an immutable ID yet.
+  if (!sameVisibleCandidateIdentity(visibleCandidate, current)) return state;
+
   const visibleCleanup = visibleCandidate.recommendedAction === 'unfollow_review';
   const visibleReview = visibleCandidate.recommendedAction === 'review';
   const visibleEngagement = ['like', 'reply', 'dm'].includes(visibleCandidate.recommendedAction);
@@ -61,4 +67,19 @@ export function resolveVisibleResult(
     ? 'review'
     : action as Interaction['action'];
   return recordInteraction(contextualState, current.id, recordedAction);
+}
+
+function sameVisibleCandidateIdentity(visible: Candidate, current: Candidate) {
+  if (visible.platform !== current.platform) return false;
+  const visibleStableId = stablePlatformUserId(visible.platformUserId);
+  const currentStableId = stablePlatformUserId(current.platformUserId);
+  if (visibleStableId || currentStableId) {
+    return Boolean(visibleStableId && currentStableId && visibleStableId === currentStableId);
+  }
+  return visible.username.toLowerCase() === current.username.toLowerCase();
+}
+
+function stablePlatformUserId(value?: string | null) {
+  const id = value?.trim() || '';
+  return /^\d{1,30}$/.test(id) ? id : '';
 }
