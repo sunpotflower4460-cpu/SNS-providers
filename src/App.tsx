@@ -126,13 +126,13 @@ function App() {
       clearTimeout(autoReplenishRetryTimerRef.current);
       autoReplenishRetryTimerRef.current = null;
     };
-    const scheduleRetry = () => {
+    const scheduleRetry = (delayMs = 10 * 60 * 1000) => {
       clearRetryTimer();
       autoReplenishRetryTimerRef.current = setTimeout(() => {
         if (autoReplenishAttemptKeyRef.current === attemptKey) autoReplenishAttemptKeyRef.current = '';
         autoReplenishRetryTimerRef.current = null;
         setAutoRetryTick((current) => current + 1);
-      }, 10 * 60 * 1000);
+      }, Math.max(1_000, delayMs));
     };
 
     if (existingRankTargets.length) {
@@ -143,6 +143,8 @@ function App() {
           const ranked = await rankCandidates(snapshot.mission, existingRankTargets, snapshot.budget.monthlyLimitUsd, 'local-user', false);
           setState((current) => applyRankResults(current, ranked.results, ranked.costUsd));
           clearRetryTimer();
+          // Free ranking is capped at 30 per request. Clearing the attempt key allows the
+          // next untouched batch to continue without issuing another Tavily search.
           autoReplenishAttemptKeyRef.current = '';
           setApiNote(`自動評価完了 · ${ranked.provider}で${ranked.results.length}件評価 · $0`);
         } catch (error) {
@@ -165,6 +167,7 @@ function App() {
       try {
         const discovered = await discoverSocialCandidates(snapshot.mission, 'local-user', true);
         if (!discovered.enabled) {
+          if (discovered.retryAfterSeconds) scheduleRetry(discovered.retryAfterSeconds * 1000);
           setApiNote(discovered.reason || '自動候補補充は現在利用できません');
           return;
         }
@@ -178,7 +181,9 @@ function App() {
         setState((current) => mergeDiscoveredProfiles(current, discovered.profiles));
 
         const rankTargets = merged.candidates.filter((candidate) => {
-          if (candidate.skipped || candidate.recommendedAction !== 'review') return false;
+          if (candidate.skipped
+            || candidate.recommendedAction !== 'review'
+            || !candidate.reason.startsWith('無料Web検索から候補')) return false;
           if (!candidate.snoozedUntil) return true;
           const until = new Date(candidate.snoozedUntil).getTime();
           return !Number.isFinite(until) || until <= now;
@@ -198,6 +203,9 @@ function App() {
           return applyRankResults(withDiscovery, ranked.results, ranked.costUsd);
         });
         clearRetryTimer();
+        // Discovery can yield up to 40 profiles while one free ranking call handles 30.
+        // Continue with the remaining saved profiles, but do not reopen another search.
+        if (rankTargets.length > ranked.results.length) autoReplenishAttemptKeyRef.current = '';
         setApiNote(`自動補充完了 · 新規${addedCount}件 · ${ranked.provider}で${ranked.results.length}件評価 · $0`);
       } catch (error) {
         // A successful discovery is already persisted above. Retrying later will first
@@ -230,7 +238,10 @@ function App() {
     const now = new Date();
     return state.interactions.filter((interaction) => {
       const at = new Date(interaction.at);
-      return at.getFullYear() === now.getFullYear() && at.getMonth() === now.getMonth() && at.getDate() === now.getDate();
+      return interaction.action !== 'review'
+        && at.getFullYear() === now.getFullYear()
+        && at.getMonth() === now.getMonth()
+        && at.getDate() === now.getDate();
     }).length;
   }, [state.interactions, localDay]);
 
@@ -248,6 +259,10 @@ function App() {
   async function rerankCandidates() {
     if (!apiConfigured) {
       setApiNote('Worker URLを設定するとAI再評価が使えます');
+      return;
+    }
+    if (discovering || ranking || enrichingX) {
+      setApiNote('別の候補処理が終わってから再評価してください');
       return;
     }
     const targets = active.filter((candidate) => candidate.recommendedAction !== 'unfollow_review');
@@ -271,6 +286,10 @@ function App() {
   async function discoverCandidates() {
     if (!apiConfigured) {
       setApiNote('Worker URLを設定すると無料候補探索が使えます');
+      return;
+    }
+    if (discovering || ranking || enrichingX) {
+      setApiNote('別の候補処理が終わってから探索してください');
       return;
     }
     setDiscovering(true);
@@ -298,6 +317,10 @@ function App() {
   async function enrichXCandidates() {
     if (!apiConfigured) {
       setApiNote('Worker URLを設定するとX公式プロフィール補完が使えます');
+      return;
+    }
+    if (discovering || ranking || enrichingX) {
+      setApiNote('別の候補処理が終わってからX公式情報を更新してください');
       return;
     }
     const now = Date.now();
@@ -468,6 +491,7 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
     return Number.isFinite(until) && until > now;
   }).length;
   const storedCount = state.candidates.filter((candidate) => !candidate.skipped && matchesFilter(candidate)).length;
+  const candidateOperationBusy = discovering || ranking || enrichingX;
 
   useEffect(() => setVisibleLimit(12), [filter]);
 
@@ -504,7 +528,7 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
         <h2>Missionから自動で探す</h2>
         <p>XとInstagramの公開情報から、今の目的に合う相手を探します。最終フォローや返信は公式SNSであなたが行います。</p>
       </div>
-      <button className="discovery-button" disabled={discovering} onClick={onDiscover}>
+      <button className="discovery-button" disabled={candidateOperationBusy} onClick={onDiscover}>
         <span>✦</span>
         <strong>{discovering ? '候補を探しています…' : '新しい候補を探す'}</strong>
         <small>無料探索を優先 · X / Instagram</small>
@@ -528,8 +552,8 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
       <details className="disclosure-card">
         <summary><span><strong>候補情報を更新・再評価</strong><small>普段は自動判断に任せてOK</small></span><b>↻</b></summary>
         <div className="disclosure-body advanced-actions">
-          <button className="secondary-button" disabled={enrichingX} onClick={onEnrichX}>{enrichingX ? 'X公式情報を確認中…' : 'X公式情報を更新'}</button>
-          <button className="primary-button" disabled={ranking} onClick={onRerank}>{ranking ? 'AIで再評価中…' : '候補をAIで再評価'}</button>
+          <button className="secondary-button" disabled={candidateOperationBusy} onClick={onEnrichX}>{enrichingX ? 'X公式情報を確認中…' : 'X公式情報を更新'}</button>
+          <button className="primary-button" disabled={candidateOperationBusy} onClick={onRerank}>{ranking ? 'AIで再評価中…' : '候補をAIで再評価'}</button>
           <p>公式情報が変わった候補や、判断材料が増えた候補を更新したい場合に使います。</p>
         </div>
       </details>
@@ -705,20 +729,28 @@ function autoReplenishDemand(state: AppState) {
   const light = clampInt(state.relationshipPolicy.dailyLightEngagementLimit, 8, 0, 30);
   const cleanup = clampInt(state.relationshipPolicy.dailyCleanupLimit, 5, 0, 30);
   const selfLimit = clampInt(state.relationshipPolicy.dailySelfImproveLimit, 2, 0, 5);
-  const plannedSelf = state.insights.length > 0 ? Math.min(selfLimit, state.insights.length) : 0;
+  const now = new Date();
+  const selfAnalyzedToday = state.selfProfile.analyzedAt
+    ? sameLocalDay(new Date(state.selfProfile.analyzedAt), now)
+    : false;
+  const plannedSelf = !selfAnalyzedToday && state.insights.length > 0 ? Math.min(selfLimit, state.insights.length) : 0;
   const relationshipCapacity = connect + conversation + light + cleanup;
   const relationshipTarget = Math.max(0, Math.min(total - plannedSelf, relationshipCapacity));
-  const now = new Date();
   const completedToday = state.interactions.filter((interaction) => {
     const at = new Date(interaction.at);
-    return at.getFullYear() === now.getFullYear()
-      && at.getMonth() === now.getMonth()
-      && at.getDate() === now.getDate();
+    return interaction.action !== 'review' && sameLocalDay(at, now);
   }).length;
   const remainingTarget = Math.max(0, relationshipTarget - completedToday);
   const current = buildDailyQueue(state).filter((item) => item.kind === 'relationship').length;
   const lowWater = remainingTarget > 0 ? Math.max(1, Math.ceil(remainingTarget * 0.7)) : 0;
   return { current, remainingTarget, lowWater };
+}
+
+function sameLocalDay(a: Date, b: Date) {
+  return Number.isFinite(a.getTime())
+    && a.getFullYear() === b.getFullYear()
+    && a.getMonth() === b.getMonth()
+    && a.getDate() === b.getDate();
 }
 
 function clampInt(value: number | undefined, fallback: number, min: number, max: number) {
