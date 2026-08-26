@@ -1,9 +1,9 @@
-import type { AppState, RelationshipPolicy } from './types';
+import type { AppState, AppStateUpdater, RelationshipPolicy } from './types';
 import './workload.css';
 
 interface Props {
   state: AppState;
-  onChange: (state: AppState) => void;
+  onChange: AppStateUpdater;
 }
 
 interface WorkloadValues {
@@ -26,26 +26,28 @@ export default function WorkloadControls({ state, onChange }: Props) {
   const autoReplenishEnabled = state.relationshipPolicy.autoReplenishEnabled !== false;
 
   function apply(next: WorkloadValues) {
-    const relationshipPolicy: RelationshipPolicy = {
-      ...state.relationshipPolicy,
-      dailyQueueLimit: clamp(next.total, 1, 150),
-      dailyConnectionLimit: clamp(next.connect, 0, 120),
-      dailyConversationLimit: clamp(next.conversation, 0, 30),
-      dailyLightEngagementLimit: clamp(next.light, 0, 30),
-      dailyCleanupLimit: clamp(next.cleanup, 0, 30),
-      dailySelfImproveLimit: clamp(next.self, 0, 5),
-    };
-    onChange({ ...state, relationshipPolicy });
+    onChange((current) => {
+      const relationshipPolicy: RelationshipPolicy = {
+        ...current.relationshipPolicy,
+        dailyQueueLimit: clamp(next.total, 1, 150),
+        dailyConnectionLimit: clamp(next.connect, 0, 120),
+        dailyConversationLimit: clamp(next.conversation, 0, 30),
+        dailyLightEngagementLimit: clamp(next.light, 0, 30),
+        dailyCleanupLimit: clamp(next.cleanup, 0, 30),
+        dailySelfImproveLimit: clamp(next.self, 0, 5),
+      };
+      return { ...current, relationshipPolicy };
+    });
   }
 
   function setAutoReplenish(enabled: boolean) {
-    onChange({
-      ...state,
+    onChange((current) => ({
+      ...current,
       relationshipPolicy: {
-        ...state.relationshipPolicy,
+        ...current.relationshipPolicy,
         autoReplenishEnabled: enabled,
       },
-    });
+    }));
   }
 
   return <section className="form-card workload-card">
