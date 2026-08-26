@@ -205,13 +205,19 @@ async function loadFreshCache(env: InstagramOwnedEnv, userId: string, force: boo
       .bind(userId)
       .first<{ snapshot_json: string; synced_at: string }>();
     if (!row) return null;
-    const syncedAtMs = new Date(row.synced_at).getTime();
-    if (!Number.isFinite(syncedAtMs) || syncedAtMs > Date.now() + 60_000 || Date.now() - syncedAtMs > CACHE_TTL_MS) return null;
     const snapshot = JSON.parse(row.snapshot_json) as unknown;
-    if (!isRecord(snapshot) || snapshot.accountId !== expectedAccountId || !validInstagramSnapshot(snapshot, expectedAccountId)) {
+    if (!isRecord(snapshot)
+      || snapshot.accountId !== expectedAccountId
+      || !validInstagramSnapshot(snapshot, expectedAccountId)
+      || snapshot.syncedAt !== row.synced_at) {
       await deleteCache(env, userId);
       return null;
     }
+    // Freshness belongs to the observation stored inside the snapshot, not a separately
+    // mutable row timestamp. Binding the two exactly prevents an old snapshot from being
+    // made fresh again by touching only instagram_engager_snapshots.synced_at.
+    const syncedAtMs = new Date(snapshot.syncedAt as string).getTime();
+    if (!Number.isFinite(syncedAtMs) || syncedAtMs > Date.now() + 60_000 || Date.now() - syncedAtMs > CACHE_TTL_MS) return null;
     return snapshot;
   } catch {
     return null;
@@ -228,10 +234,11 @@ async function deleteCache(env: InstagramOwnedEnv, userId: string) {
 
 async function saveCache(env: InstagramOwnedEnv, userId: string, snapshot: unknown) {
   try {
+    if (!isRecord(snapshot) || typeof snapshot.syncedAt !== 'string' || !validPastishIso(snapshot.syncedAt)) return;
     await env.DB.prepare(
       `INSERT INTO instagram_engager_snapshots (user_id, snapshot_json, synced_at) VALUES (?, ?, ?)
        ON CONFLICT(user_id) DO UPDATE SET snapshot_json = excluded.snapshot_json, synced_at = excluded.synced_at`
-    ).bind(userId, JSON.stringify(snapshot), new Date().toISOString()).run();
+    ).bind(userId, JSON.stringify(snapshot), snapshot.syncedAt).run();
   } catch {
     // A cache failure must not discard successfully fetched engagement data.
   }
