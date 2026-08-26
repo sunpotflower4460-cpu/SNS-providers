@@ -1,6 +1,11 @@
 import { readActiveMonthUsage, reserveActiveMonthBudget } from './budgetIntegrity';
 import { fetchWithTimeout } from './fetchWithTimeout';
-import { prepareFollowCycleTargets, updateFollowCycleEvidence, type TrackedXAccount } from './xFollowEvidence';
+import {
+  FollowEvidenceStorageUnavailableError,
+  prepareFollowCycleTargets,
+  updateFollowCycleEvidence,
+  type TrackedXAccount,
+} from './xFollowEvidence';
 import { getValidXAccessToken, xOAuthStatus, type XOAuthEnv } from './xOAuth';
 
 export interface XOwnedEnv extends XOAuthEnv {
@@ -113,6 +118,14 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
   const worstCaseCost = userReadRate + (allocation.followers + allocation.following + allocation.posts) * ownedReadRate;
   const paging = await loadPaging(env, userId);
 
+  // A page that closes a cycle increments its counter. Refuse the practically unreachable
+  // terminal value before a paid read because we cannot know in advance whether X will
+  // return another cursor; letting it overflow would make the paid result unpersistable.
+  if ((allocation.followers > 0 && paging.followersCycle >= MAX_PAGING_CYCLE)
+    || (allocation.following > 0 && paging.followingCycle >= MAX_PAGING_CYCLE)) {
+    return disabled('X paging cycle reached its safety limit. Reset the owned-X paging state before another paid sync.');
+  }
+
   // Follow-cycle storage is local D1 work, not an X provider read. Prepare it before the
   // paid reservation/provider boundary so a missing/corrupt evidence table cannot consume
   // paid budget or make a successful /users/me lookup look cost-uncertain.
@@ -129,6 +142,7 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
   const reservationId = await reserveBudget(env, userId, worstCaseCost, budget.effectiveLimit);
   if (!reservationId) return disabled('HARD LIMIT or budget-ledger integrity changed before the X sync budget could be reserved.');
 
+  let reservationFinalized = false;
   try {
     const profile = await fetchMe(accessToken);
     if (!profile) throw new Error('X /2/users/me returned no user');
@@ -148,29 +162,18 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
       throw new Error('X follower/following endpoints returned contradictory user identity data');
     }
 
-    // All raw paid X payloads have been schema/identity/count validated inside the fetch
-    // helpers and across the follower/following boundary before this point. Only now is it
-    // safe to shrink the conservative reservation from the requested worst-case amount to
-    // the observed resource count.
     const followerCount = followersResult.data.length;
     const followingCount = followingResult.data.length;
     const postCount = postsResult.data.length;
     const actualCost = userReadRate + (followerCount + followingCount + postCount) * ownedReadRate;
-    await finalizeReservation(env, reservationId, actualCost, 1 + followerCount + followingCount + postCount);
-
-    const followEvidence = allocation.followers > 0
-      ? await updateFollowCycleEvidence(
-        env.DB,
-        userId,
-        paging.followersCycle,
-        followersResult.data.map((user) => ({ id: user.id, username: user.username })),
-        followersResult.nextToken,
-      )
-      : null;
-
-    const nextPaging = advancePaging(paging, allocation, followersResult.nextToken, followingResult.nextToken);
+    const ordinaryNextPaging = advancePaging(paging, allocation, followersResult.nextToken, followingResult.nextToken);
     const syncedAt = new Date().toISOString();
-    const result = {
+
+    // Validate the normalized paid provider payload and resume checkpoint before finalizing
+    // the conservative reservation. After finalization, only best-effort local evidence and
+    // redundant checkpoint writes remain, so a local D1 problem cannot make the caller
+    // blindly re-read an already paid page.
+    const validatedProviderResult = {
       enabled: true,
       source: 'x',
       costUsd: actualCost,
@@ -194,27 +197,85 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
         followers: {
           fetched: followerCount,
           complete: allocation.followers > 0 && paging.followersCursor === null && !followersResult.nextToken,
-          cycle: nextPaging.followersCycle,
+          cycle: ordinaryNextPaging.followersCycle,
           rotated: paging.followersCursor !== null,
         },
         following: {
           fetched: followingCount,
           complete: allocation.following > 0 && paging.followingCursor === null && !followingResult.nextToken,
-          cycle: nextPaging.followingCycle,
+          cycle: ordinaryNextPaging.followingCycle,
           rotated: paging.followingCursor !== null,
         },
         posts: { fetched: postCount, complete: !postsResult.nextToken },
       },
-      followEvidence,
+      followEvidence: null,
       requested: allocation,
-      resumePaging: nextPaging,
+      resumePaging: ordinaryNextPaging,
       pacing: {
         daysRemaining: daysRemainingInUtcMonth(),
         pacedCapUsd,
         globalRemainingUsd: budget.remainingUsd,
       },
     };
-    if (!validOwnedSnapshot(result)) throw new Error('Owned X sync produced an invalid snapshot');
+    if (!validOwnedSnapshot(validatedProviderResult)) throw new Error('Owned X sync produced an invalid provider snapshot');
+
+    // All raw/normalized paid X data is now validated. Only now shrink the reservation to
+    // the known resource count. If this statement itself is uncertain, the outer catch keeps
+    // or reconstructs the conservative reservation as before.
+    await finalizeReservation(env, reservationId, actualCost, 1 + followerCount + followingCount + postCount);
+    reservationFinalized = true;
+
+    let followEvidence = null;
+    let followEvidenceDegraded = false;
+    if (allocation.followers > 0) {
+      try {
+        followEvidence = await updateFollowCycleEvidence(
+          env.DB,
+          userId,
+          paging.followersCycle,
+          followersResult.data.map((user) => ({ id: user.id, username: user.username })),
+          followersResult.nextToken,
+        );
+      } catch (error) {
+        if (!(error instanceof FollowEvidenceStorageUnavailableError)) throw error;
+        // The provider read is already validated/finalized. Do not fail the whole request
+        // and invite a duplicate paid read merely because local follow-evidence storage is
+        // unavailable. Quarantine this evidence cycle and return the paid data without any
+        // seen/unseen verdict from the contaminated rows.
+        followEvidenceDegraded = true;
+        followEvidence = null;
+      }
+    }
+    if (followEvidence != null && !validFollowEvidence(followEvidence)) {
+      followEvidenceDegraded = true;
+      followEvidence = null;
+    }
+
+    const nextPaging = followEvidenceDegraded
+      ? quarantineFollowerEvidencePaging(paging, ordinaryNextPaging, followersResult.nextToken)
+      : ordinaryNextPaging;
+    const result = {
+      ...validatedProviderResult,
+      coverage: {
+        ...validatedProviderResult.coverage,
+        followers: {
+          ...validatedProviderResult.coverage.followers,
+          cycle: nextPaging.followersCycle,
+        },
+      },
+      followEvidence,
+      resumePaging: nextPaging,
+      ...(followEvidenceDegraded ? {
+        followEvidenceDegraded: true,
+        reason: 'X公式データは取得できましたが、フォローバック確認用の保存が不安定だったため、この周回の判定は破棄しました。取得済みページは進めたまま、次の安全な周回から確認を再開します。',
+      } : {}),
+    };
+    if (!validOwnedSnapshot(result)) {
+      // This should be unreachable because the provider payload was validated before
+      // finalization and the only later mutation is a bounded paging/evidence downgrade.
+      // Keep the finalized ledger accurate; never relabel a known paid cost as uncertain.
+      throw new Error('Owned X post-finalization checkpoint became invalid');
+    }
 
     // Paging and snapshot are redundant checkpoints. If the dedicated paging row fails,
     // the snapshot carries the exact next cursor/cycle and loadPaging() can recover it even
@@ -231,11 +292,13 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
     }
     return result;
   } catch (error) {
-    // Once a paid X data request has started, retain the conservative reservation:
-    // transport/JSON/finalization failures do not prove the provider did not bill the read.
-    // If the row itself disappeared, reconstruct the conservative charge rather than
-    // silently allowing the paid sync to vanish from HARD LIMIT accounting.
-    await markReservationUncertain(env, reservationId, userId, worstCaseCost);
+    // Before finalization, transport/JSON/validation/finalization failures do not prove the
+    // provider did not bill the read, so retain/reconstruct the conservative reservation.
+    // After finalization the exact paid cost is already durable; local post-processing must
+    // never relabel that known cost as uncertain.
+    if (!reservationFinalized) {
+      await markReservationUncertain(env, reservationId, userId, worstCaseCost);
+    }
     const message = error instanceof Error ? error.message : 'Owned X sync failed';
     throw new Error(message);
   }
@@ -243,6 +306,20 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
 
 function disabled(reason: string) {
   return { enabled: false, source: 'disabled', costUsd: 0, reason };
+}
+
+function quarantineFollowerEvidencePaging(paging: PagingState, ordinaryNext: PagingState, followersNext: string | null): PagingState {
+  if (!followersNext) return ordinaryNext;
+  // We cannot delete the contaminated current cycle, but we can make it unreachable. Keep
+  // the already-paid next cursor so the same page is not re-read, while advancing to a new
+  // cycle number. Because the new cycle starts mid-pagination, prepareFollowCycleTargets()
+  // intentionally does not create targets; the remainder of this pass is data-only. When
+  // it reaches the end, advancePaging() increments again and the next page-1 request starts
+  // a clean evidence cycle.
+  return {
+    ...ordinaryNext,
+    followersCycle: paging.followersCycle + 1,
+  };
 }
 
 async function fetchMe(accessToken: string) {
@@ -658,7 +735,8 @@ function validOwnedSnapshot(value: unknown) {
     || !validCoverage(value.coverage)
     || !validRequested(value.requested)
     || !validPagingState(value.resumePaging)
-    || !validPacing(value.pacing)) return false;
+    || !validPacing(value.pacing)
+    || (value.followEvidenceDegraded != null && typeof value.followEvidenceDegraded !== 'boolean')) return false;
   if (value.followEvidence != null && !validFollowEvidence(value.followEvidence)) return false;
 
   const coverage = value.coverage as Record<string, unknown>;
@@ -904,5 +982,4 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function sanitizeUserId(value: string) {
   const userId = value.trim();
   if (!/^[A-Za-z0-9._-]{1,80}$/.test(userId)) throw new Error('invalid userId');
-  return userId;
 }
