@@ -3,7 +3,9 @@ import { readFile } from 'node:fs/promises';
 const xOwned = await readFile(new URL('../worker/src/xOwned.ts', import.meta.url), 'utf8');
 const instagramOwned = await readFile(new URL('../worker/src/instagramOwned.ts', import.meta.url), 'utf8');
 const providerApi = await readFile(new URL('../worker/src/index.ts', import.meta.url), 'utf8');
+const budgetIntegrity = await readFile(new URL('../worker/src/budgetIntegrity.ts', import.meta.url), 'utf8');
 const store = await readFile(new URL('../src/store.ts', import.meta.url), 'utf8');
+const instagramOwnedStore = await readFile(new URL('../src/instagramOwnedStore.ts', import.meta.url), 'utf8');
 
 function requireAll(source, fragments, message) {
   if (!fragments.every((fragment) => source.includes(fragment))) throw new Error(message);
@@ -13,8 +15,8 @@ requireAll(xOwned, [
   'validOwnedSnapshot(result)',
   'validOwnedSnapshot(snapshot)',
   'DELETE FROM x_owned_snapshots WHERE user_id = ?',
-  'const { start, end } = utcMonthWindow();',
-  'occurred_at >= ? AND occurred_at < ?',
+  'readActiveMonthUsage(env.DB, userId)',
+  'reserveActiveMonthBudget(env.DB',
   'validRawXUser(response.data)',
   'response.data.every(validRawXUser)',
   'response.data.every(validRawXPost)',
@@ -43,15 +45,36 @@ requireAll(instagramOwned, [
   'existing.latestMediaPermalink = item.permalink || null;',
 ], 'Instagram cache validation/eviction, deep snapshot integrity, or latest-comment target binding regressed.');
 
+requireAll(instagramOwnedStore, [
+  'const byStableId = new Map(',
+  'const stableExisting = incomingStableId ? byStableId.get(incomingStableId) : undefined;',
+  'const existing = stableExisting || usernameExisting;',
+  'removedCandidateIds.add(usernameExisting.id);',
+  'username: engager.username,',
+  'profileUrl: engager.profileUrl,',
+], 'Instagram handle renames can again duplicate one immutable commenter or transfer stale handle history.');
+
 requireAll(providerApi, [
-  'const { start, end } = utcMonthWindow();',
-  'occurred_at >= ? AND occurred_at < ?',
-  'new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1))',
+  'readActiveMonthUsage(env.DB, userId)',
+  'reserveActiveMonthBudget(env.DB',
   'if (!validRawXProfile(raw))',
   'if (!requested.has(username))',
   'seenIds.has(raw.id) || seenUsernames.has(username)',
   'rawProfiles.length > usernames.length',
 ], 'General provider budget accounting or raw paid X-enrichment response validation regressed.');
+
+requireAll(budgetIntegrity, [
+  "typeof(cost_usd) NOT IN ('integer','real') OR cost_usd < 0",
+  'Number.isFinite(usedUsd)',
+  'invalidCount !== 0',
+  'WITH current_usage AS (',
+  'WHERE invalid_count = 0',
+  "AND typeof(used) IN ('integer','real')",
+  'AND used >= 0',
+  'AND used + ? <= ?',
+  'occurred_at >= ? AND occurred_at < ?',
+  'new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1))',
+], 'Legacy D1 budget corruption can weaken the active-month HARD LIMIT or reservation atomicity.');
 
 const enrichFetchIndex = providerApi.indexOf('const profiles = await fetchXProfiles(usernames, env.X_BEARER_TOKEN);');
 const enrichFinalizeIndex = providerApi.indexOf("await finalizeReservation(env, reservationId, 'user_read'", enrichFetchIndex);
@@ -78,8 +101,8 @@ requireAll(store, [
 ], 'Official X enrichment can leave obsolete follow advice actionable or transfer CRM history across immutable identity changes.');
 
 const unboundedMonthQuery = /budget_ledger[^\n]{0,220}occurred_at >= \?(?![^\n]{0,120}occurred_at < \?)/;
-if (unboundedMonthQuery.test(xOwned) || unboundedMonthQuery.test(providerApi)) {
+if (unboundedMonthQuery.test(budgetIntegrity)) {
   throw new Error('A paid-budget query appears to have a lower month bound without an upper month bound.');
 }
 
-console.log('Cache/ledger invariants OK: malformed X/Instagram snapshots are rejected and evicted, raw paid owned-X/X-enrichment payloads are validated before reservation shrink/finalize, vanished paid reservations fail closed and are conservatively reconstructed when possible, newly produced snapshots are validated before caching, paid budget totals/reservations are bounded to the active UTC month, Instagram latest comment targets stay event-bound, and official X identity/profile changes cannot leave stale CRM advice actionable.');
+console.log('Cache/ledger invariants OK: malformed X/Instagram snapshots are rejected and evicted, raw paid owned-X/X-enrichment payloads are validated before reservation shrink/finalize, vanished paid reservations fail closed and are conservatively reconstructed when possible, legacy negative/text budget rows disable paid work, reservations remain atomic inside the active UTC month, Instagram latest comment targets stay event-bound, Instagram handle renames follow immutable identity, and official X identity/profile changes cannot leave stale CRM advice actionable.');
