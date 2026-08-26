@@ -34,13 +34,18 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
       // Do not replay the same inbound comment after the user already handled it. A
       // completed reply/like clears the exact target; cached syncs must not recreate the
       // old action unless Instagram reports a genuinely newer comment timestamp.
-      const engagementUrl = newCommentSignal
-        ? engager.latestMediaPermalink || existing.engagementUrl
-        : existing.engagementUrl;
-      const recommendedAction: Candidate['recommendedAction'] = newCommentSignal && engagementUrl
-        ? 'reply'
+      // A genuinely newer comment must also carry its own media target. Reusing an older
+      // engagementUrl would send the user to the wrong post when the new media permalink
+      // is unavailable, so that case intentionally falls back to review.
+      const newEngagementUrl = newCommentSignal ? engager.latestMediaPermalink || undefined : undefined;
+      const engagementUrl = newCommentSignal ? newEngagementUrl : existing.engagementUrl;
+      const recommendedAction: Candidate['recommendedAction'] = newCommentSignal
+        ? newEngagementUrl ? 'reply' : 'review'
         : existing.recommendedAction;
       const refreshOpportunityCopy = newCommentSignal || (existing.skipped && freshContact);
+      const exactTargetStrategy = newCommentSignal && !newEngagementUrl
+        ? '新しいInstagramコメントは確認できましたが、対象投稿URLを取得できなかったため古い投稿を流用せず、プロフィールから内容を確認します。'
+        : strategy;
 
       updates.set(existing.id, {
         ...existing,
@@ -50,7 +55,7 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
         match: Math.max(existing.match, match),
         stage: promoteStage(existing.stage),
         reason: refreshOpportunityCopy ? reason : existing.reason,
-        strategy: refreshOpportunityCopy ? strategy : existing.strategy,
+        strategy: refreshOpportunityCopy ? exactTargetStrategy : existing.strategy,
         recommendedAction,
         draft: recommendedAction === 'reply' ? existing.draft : undefined,
         platformUserId: engager.id || existing.platformUserId,
