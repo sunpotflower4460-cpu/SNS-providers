@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 const providerApi = await readFile(new URL('../worker/src/index.ts', import.meta.url), 'utf8');
 const wrangler = await readFile(new URL('../worker/wrangler.jsonc', import.meta.url), 'utf8');
 const xOAuth = await readFile(new URL('../worker/src/xOAuth.ts', import.meta.url), 'utf8');
+const xFollowEvidence = await readFile(new URL('../worker/src/xFollowEvidence.ts', import.meta.url), 'utf8');
 const router = await readFile(new URL('../worker/src/router.ts', import.meta.url), 'utf8');
 const syncLease = await readFile(new URL('../worker/src/syncLease.ts', import.meta.url), 'utf8');
 const app = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8');
@@ -12,6 +13,7 @@ const api = await readFile(new URL('../src/api.ts', import.meta.url), 'utf8');
 const backup = await readFile(new URL('../src/backup.ts', import.meta.url), 'utf8');
 const social = await readFile(new URL('../src/social.ts', import.meta.url), 'utf8');
 const store = await readFile(new URL('../src/store.ts', import.meta.url), 'utf8');
+const xOwnedStore = await readFile(new URL('../src/xOwnedStore.ts', import.meta.url), 'utf8');
 const sync = await readFile(new URL('../src/sync.ts', import.meta.url), 'utf8');
 const workload = await readFile(new URL('../src/WorkloadControls.tsx', import.meta.url), 'utf8');
 const statusPresentation = await readFile(new URL('../src/statusPresentation.ts', import.meta.url), 'utf8');
@@ -132,6 +134,19 @@ if (!sync.includes('MAX_REMOTE_CLOCK_SKEW_MS = 5 * 60 * 1000')
   throw new Error('A corrupted far-future D1 snapshot version can again poison optimistic-lock state.');
 }
 
+if (!xFollowEvidence.includes('if (target.platform_user_id) return followerIds.has(target.platform_user_id);')
+  || xFollowEvidence.includes('if (target.platform_user_id && followerIds.has(target.platform_user_id)) return true;')) {
+  throw new Error('X full-cycle follow evidence can again fall back to a recycled username after an immutable user-ID mismatch.');
+}
+
+if (!xOwnedStore.includes('const identityChangedIds = ownedXIdentityChanges(state, result);')
+  || !xOwnedStore.includes('const identitySafeState = resetOwnedXIdentityChanges(state, result, identityChangedIds);')
+  || !xOwnedStore.includes('applyFullCycleFollowEvidence(synced, result, identityChangedIds)')
+  || !xOwnedStore.includes('interactions: state.interactions.filter((interaction) => !changedIds.has(interaction.candidateId))')
+  || !xOwnedStore.includes('if (identityChangedIds.has(candidate.id)) return candidate;')) {
+  throw new Error('Owned-X username reuse can again transfer old CRM history or old-cycle follow evidence to a different immutable account.');
+}
+
 if (!store.includes("const recordedAction: Interaction['action'] = cleanupKeep ? 'unfollow_review' : action;")
   || !store.includes('if (cleanupKeep) {')
   || !store.includes("recommendedAction: 'review' as const")) {
@@ -153,6 +168,13 @@ if (!instagramOwnedStore.includes('const newCommentSignal = existing ? isNewerCo
   throw new Error('Cached/targetless Instagram comments can again replay a handled action or reuse an older post as the target for a newer inbound signal.');
 }
 
+if (!instagramOwnedStore.includes('const identityResetIds = new Set<string>();')
+  || !instagramOwnedStore.includes('const identityChanged = Boolean(existingStableId && incomingStableId && existingStableId !== incomingStableId);')
+  || !instagramOwnedStore.includes('interactions: identityResetIds.size')
+  || !instagramOwnedStore.includes('const platformUserId = incomingStableId || existingStableId || engager.id || existing.platformUserId;')) {
+  throw new Error('Instagram username reuse or fallback IDs can again transfer old CRM history or overwrite a known immutable Graph ID.');
+}
+
 if (!xOAuth.includes('let refreshable = false;')
   || !xOAuth.includes('await decryptToken(env, row.refresh_token_enc);')
   || !xOAuth.includes('const usable = accessUsable || refreshable;')
@@ -160,4 +182,4 @@ if (!xOAuth.includes('let refreshable = false;')
   throw new Error('X OAuth status can again advertise a corrupt stored refresh token as a maintainable/usable connection.');
 }
 
-console.log('Regression fixes OK: provider defaults are aligned, manual and automatic candidate operations are serialized, Today completion ignores profile-only reviews and counts one aggregate self-analysis action, auto refill keeps self-work quota stable and continues multi-batch free ranking, cross-device discovery retry and first-party sync leases are enforced, reserved social paths and future sync versions fail closed, cleanup accounting stays distinct from profile review, exact engagement is consumed, Instagram never reuses a stale post target for a newer comment, and X OAuth validates refresh-token usability.');
+console.log('Regression fixes OK: provider defaults are aligned, manual and automatic candidate operations are serialized, Today completion ignores profile-only reviews and counts one aggregate self-analysis action, auto refill keeps self-work quota stable and continues multi-batch free ranking, cross-device discovery retry and first-party sync leases are enforced, reserved social paths and future sync versions fail closed, X/Instagram immutable identity changes cannot inherit old CRM/evidence, cleanup accounting stays distinct from profile review, exact engagement is consumed, Instagram never reuses a stale post target for a newer comment, and X OAuth validates refresh-token usability.');
