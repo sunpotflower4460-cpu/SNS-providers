@@ -602,7 +602,7 @@ function validOwnedPost(value: unknown) {
     && /^\d{1,30}$/.test(value.id)
     && typeof value.text === 'string'
     && value.text.length <= 30_000
-    && (value.createdAt == null || (typeof value.createdAt === 'string' && validIso(value.createdAt)))
+    && (value.createdAt == null || (typeof value.createdAt === 'string' && validPastishIso(value.createdAt)))
     && isRecord(value.publicMetrics)
     && nonNegativeFinite(value.publicMetrics.likes)
     && nonNegativeFinite(value.publicMetrics.replies)
@@ -648,13 +648,29 @@ function validFollowEvidence(value: unknown) {
     || !boundedNonNegativeInteger(value.targetCount, 500)
     || !Array.isArray(value.seenKeys)
     || !Array.isArray(value.unseenKeys)
+    || !Array.isArray(value.targets)
     || value.seenKeys.length > 500
     || value.unseenKeys.length > 500
+    || value.targets.length > 500
     || !value.seenKeys.every(validEvidenceKey)
-    || !value.unseenKeys.every(validEvidenceKey)) return false;
-  if (!value.complete) return value.seenKeys.length === 0 && value.unseenKeys.length === 0;
+    || !value.unseenKeys.every(validEvidenceKey)
+    || !value.targets.every(validEvidenceTarget)) return false;
+  if (!value.complete) return value.seenKeys.length === 0 && value.unseenKeys.length === 0 && value.targets.length === 0;
   const allKeys = [...value.seenKeys, ...value.unseenKeys];
-  return allKeys.length === value.targetCount && new Set(allKeys).size === allKeys.length;
+  const targetKeys = value.targets.map((target) => (target as Record<string, unknown>).key as string);
+  return allKeys.length === value.targetCount
+    && value.targets.length === value.targetCount
+    && new Set(allKeys).size === allKeys.length
+    && new Set(targetKeys).size === targetKeys.length
+    && targetKeys.every((key) => allKeys.includes(key));
+}
+
+function validEvidenceTarget(value: unknown) {
+  return isRecord(value)
+    && validEvidenceKey(value.key)
+    && typeof value.username === 'string'
+    && /^[A-Za-z0-9_]{1,15}$/.test(value.username)
+    && (value.platformUserId === null || (typeof value.platformUserId === 'string' && /^\d{1,30}$/.test(value.platformUserId)));
 }
 
 function validEvidenceKey(value: unknown) {
