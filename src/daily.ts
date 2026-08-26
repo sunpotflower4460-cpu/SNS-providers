@@ -43,6 +43,8 @@ export function buildDailyQueue(state: AppState): DailyQueueItem[] {
     .map((candidate) => candidateToQueueItem(candidate, now))
     .sort((a, b) => b.priority - a.priority);
 
+  // Me is one aggregate daily workflow. Surface only the highest-priority insight as the
+  // entry point; the Me screen still shows the rest of the insight list after it opens.
   const selfItems = selfAnalyzedToday ? [] : state.insights
     .slice()
     .sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority))
@@ -186,7 +188,7 @@ function workloadLimits(state: AppState) {
     conversation: clampInt(policy.dailyConversationLimit, 8, 0, 30),
     light: clampInt(policy.dailyLightEngagementLimit, 8, 0, 30),
     cleanup: clampInt(policy.dailyCleanupLimit, 5, 0, 30),
-    self: clampInt(policy.dailySelfImproveLimit, 2, 0, 5),
+    self: clampInt(policy.dailySelfImproveLimit, 1, 0, 1),
   };
 }
 
