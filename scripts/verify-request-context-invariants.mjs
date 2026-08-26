@@ -125,9 +125,11 @@ requireAll(app, [
 requireAll(resultResolution, [
   "visibleCandidate.recommendedAction === 'unfollow_review'",
   "current.recommendedAction === 'unfollow_review'",
-  "? 'review'",
-  'recordInteraction(contextualState, current.id, action',
-], 'Result-sheet actions can be reinterpreted by a newer async candidate recommendation.');
+  'const sameVisibleAction = current.recommendedAction === visibleCandidate.recommendedAction;',
+  'const sameVisibleTarget =',
+  "const recordedAction: Interaction['action'] = visibleReview && action === 'kept'",
+  'recordInteraction(contextualState, current.id, recordedAction)',
+], 'Result-sheet actions can be reinterpreted by a newer async candidate recommendation or profile-only review can inflate engagement.');
 requireAll(app, [
   'resolveVisibleResult(current, pending, action)',
   '{pending && <ResultSheet candidate={pending}',
@@ -264,4 +266,4 @@ requireAll(instagramOwned, [
   'Instagram Graph API returned an empty or invalid JSON response',
 ], 'Instagram owned sync can trust malformed/future cache state, mutate invalid usernames, or accept invalid successful JSON.');
 
-console.log('Request-context invariants OK: stale async results are discarded, visible result-sheet semantics are preserved, routed bodies and frontend/Worker timeouts are bounded, social handoff and restore URLs stay canonical, X/Instagram payload identity/count/time coherence fails closed, restored relationship clocks reject future poison, X enrichment uses future-safe backoff, persistence failures stay visible, and paid LLM preflight remains byte-conservative.');
+console.log('Request-context invariants OK: stale async results are discarded, visible result-sheet semantics are preserved, profile-only reviews do not inflate engagement, routed bodies and frontend/Worker timeouts are bounded, social handoff and restore URLs stay canonical, X/Instagram payload identity/count/time coherence fails closed, restored relationship clocks reject future poison, X enrichment uses future-safe backoff, persistence failures stay visible, and paid LLM preflight remains byte-conservative.');
