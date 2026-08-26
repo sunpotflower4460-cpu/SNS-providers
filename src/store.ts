@@ -1,6 +1,6 @@
-import type { RankResult, XProfileResult } from './api';
+import type { RankResult, XProfileResultList } from './api';
 import { normalizeAppState } from './backup';
-import { candidateRequestKey, missionRequestKey, selfRequestKey } from './requestContext';
+import { candidateRequestKey, missionRequestKey, selfRequestKey, xProfileRequestKey } from './requestContext';
 import type { XOwnedSyncResponse } from './xAccount';
 import type { AppState, Candidate, Interaction, Mission, Platform, RecommendedAction, RelationshipPolicy } from './types';
 
@@ -196,14 +196,29 @@ export function addCandidateFromReference(state: AppState, platform: Platform, r
   return { ...state, candidates: [candidate, ...state.candidates] };
 }
 
-export function applyXProfiles(state: AppState, profiles: XProfileResult[], attemptedUsernames: string[], costUsd = 0): AppState {
+export function applyXProfiles(state: AppState, profiles: XProfileResultList, attemptedUsernames: string[], costUsd = 0): AppState {
   const byUsername = new Map(profiles.map((profile) => [profile.username.toLowerCase(), profile]));
   const attempted = new Set(attemptedUsernames.map((username) => username.trim().toLowerCase()).filter(Boolean));
+  const requestCandidateKeys = profiles.requestCandidateKeys;
   const attemptedAt = new Date().toISOString();
   const candidates = state.candidates.map((candidate) => {
     if (candidate.platform !== 'x' || candidate.skipped) return candidate;
     const username = candidate.username.toLowerCase();
     if (!attempted.has(username)) return candidate;
+
+    // Client-only request context is attached to the exact validated profile array by
+    // enrichXProfiles(). A candidate created after the request has no key and must not be
+    // touched. A candidate whose official profile/identity changed while the request was
+    // in flight keeps that newer state; only its attempt timestamp is advanced so the
+    // already-paid request is not immediately repeated.
+    if (requestCandidateKeys) {
+      const requestKey = requestCandidateKeys[candidate.id];
+      if (!requestKey) return candidate;
+      if (requestKey !== xProfileRequestKey(candidate)) {
+        return { ...candidate, profileSyncAttemptedAt: attemptedAt };
+      }
+    }
+
     const profile = byUsername.get(username);
     if (!profile) {
       // A valid paid lookup that found no profile should still back off repeat reads.
@@ -228,6 +243,21 @@ export function applyXProfiles(state: AppState, profiles: XProfileResult[], atte
         reason: 'X公式プロフィール確認で、この@usernameに以前の記録とは異なる公式ユーザーIDが返りました。古い応答やハンドル再利用の可能性があるため、過去の相手を新しいIDへ置き換えず再確認します。',
         strategy: '過去の関係履歴と公式ユーザーIDはそのまま保持し、現在のプロフィールを確認できる新しい証拠が揃うまでフォロー・返信・DM・整理へ進めません。',
         tags: [...new Set([...candidate.tags, 'identity-conflict'])],
+      };
+    }
+
+    if (!currentStableId && candidate.tags.includes('identity-conflict')) {
+      // A restored/manual history that is still unbound cannot be assigned to the current
+      // handle owner by a username-only lookup. Doing so could merge a previous unknown
+      // person into a known current ID. Keep the historical record quarantined until a
+      // stronger owned-account reconciliation can decide which record to retain.
+      return {
+        ...candidate,
+        profileSyncAttemptedAt: attemptedAt,
+        engagementUrl: undefined,
+        followBack: null,
+        recommendedAction: 'review' as const,
+        draft: undefined,
       };
     }
 
