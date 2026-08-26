@@ -1,4 +1,5 @@
 import { fetchWithTimeout } from './fetchWithTimeout';
+import { releaseSyncLease, reserveSyncLease } from './syncLease';
 
 export interface XOAuthEnv {
   DB: D1Database;
@@ -29,6 +30,7 @@ const READ_ONLY_SCOPES = ['tweet.read', 'users.read', 'follows.read', 'offline.a
 const READ_ONLY_SCOPE_SET = new Set(READ_ONLY_SCOPES);
 const SESSION_TTL_MS = 10 * 60 * 1000;
 const REFRESH_EARLY_MS = 60 * 1000;
+const X_IDENTITY_LEASE_MS = 3 * 60 * 1000;
 
 export function xOAuthConfigured(env: XOAuthEnv) {
   return Boolean(
@@ -70,23 +72,33 @@ export async function completeXOAuth(env: XOAuthEnv, requestUrl: URL, userId = '
   const oauthError = requestUrl.searchParams.get('error');
   if (oauthError) return returnUrl(env, `x_oauth=${encodeURIComponent(oauthError)}`);
 
-  const code = requestUrl.searchParams.get('code') || '';
-  const state = requestUrl.searchParams.get('state') || '';
-  if (!code || !state) throw new Error('Missing OAuth code or state');
+  // Account replacement and owned-data sync share one lease. Without this boundary an
+  // old-account sync can finish after a new OAuth callback clears derived rows and then
+  // recreate the old account's cache/paging under the newly connected identity.
+  const leaseResult = await reserveSyncLease(env.DB, userId, 'x_owned_sync', X_IDENTITY_LEASE_MS);
+  if (!leaseResult.ok) throw new Error('Xの情報更新中です。完了後にX接続をもう一度お試しください。');
 
-  const session = await env.DB.prepare('SELECT code_verifier, created_at FROM x_oauth_sessions WHERE state = ?')
-    .bind(state)
-    .first<{ code_verifier: string; created_at: string }>();
-  await env.DB.prepare('DELETE FROM x_oauth_sessions WHERE state = ?').bind(state).run();
-  if (!session) throw new Error('OAuth session not found or already used');
-  const createdMs = new Date(session.created_at).getTime();
-  const sessionAgeMs = Date.now() - createdMs;
-  if (!Number.isFinite(createdMs) || sessionAgeMs < 0 || sessionAgeMs > SESSION_TTL_MS) throw new Error('OAuth session expired or malformed');
+  try {
+    const code = requestUrl.searchParams.get('code') || '';
+    const state = requestUrl.searchParams.get('state') || '';
+    if (!code || !state) throw new Error('Missing OAuth code or state');
 
-  const token = await exchangeAuthorizationCode(env, code, session.code_verifier);
-  await clearOwnedXDerivedState(env, userId);
-  await persistTokenResponse(env, userId, token);
-  return returnUrl(env, 'x_oauth=connected');
+    const session = await env.DB.prepare('SELECT code_verifier, created_at FROM x_oauth_sessions WHERE state = ?')
+      .bind(state)
+      .first<{ code_verifier: string; created_at: string }>();
+    await env.DB.prepare('DELETE FROM x_oauth_sessions WHERE state = ?').bind(state).run();
+    if (!session) throw new Error('OAuth session not found or already used');
+    const createdMs = new Date(session.created_at).getTime();
+    const sessionAgeMs = Date.now() - createdMs;
+    if (!Number.isFinite(createdMs) || sessionAgeMs < 0 || sessionAgeMs > SESSION_TTL_MS) throw new Error('OAuth session expired or malformed');
+
+    const token = await exchangeAuthorizationCode(env, code, session.code_verifier);
+    await clearOwnedXDerivedState(env, userId);
+    await persistTokenResponse(env, userId, token);
+    return returnUrl(env, 'x_oauth=connected');
+  } finally {
+    await releaseSyncLease(env.DB, leaseResult.lease);
+  }
 }
 
 export async function xOAuthStatus(env: XOAuthEnv, userId = 'local-user') {
@@ -147,16 +159,25 @@ export async function getValidXAccessToken(env: XOAuthEnv, userId = 'local-user'
 }
 
 export async function disconnectXOAuth(env: XOAuthEnv, userId = 'local-user') {
-  // Token deletion is the authoritative disconnect. Derived-cache cleanup is hygiene only:
-  // owned-cache reads now require a connected token record, so a cleanup failure must not
-  // report "disconnect failed" after the credential has already been removed.
-  await env.DB.prepare('DELETE FROM x_oauth_tokens WHERE user_id = ?').bind(userId).run();
+  // A cross-tab disconnect must not race an owned read. Otherwise the old read can write
+  // derived cache/paging after token deletion and leave it waiting for a later reconnect.
+  const leaseResult = await reserveSyncLease(env.DB, userId, 'x_owned_sync', X_IDENTITY_LEASE_MS);
+  if (!leaseResult.ok) throw new Error('Xの情報更新中です。完了後に接続解除をもう一度お試しください。');
+
   try {
-    await clearOwnedXDerivedState(env, userId);
-  } catch {
-    // Stale derived rows are unreachable while disconnected and will be cleared on reconnect.
+    // Token deletion is the authoritative disconnect. Derived-cache cleanup is hygiene only:
+    // owned-cache reads now require a connected token record, so a cleanup failure must not
+    // report "disconnect failed" after the credential has already been removed.
+    await env.DB.prepare('DELETE FROM x_oauth_tokens WHERE user_id = ?').bind(userId).run();
+    try {
+      await clearOwnedXDerivedState(env, userId);
+    } catch {
+      // Stale derived rows are unreachable while disconnected and will be cleared on reconnect.
+    }
+    return { ok: true };
+  } finally {
+    await releaseSyncLease(env.DB, leaseResult.lease);
   }
-  return { ok: true };
 }
 
 async function clearOwnedXDerivedState(env: XOAuthEnv, userId: string) {
