@@ -34,7 +34,7 @@ const defaultState: AppState = {
     dailyConversationLimit: 8,
     dailyLightEngagementLimit: 8,
     dailyCleanupLimit: 5,
-    dailySelfImproveLimit: 2,
+    dailySelfImproveLimit: 1,
   },
   insights: [
     { id: 'i1', category: 'profile', priority: 'high', title: '初見の人への入口を強くする', body: '何を作っている人かに加えて、初めて来た人がすぐ音楽を聴ける導線をプロフィール上部に置くとMissionに近づきやすくなります。' },
