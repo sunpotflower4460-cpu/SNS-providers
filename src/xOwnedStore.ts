@@ -5,9 +5,15 @@ import type { AppState, Candidate } from './types';
 const MAX_NEW_INBOUND_CANDIDATES = 40;
 
 export function applyOwnedXSyncWithDiscovery(state: AppState, result: XOwnedSyncResponse): AppState {
+  // If the same handle now resolves to a different immutable X user ID, any follower-cycle
+  // evidence in this response was prepared against the old identity. Resetting the local
+  // candidate is safe, but applying that old cycle's seen/unseen result to the reset person
+  // would immediately reattach old relationship state. Skip evidence for those IDs once;
+  // the next fresh cycle will be prepared with the new platformUserId.
+  const identityChangedIds = ownedXIdentityChanges(state, result);
   let synced = applyOwnedXSync(state, result);
   synced = reconcileSelfInputs(state, synced, result);
-  synced = applyFullCycleFollowEvidence(synced, result);
+  synced = applyFullCycleFollowEvidence(synced, result, identityChangedIds);
   if (!result.enabled || !result.followers?.length) return synced;
 
   const existingByUsername = new Map(
@@ -62,6 +68,21 @@ export function applyOwnedXSyncWithDiscovery(state: AppState, result: XOwnedSync
     : synced;
 }
 
+function ownedXIdentityChanges(state: AppState, result: XOwnedSyncResponse) {
+  if (!result.enabled) return new Set<string>();
+  const byUsername = new Map(
+    [...(result.followers || []), ...(result.following || [])]
+      .map((user) => [user.username.toLowerCase(), user.id]),
+  );
+  return new Set(state.candidates
+    .filter((candidate) => {
+      if (candidate.platform !== 'x' || !candidate.platformUserId) return false;
+      const currentId = byUsername.get(candidate.username.toLowerCase());
+      return Boolean(currentId && currentId !== candidate.platformUserId);
+    })
+    .map((candidate) => candidate.id));
+}
+
 function reconcileSelfInputs(original: AppState, synced: AppState, result: XOwnedSyncResponse): AppState {
   if (!result.enabled || !result.profile) return synced;
 
@@ -91,7 +112,7 @@ function reconcileSelfInputs(original: AppState, synced: AppState, result: XOwne
   };
 }
 
-function applyFullCycleFollowEvidence(state: AppState, result: XOwnedSyncResponse): AppState {
+function applyFullCycleFollowEvidence(state: AppState, result: XOwnedSyncResponse, identityChangedIds = new Set<string>()): AppState {
   const evidence = result.followEvidence;
   if (!evidence?.complete || evidence.targetCount <= 0) return state;
   const seen = new Set(evidence.seenKeys);
@@ -101,7 +122,10 @@ function applyFullCycleFollowEvidence(state: AppState, result: XOwnedSyncRespons
   const now = Date.now();
   const waitDays = Math.max(1, Math.min(180, state.relationshipPolicy.followBackReviewAfterDays));
   const candidates = state.candidates.map((candidate) => {
-    if (candidate.skipped || candidate.platform !== 'x' || !candidate.followedAt) return candidate;
+    if (candidate.skipped
+      || candidate.platform !== 'x'
+      || !candidate.followedAt
+      || identityChangedIds.has(candidate.id)) return candidate;
     if (seen.has(candidate.id)) {
       return {
         ...candidate,
