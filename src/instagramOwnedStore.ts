@@ -5,16 +5,33 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
   if (!result.enabled) return state;
   const syncedAt = result.syncedAt || new Date().toISOString();
   const instagramCandidates = state.candidates.filter((candidate) => candidate.platform === 'instagram');
-  const byUsername = new Map(instagramCandidates.map((candidate) => [candidate.username.toLowerCase(), candidate]));
-  const byStableId = new Map(
-    instagramCandidates
-      .map((candidate) => [stableInstagramId(candidate.platformUserId), candidate] as const)
-      .filter(([id]) => Boolean(id)),
-  );
+
+  // Older app versions merged Instagram commenters by handle only. A rename could
+  // therefore leave two CRM records carrying the same immutable Graph user ID. Collapse
+  // those legacy duplicates first and remap their interactions to one deterministic
+  // survivor so history stays attached to the person rather than to an old handle.
+  const legacyIdentityAliases = new Map<string, string>();
+  const byStableId = new Map<string, Candidate>();
+  for (const candidate of instagramCandidates) {
+    const stableId = stableInstagramId(candidate.platformUserId);
+    if (!stableId) continue;
+    const previous = byStableId.get(stableId);
+    if (!previous) {
+      byStableId.set(stableId, candidate);
+      continue;
+    }
+    const preferred = preferIdentityCandidate(previous, candidate);
+    const duplicate = preferred.id === previous.id ? candidate : previous;
+    byStableId.set(stableId, preferred);
+    legacyIdentityAliases.set(duplicate.id, preferred.id);
+  }
+
+  const canonicalInstagramCandidates = instagramCandidates.filter((candidate) => !legacyIdentityAliases.has(candidate.id));
+  const byUsername = new Map(canonicalInstagramCandidates.map((candidate) => [candidate.username.toLowerCase(), candidate]));
   const additions: Candidate[] = [];
   const updates = new Map<string, Candidate>();
   const identityResetIds = new Set<string>();
-  const removedCandidateIds = new Set<string>();
+  const conflictingRemovedIds = new Set<string>();
 
   for (const engager of result.engagers || []) {
     const username = engager.username.trim().replace(/^@/, '').toLowerCase();
@@ -29,7 +46,7 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
     // different-ID candidate, discard that ambiguous stale record rather than attaching
     // its history to the current immutable identity.
     if (stableExisting && usernameExisting && stableExisting.id !== usernameExisting.id) {
-      removedCandidateIds.add(usernameExisting.id);
+      conflictingRemovedIds.add(usernameExisting.id);
       updates.delete(usernameExisting.id);
     }
     const existing = stableExisting || usernameExisting;
@@ -50,6 +67,7 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
     if (existing) {
       const existingStableId = stableInstagramId(existing.platformUserId);
       const identityChanged = Boolean(existingStableId && incomingStableId && existingStableId !== incomingStableId);
+      const renamed = existing.username.toLowerCase() !== username;
 
       if (identityChanged) {
         identityResetIds.add(existing.id);
@@ -85,7 +103,21 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
 
       // A cached/old comment must not undo an explicit user dismissal. Only a comment
       // whose timestamp is newer than the dismissal/last known signal may reactivate it.
-      if (existing.skipped && !freshContact) continue;
+      // Identity metadata is different: if Graph proves the same immutable person merely
+      // changed handle, keep the dismissed record dismissed but update its current route.
+      if (existing.skipped && !freshContact) {
+        if (stableExisting && renamed) {
+          updates.set(existing.id, {
+            ...existing,
+            username: engager.username,
+            displayName: sameUsername(existing.displayName, existing.username) ? engager.username : existing.displayName,
+            profileUrl: engager.profileUrl,
+            platformUserId: incomingStableId || existing.platformUserId,
+            profileSyncedAt: syncedAt,
+          });
+        }
+        continue;
+      }
 
       // Do not replay the same inbound comment after the user already handled it. A
       // completed reply/like clears the exact target; cached syncs must not recreate the
@@ -106,7 +138,6 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
       // Graph user ID already known for this candidate; upgrade fallback -> numeric when
       // possible, but only compare two numeric IDs for identity-change detection above.
       const platformUserId = incomingStableId || existingStableId || engager.id || existing.platformUserId;
-      const renamed = existing.username.toLowerCase() !== username;
 
       updates.set(existing.id, {
         ...existing,
@@ -155,15 +186,20 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
   }
 
   const candidates = state.candidates
-    .filter((candidate) => !removedCandidateIds.has(candidate.id))
+    .filter((candidate) => !legacyIdentityAliases.has(candidate.id) && !conflictingRemovedIds.has(candidate.id))
     .map((candidate) => updates.get(candidate.id) || candidate);
-  const invalidInteractionCandidateIds = new Set([...identityResetIds, ...removedCandidateIds]);
+  const invalidInteractionCandidateIds = new Set([...identityResetIds, ...conflictingRemovedIds]);
+  const interactions = state.interactions
+    .map((interaction) => {
+      const candidateId = resolveIdentityAlias(interaction.candidateId, legacyIdentityAliases);
+      return candidateId === interaction.candidateId ? interaction : { ...interaction, candidateId };
+    })
+    .filter((interaction) => !invalidInteractionCandidateIds.has(interaction.candidateId));
+
   return {
     ...state,
     candidates: [...additions, ...candidates],
-    interactions: invalidInteractionCandidateIds.size
-      ? state.interactions.filter((interaction) => !invalidInteractionCandidateIds.has(interaction.candidateId))
-      : state.interactions,
+    interactions,
     instagramAccount: {
       lastSyncedAt: syncedAt,
       mediaScanned: result.mediaScanned || 0,
@@ -180,6 +216,33 @@ function stableInstagramId(value?: string | null) {
 
 function sameUsername(left?: string, right?: string) {
   return (left || '').trim().replace(/^@/, '').toLowerCase() === (right || '').trim().replace(/^@/, '').toLowerCase();
+}
+
+function preferIdentityCandidate(left: Candidate, right: Candidate) {
+  const leftInteraction = safeTime(left.lastInteractionAt);
+  const rightInteraction = safeTime(right.lastInteractionAt);
+  if (leftInteraction !== rightInteraction) return rightInteraction > leftInteraction ? right : left;
+  if (left.relationshipScore !== right.relationshipScore) return right.relationshipScore > left.relationshipScore ? right : left;
+  if (Boolean(left.skipped) !== Boolean(right.skipped)) return left.skipped ? right : left;
+  const leftProfile = safeTime(left.profileSyncedAt);
+  const rightProfile = safeTime(right.profileSyncedAt);
+  if (leftProfile !== rightProfile) return rightProfile > leftProfile ? right : left;
+  return left.id.localeCompare(right.id) <= 0 ? left : right;
+}
+
+function resolveIdentityAlias(candidateId: string, aliases: Map<string, string>) {
+  let current = candidateId;
+  const seen = new Set<string>();
+  while (aliases.has(current) && !seen.has(current)) {
+    seen.add(current);
+    current = aliases.get(current)!;
+  }
+  return current;
+}
+
+function safeTime(value?: string | null) {
+  const time = value ? new Date(value).getTime() : Number.NaN;
+  return Number.isFinite(time) ? time : Number.NEGATIVE_INFINITY;
 }
 
 function isFreshCommentAfterDismissal(candidate: Candidate, incomingAt: string | null) {
