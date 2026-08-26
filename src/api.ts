@@ -1,7 +1,7 @@
 import { getSyncToken } from './controlToken';
 import { fetchWithTimeout } from './fetchWithTimeout';
 import { selectCandidatesForRanking } from './localFilter';
-import { candidateRequestKey, missionRequestKey, selfRequestKey } from './requestContext';
+import { candidateRequestKey, missionRequestKey, selfRequestKey, xProfileRequestKey } from './requestContext';
 import type { Candidate, Mission, PublicMetrics } from './types';
 
 const rawBase = import.meta.env.VITE_API_BASE_URL?.trim() || '';
@@ -51,10 +51,14 @@ export interface XProfileResult {
   publicMetrics: PublicMetrics;
 }
 
+export type XProfileResultList = XProfileResult[] & {
+  requestCandidateKeys?: Readonly<Record<string, string>>;
+};
+
 export interface XEnrichResponse {
   enabled: boolean;
   costUsd: number;
-  profiles: XProfileResult[];
+  profiles: XProfileResultList;
   reason?: string;
 }
 
@@ -286,8 +290,15 @@ export async function analyzeSelfProfile(mission: Mission, profileText: string, 
 }
 
 export async function enrichXProfiles(candidates: Candidate[], monthlyLimitUsd: number, userId = 'local-user') {
-  const usernames = [...new Set(candidates.filter((candidate) => candidate.platform === 'x').map((candidate) => candidate.username))].slice(0, 100);
+  const xCandidates = candidates.filter((candidate) => candidate.platform === 'x');
+  const usernames = [...new Set(xCandidates.map((candidate) => candidate.username))].slice(0, 100);
   if (!usernames.length) return { enabled: false, costUsd: 0, profiles: [], reason: 'No X candidates to enrich.' } satisfies XEnrichResponse;
+  const requested = new Set(usernames.map((username) => username.toLowerCase()));
+  const requestCandidateKeys = Object.fromEntries(
+    xCandidates
+      .filter((candidate) => requested.has(candidate.username.toLowerCase()))
+      .map((candidate) => [candidate.id, xProfileRequestKey(candidate)]),
+  );
   const result = await apiFetch<unknown>('/api/x/enrich', {
     method: 'POST',
     body: JSON.stringify({ userId, usernames, monthlyLimitUsd }),
@@ -304,12 +315,20 @@ export async function enrichXProfiles(candidates: Candidate[], monthlyLimitUsd: 
   if (!validated.enabled && (validated.costUsd !== 0 || validated.profiles.length !== 0)) {
     throw new Error('Disabled X enrichment returned billable or profile data');
   }
-  const requested = new Set(usernames.map((username) => username.toLowerCase()));
   const returned = validated.profiles.map((profile) => profile.username.toLowerCase());
   if (returned.some((username) => !requested.has(username)) || new Set(returned).size !== returned.length) {
     throw new Error('X enrichment returned an unrequested or duplicate profile');
   }
-  return validated;
+  const contextualProfiles = validated.profiles as XProfileResultList;
+  // Keep request context client-only. It must not be trusted from or sent to the provider;
+  // it simply binds the already validated response to the local records that initiated it.
+  Object.defineProperty(contextualProfiles, 'requestCandidateKeys', {
+    value: Object.freeze(requestCandidateKeys),
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+  return { ...validated, profiles: contextualProfiles };
 }
 
 function validateRankResponse(value: unknown): RankResponse {
