@@ -157,10 +157,8 @@ export async function getValidXAccessToken(env: XOAuthEnv, userId = 'local-user'
     await persistTokenResponse(env, userId, refreshed, row.refresh_token_enc, row.scope);
   } catch {
     // OAuth providers may rotate/invalidate the old refresh token as soon as a refresh
-    // succeeds. If the new token set cannot be persisted, keeping the old D1 row would make
-    // the connection look refreshable even though a later paid owned-read could fail only
-    // after budget reservation. Invalidate the stale credential best-effort and require a
-    // fresh user authorization before any paid provider request is allowed to start.
+    // succeeds. 古い資格情報を再利用しないため、the stale D1 row is invalidated
+    // best-effort before any paid owned-read is allowed to start.
     await invalidateStoredConnectionAfterRefreshPersistenceFailure(env, userId);
     throw new Error('Xの接続更新は完了しましたが、新しい認証情報を安全に保存できませんでした。Xを接続し直してから再度お試しください。');
   }
