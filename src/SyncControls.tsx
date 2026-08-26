@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { apiConfigured, fetchBudget } from './api';
 import { normalizeAppState, validateAppState } from './backup';
 import { clearRemoteStateVersion, clearSyncToken, downloadRemoteState, getRemoteStateVersion, getSyncToken, setSyncToken, uploadRemoteState } from './sync';
@@ -11,6 +11,11 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
   const [status, setStatus] = useState(apiConfigured ? 'まだ同期していません' : 'クラウド接続は未設定です');
   const [busy, setBusy] = useState(false);
   const [showToken, setShowToken] = useState(false);
+  const latestStateRef = useRef(state);
+
+  useEffect(() => {
+    latestStateRef.current = state;
+  }, [state]);
 
   async function saveToken() {
     const previous = getSyncToken().trim();
@@ -54,17 +59,22 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
   }
 
   async function upload() {
+    const localFingerprintAtStart = stateFingerprint(latestStateRef.current);
     setBusy(true);
     try {
       const previous = getSyncToken().trim();
       const next = token.trim();
       const expectedVersion = previous === next ? getRemoteStateVersion() : null;
-      const result = await uploadRemoteState(state, next, 'local-user', expectedVersion);
+      const result = await uploadRemoteState(latestStateRef.current, next, 'local-user', expectedVersion);
       const tokenPersisted = setSyncToken(next);
+      const changedWhileSaving = stateFingerprint(latestStateRef.current) !== localFingerprintAtStart;
       const persistenceWarning = tokenPersisted && result.versionPersisted
         ? ''
         : ' · クラウド保存は成功しましたが、この端末に同期情報を残せませんでした。再読み込み前にストレージ設定を確認してください';
-      setStatus(`クラウドへ保存しました · ${new Date(result.updatedAt).toLocaleString('ja-JP')}${persistenceWarning}`);
+      const freshnessWarning = changedWhileSaving
+        ? ' · 保存中にこの端末のデータが更新されました。最新分を反映するにはもう一度保存してください'
+        : '';
+      setStatus(`クラウドへ保存しました · ${new Date(result.updatedAt).toLocaleString('ja-JP')}${persistenceWarning}${freshnessWarning}`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'クラウドへの保存に失敗しました');
     } finally {
@@ -73,6 +83,7 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
   }
 
   async function download() {
+    const localFingerprintAtStart = stateFingerprint(latestStateRef.current);
     setBusy(true);
     try {
       const next = token.trim();
@@ -85,6 +96,18 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
         setStatus(`クラウドに保存済みデータはありません${persistenceWarning}`);
         return;
       }
+
+      // A remote download can take long enough for Today, X/Instagram sync, or another
+      // local edit to finish meanwhile. Replacing state after that would silently erase
+      // the newer local work. Abort the restore and clear the optimistic version that the
+      // download learned, so a later upload cannot overwrite remote data without a fresh
+      // download/restore decision.
+      if (stateFingerprint(latestStateRef.current) !== localFingerprintAtStart) {
+        const versionCleared = clearRemoteStateVersion();
+        setStatus(`復元中にこの端末のデータが変更されたため、上書きせず停止しました。もう一度「クラウドから復元」を実行してください${tokenPersisted && versionCleared ? '' : ' · 端末の同期情報を完全に保存できないためストレージ設定も確認してください'}`);
+        return;
+      }
+
       const restored = normalizeAppState(result.state);
       validateAppState(restored);
       onRestore(restored);
@@ -110,8 +133,8 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
     <div className="field-title"><div><strong>PC・スマホ間でデータを引き継ぐ</strong><span>Mission・候補・関係の記録を自分の端末間で同期します</span></div><b>同期</b></div>
     <label>個人管理キー
       <div className="secret-field">
-        <input type={showToken ? 'text' : 'password'} autoComplete="off" value={token} onChange={(event) => setToken(event.target.value)} placeholder="自分で設定した個人管理キー" />
-        <button type="button" aria-pressed={showToken} aria-label={showToken ? '個人管理キーを隠す' : '個人管理キーを表示'} onClick={() => setShowToken((current) => !current)}>{showToken ? '隠す' : '表示'}</button>
+        <input disabled={busy} type={showToken ? 'text' : 'password'} autoComplete="off" value={token} onChange={(event) => setToken(event.target.value)} placeholder="自分で設定した個人管理キー" />
+        <button type="button" disabled={busy} aria-pressed={showToken} aria-label={showToken ? '個人管理キーを隠す' : '個人管理キーを表示'} onClick={() => setShowToken((current) => !current)}>{showToken ? '隠す' : '表示'}</button>
       </div>
     </label>
     <small className="sync-note">個人管理キーは、他の人があなたのクラウドデータやSNS接続へ触れないためのパスワードのようなものです。</small>
@@ -120,7 +143,11 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
       <button className="secondary-button" disabled={busy || !apiConfigured} onClick={upload}>この端末のデータを保存</button>
       <button className="primary-button" disabled={busy || !apiConfigured} onClick={download}>クラウドから復元</button>
     </div>
-    <div className="sync-footer"><small aria-live="polite">{busy ? '処理中…' : status}</small><button onClick={forget}>この端末からキーを削除</button></div>
+    <div className="sync-footer"><small aria-live="polite">{busy ? '処理中…' : status}</small><button disabled={busy} onClick={forget}>この端末からキーを削除</button></div>
     <small className="sync-note">別の端末に新しいデータがあるときは、古い状態で上書きしないよう自動で停止します。その場合は先に「クラウドから復元」で最新版を取り込んでください。復元データも安全性を確認してから反映します。</small>
   </section>;
+}
+
+function stateFingerprint(state: AppState) {
+  return JSON.stringify(normalizeAppState(state));
 }
