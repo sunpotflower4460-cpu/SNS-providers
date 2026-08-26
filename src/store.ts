@@ -184,6 +184,7 @@ export function applyXProfiles(state: AppState, profiles: XProfileResult[], atte
   const byUsername = new Map(profiles.map((profile) => [profile.username.toLowerCase(), profile]));
   const attempted = new Set(attemptedUsernames.map((username) => username.trim().toLowerCase()).filter(Boolean));
   const attemptedAt = new Date().toISOString();
+  const identityResetIds = new Set<string>();
   const candidates = state.candidates.map((candidate) => {
     if (candidate.platform !== 'x' || candidate.skipped) return candidate;
     const username = candidate.username.toLowerCase();
@@ -194,9 +195,38 @@ export function applyXProfiles(state: AppState, profiles: XProfileResult[], atte
       // Keep the last successful sync timestamp separate from the last attempted read.
       return { ...candidate, profileSyncAttemptedAt: attemptedAt };
     }
+
+    const identityChanged = Boolean(candidate.platformUserId && candidate.platformUserId !== profile.id);
+    if (identityChanged) {
+      identityResetIds.add(candidate.id);
+      return {
+        ...candidate,
+        platformUserId: profile.id,
+        displayName: profile.name || profile.username,
+        bio: profile.description,
+        verified: profile.verified,
+        publicMetrics: profile.publicMetrics,
+        profileSyncedAt: attemptedAt,
+        profileSyncAttemptedAt: attemptedAt,
+        engagementUrl: undefined,
+        kind: 'other' as const,
+        match: 50,
+        relationshipScore: 0,
+        stage: 'discovered' as const,
+        reason: 'Xの公式ユーザーIDが以前の記録と異なります。同じ@usernameを別アカウントが使用している可能性があるため、過去の関係履歴を新しい相手へ引き継がず再確認します。',
+        strategy: '以前の相手と同一人物だと推測せず、現在の公式プロフィールと発信からMissionとの相性をあらためて判断します。',
+        tags: [],
+        recommendedAction: 'review' as const,
+        draft: undefined,
+        followedAt: undefined,
+        followBack: null,
+        lastInteractionAt: undefined,
+        snoozedUntil: undefined,
+      };
+    }
+
     const profileContextChanged = candidate.bio !== profile.description
-      || candidate.verified !== profile.verified
-      || Boolean(candidate.platformUserId && candidate.platformUserId !== profile.id);
+      || candidate.verified !== profile.verified;
     const staleFollowAdvice = profileContextChanged
       && candidate.recommendedAction === 'follow'
       && !candidate.followedAt;
@@ -222,6 +252,9 @@ export function applyXProfiles(state: AppState, profiles: XProfileResult[], atte
   return {
     ...state,
     candidates,
+    interactions: identityResetIds.size
+      ? state.interactions.filter((interaction) => !identityResetIds.has(interaction.candidateId))
+      : state.interactions,
     budget: {
       ...state.budget,
       usedUsd: Math.max(0, state.budget.usedUsd + Math.max(0, costUsd)),
