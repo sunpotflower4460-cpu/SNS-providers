@@ -187,20 +187,26 @@ requireAll(providerApi, [
 ], 'Paid X/LLM accounting can again silently lose a reservation between provider success and ledger finalization.');
 
 requireAll(store, [
+  'const requestCandidateKeys = profiles.requestCandidateKeys;',
+  'const requestKey = requestCandidateKeys[candidate.id];',
+  'if (!requestKey) return candidate;',
+  'if (requestKey !== xProfileRequestKey(candidate)) {',
   'const currentStableId = stablePlatformUserId(candidate.platformUserId);',
   'if (currentStableId && currentStableId !== profile.id) {',
   "tags: [...new Set([...candidate.tags, 'identity-conflict'])]",
-  'const profileContextChanged = candidate.bio !== profile.description',
+  "if (!currentStableId && candidate.tags.includes('identity-conflict')) {",
+  'const identityConflictResolved = Boolean(currentStableId',
+  'const profileContextChanged = identityConflictResolved',
   'const staleFollowAdvice = profileContextChanged',
   "candidate.recommendedAction === 'follow'",
-  "recommendedAction: staleFollowAdvice ? 'review' as const : candidate.recommendedAction",
+  "recommendedAction: identityConflictResolved || staleFollowAdvice ? 'review' as const : candidate.recommendedAction",
   '古い推薦のままTodayには出しません。',
   'const normalized = normalizeAppState({',
   'return refreshRelationshipAdvice(normalized);',
-], 'Official X enrichment can leave obsolete follow advice actionable, overwrite a newer immutable identity, or skip post-enrichment identity normalization.');
+], 'Official X enrichment can apply stale same-ID profile data, leave obsolete follow advice actionable, bind unproven historical identity, overwrite a newer immutable identity, or skip post-enrichment normalization.');
 
 const enrichConflictStart = store.indexOf('if (currentStableId && currentStableId !== profile.id) {');
-const enrichConflictEnd = store.indexOf('const profileContextChanged = candidate.bio !== profile.description', enrichConflictStart);
+const enrichConflictEnd = store.indexOf("if (!currentStableId && candidate.tags.includes('identity-conflict')) {", enrichConflictStart);
 const enrichConflictBlock = enrichConflictStart >= 0 && enrichConflictEnd > enrichConflictStart
   ? store.slice(enrichConflictStart, enrichConflictEnd)
   : '';
@@ -211,8 +217,17 @@ if (!enrichConflictBlock
   throw new Error('A mismatched/stale X enrichment can again replace an immutable identity or erase the old person\'s CRM history.');
 }
 
+const unboundConflictStart = store.indexOf("if (!currentStableId && candidate.tags.includes('identity-conflict')) {");
+const unboundConflictEnd = store.indexOf('const identityConflictResolved = Boolean(currentStableId', unboundConflictStart);
+const unboundConflictBlock = unboundConflictStart >= 0 && unboundConflictEnd > unboundConflictStart
+  ? store.slice(unboundConflictStart, unboundConflictEnd)
+  : '';
+if (!unboundConflictBlock || unboundConflictBlock.includes('platformUserId: profile.id')) {
+  throw new Error('A username-only X lookup can again assign an unbound historical conflict to the current handle owner.');
+}
+
 if ((budgetIntegrity.match(/occurred_jd >= julianday\(\?\) AND occurred_jd < julianday\(\?\)/g) || []).length < 2) {
   throw new Error('A paid-budget read or reservation lost one side of the active UTC month boundary.');
 }
 
-console.log('Cache/ledger invariants OK: malformed X/Instagram snapshots are rejected and evicted, cache freshness is bound to snapshot observation time, X paging checkpoints fail independently and recover from either durable source, paid X provider snapshots validate before exact-cost finalization, finalized costs are never relabeled uncertain by local evidence failures, corrupt follow-evidence rows fail closed and irrecoverable evidence cycles are quarantined without rereading the paid page, raw paid X-enrichment identities validate before finalize, stale/mismatched enrichment cannot rewrite immutable CRM identity, legacy invalid budget rows disable paid work, reservations remain atomic inside the active UTC month, X/Instagram renames follow immutable identity, recycled-handle conflicts resolve deterministically, and stale CRM advice cannot remain actionable.');
+console.log('Cache/ledger invariants OK: malformed X/Instagram snapshots are rejected and evicted, cache freshness is bound to snapshot observation time, X paging checkpoints fail independently and recover from either durable source, paid X provider snapshots validate before exact-cost finalization, finalized costs are never relabeled uncertain by local evidence failures, corrupt follow-evidence rows fail closed and irrecoverable evidence cycles are quarantined without rereading the paid page, raw paid X-enrichment identities validate before finalize, X enrichment is request-context-bound and cannot rewrite newer same-ID profile state or unbound history, legacy invalid budget rows disable paid work, reservations remain atomic inside the active UTC month, X/Instagram renames follow immutable identity, recycled-handle conflicts resolve deterministically, and stale CRM advice cannot remain actionable.');
