@@ -174,10 +174,13 @@ if (!backup.includes('safeSocialUrl(raw.platform, raw.engagementUrl)') || !backu
 if (!backup.includes('secondaryGoals') || !backup.includes('monthlyLimitUsd: clampNumber') || !backup.includes('hardLimit: true')) {
   throw new Error('Full restored AppState normalization or HARD LIMIT restoration was weakened.');
 }
-if (!backup.includes('dedupeCandidates(normalizedCandidates)')
-  || !backup.includes('dedupeById(normalizedInteractions.filter((interaction) => candidateIds.has(interaction.candidateId)))')
+if (!backup.includes('const deduped = dedupeCandidates(normalizedCandidates);')
+  || !backup.includes('resolveCandidateAlias(interaction.candidateId, deduped.aliases)')
+  || !backup.includes('stableCandidateIdentity(candidate)')
+  || !backup.includes('knownIdentities.size > 1')
+  || !backup.includes('normalizePlatformUserId(raw.platform, raw.platformUserId, username)')
   || !backup.includes('dedupeById(normalizedInsights)')) {
-  throw new Error('Restore normalization can retain duplicate candidates/history or discard a valid duplicate-id interaction in the wrong order.');
+  throw new Error('Restore normalization can transfer CRM history across recycled handles, lose rename history, accept poisoned platform IDs, or retain unsafe duplicates.');
 }
 if (!syncControls.includes('normalizeAppState(result.state)') || !syncControls.includes('validateAppState(restored)')) {
   throw new Error('D1 restores can bypass AppState normalization/validation.');
@@ -297,6 +300,11 @@ if (!xOAuth.includes('validateGrantedScopes(token.scope, existingGrantedScope)')
 if (!xOAuth.includes('persistTokenResponse(env, userId, refreshed, row.refresh_token_enc, row.scope)')) {
   throw new Error('X OAuth refresh can no longer reuse only the previously verified scope when scope metadata is omitted.');
 }
+if (!xOAuth.includes('invalidateStoredConnectionAfterRefreshPersistenceFailure(env, userId)')
+  || !xOAuth.includes('古い資格情報を再利用')
+  || !xOAuth.includes('Xを接続し直してから再度お試しください')) {
+  throw new Error('A successfully rotated X refresh token can leave stale D1 credentials looking reusable after persistence failure.');
+}
 if (!xOAuth.includes('validateGrantedScopes(row.scope)')
   || !xOAuth.includes('await decryptToken(env, row.access_token_enc)')
   || !xOAuth.includes('parseStoredExpiry(row.expires_at)')
@@ -305,8 +313,8 @@ if (!xOAuth.includes('validateGrantedScopes(row.scope)')
   || !xOAuth.includes('OAuth session expired or malformed')) {
   throw new Error('Stored/session X OAuth state can bypass scope, ciphertext, expiry, or session-age validation.');
 }
-if (!/DELETE FROM x_oauth_tokens[\s\S]{0,900}?try \{[\s\S]{0,650}?clearOwnedXDerivedState/.test(xOAuth)) {
+if (!/export async function disconnectXOAuth[\s\S]{0,1600}?DELETE FROM x_oauth_tokens[\s\S]{0,900}?try \{[\s\S]{0,650}?clearOwnedXDerivedState/.test(xOAuth)) {
   throw new Error('X disconnect can report failure after the authoritative token row was already deleted.');
 }
 
-console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, single-user namespace enforcement, protected X OAuth status, UTF-8 + monotonic validated D1 snapshot versions, DB-level non-negative HARD LIMIT constraints, pre-validated/session-safe control-token changes, fallback-only in-memory optimistic-lock state, account-bound X/Instagram caches, serialized X identity mutation vs owned reads, local-OAuth/evidence-before-paid-X reservation, durable conservative paid-reservation recovery, fresh-event-only candidate revival, normalized+deduplicated local/JSON/D1 restores, in-flight restore conflict protection, restore-aware Settings, async latest-state merges, conservative CRM progression, first-observed X follows, explicit manual reactivation, cleared manual unfollows, valid X identifiers, canonical official-platform handoff, guarded social drafts + self-profile rewrite, validated provider/X success payloads, full-pool AI prefiltering, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, strict stored/session OAuth validation, requested+granted X scopes=${scopes.join(', ')}`);
+console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, single-user namespace enforcement, protected X OAuth status, UTF-8 + monotonic validated D1 snapshot versions, DB-level non-negative HARD LIMIT constraints, pre-validated/session-safe control-token changes, fallback-only in-memory optimistic-lock state, account-bound X/Instagram caches, serialized X identity mutation vs owned reads, local-OAuth/evidence-before-paid-X reservation, refresh-persistence-safe X OAuth, durable conservative paid-reservation recovery, fresh-event-only candidate revival, immutable-identity-aware local/JSON/D1 restores, in-flight restore conflict protection, restore-aware Settings, async latest-state merges, conservative CRM progression, first-observed X follows, explicit manual reactivation, cleared manual unfollows, valid X identifiers, canonical official-platform handoff, guarded social drafts + self-profile rewrite, validated provider/X success payloads, full-pool AI prefiltering, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, strict stored/session OAuth validation, requested+granted X scopes=${scopes.join(', ')}`);
