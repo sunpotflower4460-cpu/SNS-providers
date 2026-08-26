@@ -10,6 +10,8 @@ export const apiConfigured = Boolean(apiBaseUrl);
 
 const rankKinds = new Set(['fan', 'artist', 'creator', 'media', 'venue', 'other', 'self_profile']);
 const rankActions = new Set(['follow', 'like', 'reply', 'dm', 'review', 'unfollow_review']);
+const xReservedPaths = new Set(['home', 'explore', 'notifications', 'messages', 'search', 'i', 'settings', 'compose', 'intent']);
+const instagramReservedPaths = new Set(['p', 'reel', 'reels', 'stories', 'explore', 'accounts', 'direct', 'about', 'developer']);
 
 export interface BudgetResponse {
   usedUsd: number;
@@ -74,6 +76,7 @@ export interface DiscoveryResponse {
   credits: number;
   profiles: DiscoveredProfileResult[];
   reason?: string;
+  retryAfterSeconds?: number;
 }
 
 async function apiFetch<T>(path: string, init?: RequestInit, tokenOverride?: string, timeoutMs = 120_000): Promise<T> {
@@ -123,12 +126,16 @@ export async function discoverSocialCandidates(mission: Mission, userId = 'local
     || result.profiles.length > 40
     || !result.profiles.every(validDiscoveredProfile)
     || !uniqueDiscoveredProfiles(result.profiles)
-    || !optionalString(result.reason, 2000)) {
+    || !optionalString(result.reason, 2000)
+    || !optionalBoundedInteger(result.retryAfterSeconds, 1, 86_400)) {
     throw new Error('Discovery API returned an invalid success response');
   }
   const validated = result as unknown as DiscoveryResponse;
   if (!validated.enabled && (validated.costUsd !== 0 || validated.credits !== 0 || validated.profiles.length !== 0)) {
     throw new Error('Disabled discovery returned usage or profile data');
+  }
+  if (validated.enabled && validated.retryAfterSeconds != null) {
+    throw new Error('Enabled discovery returned an unexpected retry delay');
   }
   if (validated.enabled && validated.costUsd !== 0) {
     throw new Error('Initial free discovery returned a billable response');
@@ -382,9 +389,11 @@ function uniqueDiscoveredProfiles(profiles: unknown[]) {
 
 function validSocialUsername(platform: 'x' | 'instagram', value: unknown) {
   if (typeof value !== 'string') return false;
-  return platform === 'x'
-    ? /^[A-Za-z0-9_]{1,15}$/.test(value)
-    : /^[A-Za-z0-9._]{1,30}$/.test(value);
+  const lowered = value.toLowerCase();
+  if (platform === 'x') {
+    return !xReservedPaths.has(lowered) && /^[A-Za-z0-9_]{1,15}$/.test(value);
+  }
+  return !instagramReservedPaths.has(lowered) && /^[A-Za-z0-9._]{1,30}$/.test(value);
 }
 
 function validOfficialSocialUrl(platform: 'x' | 'instagram', value: unknown, profileOnly: boolean) {
@@ -409,6 +418,10 @@ function validIso(value: unknown) {
 
 function optionalString(value: unknown, maxLength: number) {
   return value == null || (typeof value === 'string' && value.length <= maxLength);
+}
+
+function optionalBoundedInteger(value: unknown, min: number, max: number) {
+  return value == null || (typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max);
 }
 
 function boundedString(value: unknown, minLength: number, maxLength: number): value is string {
