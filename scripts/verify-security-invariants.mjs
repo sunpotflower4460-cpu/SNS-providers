@@ -116,9 +116,17 @@ if (!dbSchema.includes('cost_usd REAL NOT NULL DEFAULT 0 CHECK(cost_usd >= 0)')
 }
 
 const ownedTokenIndex = xOwned.indexOf('const accessToken = await getValidXAccessToken(env, userId);');
+const ownedEvidencePrepIndex = xOwned.indexOf('await prepareFollowCycleTargets(');
 const ownedReservationIndex = xOwned.indexOf('const reservationId = await reserveBudget(env, userId, worstCaseCost, budget.effectiveLimit);');
-if (ownedTokenIndex < 0 || ownedReservationIndex < 0 || ownedTokenIndex > ownedReservationIndex) {
-  throw new Error('Owned-X can reserve paid budget before local OAuth token resolution succeeds.');
+const ownedProviderStartIndex = xOwned.indexOf('const profile = await fetchMe(accessToken);');
+if (ownedTokenIndex < 0
+  || ownedEvidencePrepIndex < 0
+  || ownedReservationIndex < 0
+  || ownedProviderStartIndex < 0
+  || ownedTokenIndex > ownedEvidencePrepIndex
+  || ownedEvidencePrepIndex > ownedReservationIndex
+  || ownedReservationIndex > ownedProviderStartIndex) {
+  throw new Error('Owned-X preflight ordering can reserve or start paid reads before OAuth/evidence preparation succeeds.');
 }
 if (!xOwned.includes('await markReservationUncertain(env, reservationId, userId, worstCaseCost);')
   || !xOwned.includes("'owned_sync_uncertain'")
@@ -253,7 +261,9 @@ if (!/await clearOwnedXDerivedState\(env, userId\);\s*await persistTokenResponse
   || !xOAuth.includes("DELETE FROM x_follow_cycle_targets WHERE user_id = ?")) {
   throw new Error('X account changes can retain stale owned-account cache or paging evidence.');
 }
-if (!xOAuth.includes("reserveSyncLease(env.DB, userId, 'x_owned_sync', 3 * 60 * 1000)")
+const xIdentityLeaseCalls = xOAuth.match(/reserveSyncLease\(env\.DB, userId, 'x_owned_sync', X_IDENTITY_LEASE_MS\)/g) || [];
+if (!xOAuth.includes('const X_IDENTITY_LEASE_MS = 3 * 60 * 1000;')
+  || xIdentityLeaseCalls.length < 2
   || !xOAuth.includes('releaseSyncLease(env.DB, leaseResult.lease)')) {
   throw new Error('X OAuth reconnect/disconnect can race owned-X cache writes from another tab or device.');
 }
@@ -299,4 +309,4 @@ if (!/DELETE FROM x_oauth_tokens[\s\S]{0,900}?try \{[\s\S]{0,650}?clearOwnedXDer
   throw new Error('X disconnect can report failure after the authoritative token row was already deleted.');
 }
 
-console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, single-user namespace enforcement, protected X OAuth status, UTF-8 + monotonic validated D1 snapshot versions, DB-level non-negative HARD LIMIT constraints, pre-validated/session-safe control-token changes, fallback-only in-memory optimistic-lock state, account-bound X/Instagram caches, serialized X identity mutation vs owned reads, local-OAuth-before-paid-X reservation, durable conservative paid-reservation recovery, fresh-event-only candidate revival, normalized+deduplicated local/JSON/D1 restores, in-flight restore conflict protection, restore-aware Settings, async latest-state merges, conservative CRM progression, first-observed X follows, explicit manual reactivation, cleared manual unfollows, valid X identifiers, canonical official-platform handoff, guarded social drafts + self-profile rewrite, validated provider/X success payloads, full-pool AI prefiltering, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, strict stored/session OAuth validation, requested+granted X scopes=${scopes.join(', ')}`);
+console.log(`Security invariants OK: ${protectedProviderPaths.length} protected provider routes, single-user namespace enforcement, protected X OAuth status, UTF-8 + monotonic validated D1 snapshot versions, DB-level non-negative HARD LIMIT constraints, pre-validated/session-safe control-token changes, fallback-only in-memory optimistic-lock state, account-bound X/Instagram caches, serialized X identity mutation vs owned reads, local-OAuth/evidence-before-paid-X reservation, durable conservative paid-reservation recovery, fresh-event-only candidate revival, normalized+deduplicated local/JSON/D1 restores, in-flight restore conflict protection, restore-aware Settings, async latest-state merges, conservative CRM progression, first-observed X follows, explicit manual reactivation, cleared manual unfollows, valid X identifiers, canonical official-platform handoff, guarded social drafts + self-profile rewrite, validated provider/X success payloads, full-pool AI prefiltering, no-store API responses, relationship-stage AI guards, conservative uncertain-cost accounting, optimistic D1 sync, strict stored/session OAuth validation, requested+granted X scopes=${scopes.join(', ')}`);
