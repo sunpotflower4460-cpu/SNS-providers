@@ -360,9 +360,10 @@ function dedupeCandidates(candidates: Candidate[]): CandidateDedupeResult {
     if (preferred.id !== existing.id) replaceCandidate(afterStableIdentity, existing.id, preferred);
   }
 
-  // Username is only a safe fallback identity while it does not contradict two known
-  // immutable IDs. If the same handle is present with different numeric IDs, keep both
-  // records separate so a recycled handle cannot inherit the previous person's CRM history.
+  // Username is only a fallback identity when every duplicate record is still unbound.
+  // Once any numeric immutable identity exists, a second same-handle record without an ID
+  // is ambiguous: it may be the same person before enrichment, or a later recycled-handle
+  // owner. Never absorb that unbound history into the known person without proof.
   const profileGroups = new Map<string, Candidate[]>();
   for (const candidate of afterStableIdentity) {
     const profileKey = `${candidate.platform}:${candidate.username.toLowerCase()}`;
@@ -377,12 +378,13 @@ function dedupeCandidates(candidates: Candidate[]): CandidateDedupeResult {
       finalCandidates.push(group[0]);
       continue;
     }
-    const knownIdentities = new Set(group.map(stableCandidateIdentity).filter(Boolean));
-    if (knownIdentities.size > 1) {
-      // The handle now points at more than one known immutable identity in restored data.
-      // Preserve both CRM records/history, but make neither executable: a profile/follow/
-      // reply/DM/unfollow URL is handle-based and could otherwise act on the current owner
-      // while displaying historical context that belongs to the previous owner.
+    const stableMembership = group.map(stableCandidateIdentity);
+    const knownIdentities = new Set(stableMembership.filter(Boolean));
+    const hasUnboundIdentity = stableMembership.some((identity) => !identity);
+    if (knownIdentities.size > 1 || (knownIdentities.size === 1 && hasUnboundIdentity)) {
+      // The handle is attached to conflicting or partially unbound identity records.
+      // Preserve each CRM record/history, but make none executable until an official
+      // identity observation proves which record currently owns the mutable handle.
       finalCandidates.push(...group.map(quarantineRestoredHandleConflict));
       continue;
     }
@@ -403,7 +405,7 @@ function stableCandidateIdentity(candidate: Candidate) {
 }
 
 function quarantineRestoredHandleConflict(candidate: Candidate): Candidate {
-  const warning = '同じ@usernameに異なる公式ユーザーIDの記録があります。ハンドルが別の人へ再利用された可能性があるため、過去の関係履歴を維持したまま自動アクションを停止しました。';
+  const warning = '同じ@usernameに公式IDが異なる、またはID未確定の重複記録があります。ハンドルが別の人へ再利用された可能性があるため、過去の関係履歴を維持したまま自動アクションを停止しました。';
   return {
     ...candidate,
     engagementUrl: undefined,
