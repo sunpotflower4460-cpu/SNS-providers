@@ -100,8 +100,20 @@ export async function xOAuthStatus(env: XOAuthEnv, userId = 'local-user') {
     const scopes = validateGrantedScopes(row.scope);
     await decryptToken(env, row.access_token_enc);
     const expiresAtMs = parseStoredExpiry(row.expires_at);
-    const refreshable = Boolean(row.refresh_token_enc);
-    const usable = expiresAtMs > Date.now() || refreshable;
+    const accessUsable = expiresAtMs > Date.now();
+    let refreshable = false;
+    if (row.refresh_token_enc) {
+      try {
+        // A non-empty encrypted refresh token is not enough to claim the connection can
+        // be maintained. Verify its ciphertext now so an expired access token with a
+        // corrupt refresh row does not appear connected until the first real sync fails.
+        await decryptToken(env, row.refresh_token_enc);
+        refreshable = true;
+      } catch {
+        refreshable = false;
+      }
+    }
+    const usable = accessUsable || refreshable;
     return {
       configured: true,
       connected: usable,
@@ -111,8 +123,8 @@ export async function xOAuthStatus(env: XOAuthEnv, userId = 'local-user') {
       refreshable: usable && refreshable,
     };
   } catch {
-    // A malformed/undecryptable row is not a usable connection. Keep configuration true
-    // so the UI offers a fresh OAuth connection that can overwrite the stale row.
+    // A malformed/undecryptable access-token row is not a usable connection. Keep
+    // configuration true so the UI offers a fresh OAuth connection that can replace it.
     return { configured: true, connected: false, scopes: [], expiresAt: null, updatedAt: null, refreshable: false };
   }
 }
