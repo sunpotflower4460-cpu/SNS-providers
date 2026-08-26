@@ -121,6 +121,12 @@ if (!backup.includes('monthlyLimitUsd: clampNumber(state?.budget?.monthlyLimitUs
   throw new Error('Restored settings can again exceed supported UI/runtime bounds or poison candidates with an unbounded future snooze.');
 }
 
+if (!backup.includes('const stableMembership = group.map(stableCandidateIdentity);')
+  || !backup.includes('const hasUnboundIdentity = stableMembership.some((identity) => !identity);')
+  || !backup.includes('knownIdentities.size === 1 && hasUnboundIdentity')) {
+  throw new Error('Restore can again absorb an unbound same-handle record into a known immutable identity without proof.');
+}
+
 if (!backup.includes('xReservedPaths.has(lowered)')
   || !backup.includes('instagramReservedPaths.has(lowered)')
   || !api.includes('!xReservedPaths.has(lowered)')
@@ -154,21 +160,39 @@ if (!xFollowEvidence.includes('if (target.platform_user_id) return followerIds.h
 
 if (!xOwnedStore.includes('const stableIdentityState = reconcileOwnedXStableIdentities(state, result);')
   || !xOwnedStore.includes('const identityChangedIds = ownedXIdentityChanges(stableIdentityState, result);')
-  || !xOwnedStore.includes('const identitySafeState = resetOwnedXIdentityChanges(stableIdentityState, result, identityChangedIds);')
+  || !xOwnedStore.includes('const identityResetState = resetOwnedXIdentityChanges(stableIdentityState, result, identityChangedIds);')
+  || !xOwnedStore.includes('const identitySafeState = reconcileOwnedXStableIdentities(identityResetState, result);')
   || !xOwnedStore.includes('applyFullCycleFollowEvidence(synced, result, identityChangedIds)')
   || !xOwnedStore.includes('const legacyIdentityAliases = new Map<string, string>();')
+  || !xOwnedStore.includes('const byUsername = new Map<string, Candidate[]>();')
+  || !xOwnedStore.includes('for (const conflicting of usernameExisting) {')
+  || !xOwnedStore.includes('conflictingRemovedIds.add(conflicting.id);')
   || !xOwnedStore.includes('existingByStableId.get(follower.id) || existingByUsername.get(username)')
   || !xOwnedStore.includes('interactions: state.interactions.filter((interaction) => !changedIds.has(interaction.candidateId))')
+  || !xOwnedStore.includes("if (candidate.tags.includes('identity-conflict')) return candidate;")
   || !xOwnedStore.includes('if (identityChangedIds.has(candidate.id)) return candidate;')) {
   throw new Error('Owned-X handle rename/reuse can again split one immutable identity, transfer old CRM history, or apply old-cycle follow evidence to a different account.');
 }
 
-if (!store.includes('const identityResetIds = new Set<string>();')
-  || !store.includes('const identityChanged = Boolean(candidate.platformUserId && candidate.platformUserId !== profile.id);')
-  || !store.includes('interactions: identityResetIds.size')
-  || !store.includes('state.interactions.filter((interaction) => !identityResetIds.has(interaction.candidateId))')
-  || !store.includes('Xの公式ユーザーIDが以前の記録と異なります')) {
-  throw new Error('Normal paid X profile enrichment can again transfer old CRM history to a recycled handle.');
+if (!store.includes('const currentStableId = stablePlatformUserId(candidate.platformUserId);')
+  || !store.includes('if (currentStableId && currentStableId !== profile.id) {')
+  || !store.includes("tags: [...new Set([...candidate.tags, 'identity-conflict'])]")
+  || !store.includes('const identityConflictResolved = Boolean(currentStableId')
+  || !store.includes("candidate.tags.filter((tag) => tag !== 'identity-conflict')")
+  || !store.includes('const normalized = normalizeAppState({')
+  || !store.includes("if (candidate.tags.includes('identity-conflict')) {")
+  || !store.includes('const hasHistoricalIdentity = Boolean(')
+  || !store.includes('ハンドルだけでは過去と同じ人物だと確認できません')) {
+  throw new Error('Normal paid X enrichment or manual re-add can again overwrite a newer immutable identity, revive ambiguous direct actions, or attach old CRM history to a recycled handle.');
+}
+
+const enrichConflictStart = store.indexOf('if (currentStableId && currentStableId !== profile.id) {');
+const enrichConflictEnd = store.indexOf('const identityConflictResolved = Boolean(currentStableId', enrichConflictStart);
+const enrichConflictBlock = enrichConflictStart >= 0 && enrichConflictEnd > enrichConflictStart
+  ? store.slice(enrichConflictStart, enrichConflictEnd)
+  : '';
+if (!enrichConflictBlock || enrichConflictBlock.includes('platformUserId: profile.id') || enrichConflictBlock.includes('state.interactions.filter')) {
+  throw new Error('Mismatched/stale X enrichment can again rewrite immutable identity or erase the old person\'s CRM history.');
 }
 
 if (!store.includes("const recordedAction: Interaction['action'] = cleanupKeep ? 'unfollow_review' : action;")
@@ -177,11 +201,14 @@ if (!store.includes("const recordedAction: Interaction['action'] = cleanupKeep ?
   throw new Error('Cleanup keep can again collapse into profile-only review accounting or accidentally advance relationship engagement.');
 }
 
-if (!resultResolution.includes('const completedVisibleEngagement =')
+if (!resultResolution.includes('if (!sameVisibleCandidateIdentity(visibleCandidate, current)) return state;')
+  || !resultResolution.includes('const visibleStableId = stablePlatformUserId(visible.platformUserId);')
+  || !resultResolution.includes('const currentStableId = stablePlatformUserId(current.platformUserId);')
+  || !resultResolution.includes('const completedVisibleEngagement =')
   || !resultResolution.includes("engagementUrl: visibleCandidate.recommendedAction === 'like' || visibleCandidate.recommendedAction === 'reply'")
   || !resultResolution.includes("const recordedAction: Interaction['action'] = visibleReview && action === 'kept'")
   || !resultResolution.includes("? 'review'")) {
-  throw new Error('Completed exact engagement can again replay later, or a profile-only review can incorrectly advance relationship engagement.');
+  throw new Error('A result sheet can again record an old visible person onto a replacement identity, replay exact engagement, or count profile review as relationship engagement.');
 }
 
 if (!instagramOwned.includes('existing.latestMediaPermalink = item.permalink || null;')
@@ -200,8 +227,13 @@ if (!instagramOwnedStore.includes('const newCommentSignal = existing ? isNewerCo
 
 if (!instagramOwnedStore.includes('const identityResetIds = new Set<string>();')
   || !instagramOwnedStore.includes('const stableExisting = incomingStableId ? byStableId.get(incomingStableId) : undefined;')
-  || !instagramOwnedStore.includes('const existing = stableExisting || usernameExisting;')
+  || !instagramOwnedStore.includes('const byUsername = new Map<string, Candidate[]>();')
+  || !instagramOwnedStore.includes('const usernameGroup = byUsername.get(username) || [];')
+  || !instagramOwnedStore.includes('const knownUsernameIdentities = new Set(usernameGroup.map((candidate) => stableInstagramId(candidate.platformUserId)).filter(Boolean));')
+  || !instagramOwnedStore.includes('for (const conflicting of usernameGroup) {')
+  || !instagramOwnedStore.includes('else if (incomingStableId && knownUsernameIdentities.size > 1) {')
   || !instagramOwnedStore.includes('const identityChanged = Boolean(existingStableId && incomingStableId && existingStableId !== incomingStableId);')
+  || !instagramOwnedStore.includes("const identityConflictResolved = Boolean(stableExisting && existing.tags.includes('identity-conflict'));")
   || !instagramOwnedStore.includes('const platformUserId = incomingStableId || existingStableId || engager.id || existing.platformUserId;')
   || !instagramOwnedStore.includes('const legacyIdentityAliases = new Map<string, string>();')
   || !instagramOwnedStore.includes('resolveIdentityAlias(interaction.candidateId, legacyIdentityAliases)')
@@ -216,4 +248,4 @@ if (!xOAuth.includes('let refreshable = false;')
   throw new Error('X OAuth status can again advertise a corrupt stored refresh token as a maintainable/usable connection.');
 }
 
-console.log('Regression fixes OK: provider defaults are aligned, manual and automatic candidate operations are serialized, Today completion ignores profile-only reviews and counts one aggregate self-analysis action, auto refill keeps self-work quota stable and continues multi-batch free ranking, automatic discovery guards reject future poison, slow cloud restores cannot erase newer local work, cross-device discovery retry and first-party sync leases are enforced, reserved social paths and future sync versions fail closed, X/Instagram immutable identity changes and handle renames cannot inherit or split old CRM/evidence, cleanup accounting stays distinct from profile review, exact engagement is consumed, Instagram binds the newest comment to its own concrete post target, repairs handle-renamed legacy duplicates without reactivating stale dismissals, and X OAuth validates refresh-token usability.');
+console.log('Regression fixes OK: provider defaults are aligned, manual and automatic candidate operations are serialized, Today completion ignores profile-only reviews and counts one aggregate self-analysis action, auto refill keeps self-work quota stable and continues multi-batch free ranking, automatic discovery guards reject future poison, slow cloud restores cannot erase newer local work, cross-device discovery retry and first-party sync leases are enforced, reserved social paths and future sync versions fail closed, X/Instagram immutable identity changes and handle renames cannot inherit or split old CRM/evidence, mixed stable/unbound restores and manual re-adds stay quarantined until identity proof, stale X enrichment cannot rewrite identity, visible result sheets are identity-bound, cleanup accounting stays distinct from profile review, exact engagement is consumed, Instagram binds the newest comment to its own concrete post target, repairs handle-renamed legacy duplicates without reactivating stale dismissals, and X OAuth validates refresh-token usability.');
