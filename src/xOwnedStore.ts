@@ -6,12 +6,12 @@ const MAX_NEW_INBOUND_CANDIDATES = 40;
 
 export function applyOwnedXSyncWithDiscovery(state: AppState, result: XOwnedSyncResponse): AppState {
   // If the same handle now resolves to a different immutable X user ID, any follower-cycle
-  // evidence in this response was prepared against the old identity. Resetting the local
-  // candidate is safe, but applying that old cycle's seen/unseen result to the reset person
-  // would immediately reattach old relationship state. Skip evidence for those IDs once;
-  // the next fresh cycle will be prepared with the new platformUserId.
+  // evidence in this response was prepared against the old identity. Reset that candidate's
+  // identity-bound CRM data first, then skip this cycle's evidence for it. The next fresh
+  // cycle will be prepared with the new platformUserId and can safely establish follow-back.
   const identityChangedIds = ownedXIdentityChanges(state, result);
-  let synced = applyOwnedXSync(state, result);
+  const identitySafeState = resetOwnedXIdentityChanges(state, result, identityChangedIds);
+  let synced = applyOwnedXSync(identitySafeState, result);
   synced = reconcileSelfInputs(state, synced, result);
   synced = applyFullCycleFollowEvidence(synced, result, identityChangedIds);
   if (!result.enabled || !result.followers?.length) return synced;
@@ -81,6 +81,57 @@ function ownedXIdentityChanges(state: AppState, result: XOwnedSyncResponse) {
       return Boolean(currentId && currentId !== candidate.platformUserId);
     })
     .map((candidate) => candidate.id));
+}
+
+function resetOwnedXIdentityChanges(state: AppState, result: XOwnedSyncResponse, changedIds: Set<string>): AppState {
+  if (!result.enabled || !changedIds.size) return state;
+  const followers = result.followers || [];
+  const following = result.following || [];
+  const followerByUsername = new Map(followers.map((user) => [user.username.toLowerCase(), user]));
+  const followingByUsername = new Map(following.map((user) => [user.username.toLowerCase(), user]));
+  const followersComplete = Boolean(result.coverage?.followers.complete);
+  const syncedAt = result.syncedAt || new Date().toISOString();
+
+  const candidates = state.candidates.map((candidate) => {
+    if (!changedIds.has(candidate.id)) return candidate;
+    const username = candidate.username.toLowerCase();
+    const profile = followerByUsername.get(username) || followingByUsername.get(username);
+    if (!profile) return candidate;
+    const isFollower = followerByUsername.has(username);
+    const isFollowing = followingByUsername.has(username);
+    const active = !candidate.skipped;
+    return {
+      ...candidate,
+      platformUserId: profile.id,
+      displayName: profile.name || profile.username,
+      bio: profile.description || '',
+      verified: profile.verified,
+      publicMetrics: profile.publicMetrics,
+      profileSyncedAt: syncedAt,
+      profileSyncAttemptedAt: syncedAt,
+      kind: 'other' as const,
+      match: 50,
+      relationshipScore: 0,
+      stage: active && isFollowing ? 'following' as const : active && isFollower ? 'recognized' as const : 'discovered' as const,
+      reason: 'Xの公式ユーザーIDが以前の記録と異なります。同じ@usernameを別アカウントが使用している可能性があるため、過去の関係履歴を新しい相手へ引き継がず再確認します。',
+      strategy: '以前の相手と同一人物だと推測せず、現在の公式プロフィールと発信からMissionとの相性をあらためて判断します。',
+      tags: [],
+      recommendedAction: 'review' as const,
+      draft: undefined,
+      followedAt: active && isFollowing ? syncedAt : undefined,
+      followBack: active ? isFollower ? true : isFollowing && followersComplete ? false : null : null,
+      lastInteractionAt: undefined,
+      snoozedUntil: undefined,
+    };
+  });
+
+  return {
+    ...state,
+    candidates,
+    // Interaction rows belong to the previous immutable identity. Keeping them attached
+    // to the reused candidate ID would silently credit the new account with old history.
+    interactions: state.interactions.filter((interaction) => !changedIds.has(interaction.candidateId)),
+  };
 }
 
 function reconcileSelfInputs(original: AppState, synced: AppState, result: XOwnedSyncResponse): AppState {
