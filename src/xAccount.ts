@@ -61,6 +61,7 @@ export interface XOwnedSyncResponse {
   source: 'x' | 'cache' | 'disabled';
   costUsd: number;
   reason?: string;
+  startedAt?: string;
   syncedAt?: string;
   profile?: XOwnedUser;
   followers?: XOwnedUser[];
@@ -184,7 +185,9 @@ function validOwnedSyncResponse(value: unknown): value is XOwnedSyncResponse {
   }
   if (value.source === 'disabled' || !validOwnedUser(value.profile)) return false;
   if (value.source === 'cache' && value.costUsd !== 0) return false;
+  if (typeof value.startedAt !== 'string' || !validPastishIso(value.startedAt)) return false;
   if (typeof value.syncedAt !== 'string' || !validPastishIso(value.syncedAt)) return false;
+  if (new Date(value.startedAt).getTime() > new Date(value.syncedAt).getTime()) return false;
   if (!Array.isArray(value.followers) || value.followers.length > 500 || !value.followers.every(validOwnedUser) || !uniqueUsers(value.followers)) return false;
   if (!Array.isArray(value.following) || value.following.length > 500 || !value.following.every(validOwnedUser) || !uniqueUsers(value.following)) return false;
   if (!Array.isArray(value.posts) || value.posts.length > 50 || !value.posts.every(validOwnedPost) || !uniqueIds(value.posts)) return false;
@@ -227,7 +230,7 @@ function validOwnedPost(value: unknown): value is XOwnedPost {
     && /^\d{1,30}$/.test(value.id)
     && typeof value.text === 'string'
     && value.text.length <= 30_000
-    && nullableIso(value.createdAt)
+    && nullablePastishIso(value.createdAt)
     && isRecord(value.publicMetrics)
     && nonNegativeFinite(value.publicMetrics.likes)
     && nonNegativeFinite(value.publicMetrics.replies)
@@ -346,6 +349,10 @@ function validHttpsUrl(value: string) {
 
 function nullableIso(value: unknown) {
   return value == null || (typeof value === 'string' && validIso(value));
+}
+
+function nullablePastishIso(value: unknown) {
+  return value == null || (typeof value === 'string' && validPastishIso(value));
 }
 
 function validIso(value: string) {
