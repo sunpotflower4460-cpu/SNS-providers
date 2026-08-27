@@ -3,6 +3,9 @@ import type { AppState, Candidate } from './types';
 
 export function applyInstagramEngagers(state: AppState, result: InstagramEngagerSyncResponse): AppState {
   if (!result.enabled) return state;
+  // Cached engager snapshots can predate a newer live sync. Do not delete handle-conflict
+  // rows or rewrite immutable identity from cache; comment/profile merges still apply.
+  const fromCache = result.source === 'cache';
   const syncedAt = result.syncedAt || new Date().toISOString();
   const instagramCandidates = state.candidates.filter((candidate) => candidate.platform === 'instagram');
 
@@ -38,6 +41,15 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
   const updates = new Map<string, Candidate>();
   const identityResetIds = new Set<string>();
   const conflictingRemovedIds = new Set<string>();
+  const officialUsernameById = new Map(
+    (result.engagers || [])
+      .map((engager) => {
+        const id = stableInstagramId(engager.id);
+        const username = engager.username.trim().replace(/^@/, '').toLowerCase();
+        return id && username ? [id, username] as const : null;
+      })
+      .filter((entry): entry is readonly [string, string] => Boolean(entry)),
+  );
 
   for (const engager of result.engagers || []) {
     const username = engager.username.trim().replace(/^@/, '').toLowerCase();
@@ -54,12 +66,20 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
     // old identities and create a fresh current-person record below.
     let existing: Candidate | undefined = stableExisting;
     if (stableExisting) {
-      for (const conflicting of usernameGroup) {
-        if (conflicting.id === stableExisting.id) continue;
-        conflictingRemovedIds.add(conflicting.id);
-        updates.delete(conflicting.id);
+      if (!fromCache) {
+        for (const conflicting of usernameGroup) {
+          if (conflicting.id === stableExisting.id) continue;
+          const conflictingStableId = stableInstagramId(conflicting.platformUserId);
+          // Same-response rename: keep CRM for the immutable ID whose official handle moved.
+          if (conflictingStableId) {
+            const officialUsername = officialUsernameById.get(conflictingStableId);
+            if (officialUsername && officialUsername !== username) continue;
+          }
+          conflictingRemovedIds.add(conflicting.id);
+          updates.delete(conflicting.id);
+        }
       }
-    } else if (incomingStableId && knownUsernameIdentities.size > 1) {
+    } else if (!fromCache && incomingStableId && knownUsernameIdentities.size > 1) {
       for (const conflicting of usernameGroup) {
         conflictingRemovedIds.add(conflicting.id);
         updates.delete(conflicting.id);
@@ -99,6 +119,8 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
       const identityConflictResolved = Boolean(stableExisting && existing.tags.includes('identity-conflict'));
 
       if (identityChanged) {
+        // Stale cache must not rewrite immutable identity or wipe CRM history.
+        if (fromCache) continue;
         identityResetIds.add(existing.id);
         const engagementUrl = engager.latestMediaPermalink || undefined;
         const recommendedAction: Candidate['recommendedAction'] = engagementUrl ? 'reply' : 'review';

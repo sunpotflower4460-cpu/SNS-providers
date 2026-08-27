@@ -160,14 +160,15 @@ if (!xFollowEvidence.includes('if (target.platform_user_id) return followerIds.h
   throw new Error('X full-cycle follow evidence can again fall back to a recycled username after an immutable user-ID mismatch.');
 }
 
-if (!xOwnedStore.includes('const stableIdentityState = reconcileOwnedXStableIdentities(state, result);')
-  || !xOwnedStore.includes('const identityChangedIds = ownedXIdentityChanges(stableIdentityState, result);')
-  || !xOwnedStore.includes('const identityResetState = resetOwnedXIdentityChanges(stableIdentityState, result, identityChangedIds);')
-  || !xOwnedStore.includes('const identitySafeState = reconcileOwnedXStableIdentities(identityResetState, result);')
+if (!xOwnedStore.includes('fromCache ? state : reconcileOwnedXStableIdentities(state, result)')
+  || !xOwnedStore.includes('fromCache ? new Set<string>() : ownedXIdentityChanges(stableIdentityState, result)')
+  || !xOwnedStore.includes('resetOwnedXIdentityChanges(stableIdentityState, result, identityChangedIds)')
+  || !xOwnedStore.includes('reconcileOwnedXStableIdentities(identityResetState, result)')
   || !xOwnedStore.includes('applyFullCycleFollowEvidence(synced, result, identityChangedIds)')
   || !xOwnedStore.includes('const legacyIdentityAliases = new Map<string, string>();')
   || !xOwnedStore.includes('const byUsername = new Map<string, Candidate[]>();')
   || !xOwnedStore.includes('for (const conflicting of usernameExisting) {')
+  || !xOwnedStore.includes('if (officialUsername && officialUsername !== username) continue;')
   || !xOwnedStore.includes('conflictingRemovedIds.add(conflicting.id);')
   || !xOwnedStore.includes('existingByStableId.get(follower.id) || existingByUsername.get(username)')
   || !xOwnedStore.includes('interactions: state.interactions.filter((interaction) => !changedIds.has(interaction.candidateId))')
@@ -233,7 +234,8 @@ if (!instagramOwnedStore.includes('const identityResetIds = new Set<string>();')
   || !instagramOwnedStore.includes('const usernameGroup = byUsername.get(username) || [];')
   || !instagramOwnedStore.includes('const knownUsernameIdentities = new Set(usernameGroup.map((candidate) => stableInstagramId(candidate.platformUserId)).filter(Boolean));')
   || !instagramOwnedStore.includes('for (const conflicting of usernameGroup) {')
-  || !instagramOwnedStore.includes('else if (incomingStableId && knownUsernameIdentities.size > 1) {')
+  || !instagramOwnedStore.includes('else if (!fromCache && incomingStableId && knownUsernameIdentities.size > 1) {')
+  || !instagramOwnedStore.includes('if (officialUsername && officialUsername !== username) continue;')
   || !instagramOwnedStore.includes('const identityChanged = Boolean(existingStableId && incomingStableId && existingStableId !== incomingStableId);')
   || !instagramOwnedStore.includes("const identityConflictResolved = Boolean(stableExisting && existing.tags.includes('identity-conflict'));")
   || !instagramOwnedStore.includes('const platformUserId = incomingStableId || existingStableId || engager.id || existing.platformUserId;')
@@ -278,8 +280,10 @@ if (!syncControls.includes('クラウドのデータを確認して復元し、�
   throw new Error('D1 restore can again leave snapshot budget totals stale relative to the live HARD LIMIT ledger.');
 }
 
-if (!xOwnedStore.includes("if (result.source !== 'cache')")
+if (!xOwnedStore.includes('if (!fromCache)')
   || !xOwnedStore.includes('applyFullCycleFollowEvidence(synced, result, identityChangedIds)')
+  || !xOwnedStore.includes('fromCache ? state : reconcileOwnedXStableIdentities(state, result)')
+  || !xOwnedStore.includes('if (officialUsername && officialUsername !== username) continue;')
   || !xOwnedStore.includes('engagementUrl: undefined')
   || !store.includes('const unboundIdentityConflict = candidate.tags.includes(\'identity-conflict\')')
   || !store.includes('const bindableProfile = relatedProfile && !unboundIdentityConflict ? relatedProfile : undefined')
@@ -293,6 +297,9 @@ if (!xOwnedStore.includes("if (result.source !== 'cache')")
   || !daily.includes('completedTodayWithoutNewerSignal')
   || !instagramOwnedStore.includes('const unboundConflict = Boolean(')
   || !instagramOwnedStore.includes('existing = unboundConflict ? undefined : usernameFallback')
+  || !instagramOwnedStore.includes('else if (!fromCache && incomingStableId && knownUsernameIdentities.size > 1)')
+  || !instagramOwnedStore.includes('if (fromCache) continue;')
+  || !instagramOwnedStore.includes('if (officialUsername && officialUsername !== username) continue;')
   || !providerApi.includes('const costUsd = worstCaseCost')
   || !backupControls.includes('バックアップから復元し、クラウドの利用額も最新化しました')
   || !backupControls.includes("const budget = await fetchBudget('local-user', token);")
@@ -302,7 +309,7 @@ if (!xOwnedStore.includes("if (result.source !== 'cache')")
   || !syncControls.includes('let conflicted = false')
   || !syncControls.includes('復元中にこの端末のデータが変更されたため、上書きせず停止しました')
   || !syncControls.includes('latestStateRef.current = state')) {
-  throw new Error('Post-merge guards regressed: cached follow evidence can replay, unbound identity-conflict rows can absorb official IDs, complete following cycles can leave stale unfollow advice, Today can ignore same-day reopen signals, Instagram handle-only matches can clear quarantine, paid X username lookups can under-count reserved cost, JSON/D1 restore can skip live budget reconcile or clobber concurrent local edits, or cache negatives can wipe post-snapshot follows.');
+  throw new Error('Post-merge guards regressed: cached follow evidence can replay, unbound identity-conflict rows can absorb official IDs, complete following cycles can leave stale unfollow advice, Today can ignore same-day reopen signals, Instagram handle-only matches can clear quarantine, paid X username lookups can under-count reserved cost, JSON/D1 restore can skip live budget reconcile or clobber concurrent local edits, cache negatives can wipe post-snapshot follows, same-response renames can delete CRM, or cache can rewind immutable identity.');
 }
 
-console.log('Regression fixes OK: provider defaults are aligned, manual and automatic candidate operations are serialized, Today completion ignores profile-only reviews and counts one aggregate self-analysis action, auto refill keeps self-work quota stable and continues multi-batch free ranking, automatic discovery guards reject future poison, slow cloud restores cannot erase newer local work, cross-device discovery retry and first-party sync leases are enforced, reserved social paths and future sync versions fail closed, X/Instagram immutable identity changes and handle renames cannot inherit or split old CRM/evidence, mixed stable/unbound restores and manual re-adds stay quarantined until identity proof, stale X enrichment cannot rewrite identity, visible result sheets are identity-bound, cleanup accounting stays distinct from profile review, exact engagement is consumed, Instagram binds the newest comment to its own concrete post target, repairs handle-renamed legacy duplicates without reactivating stale dismissals, X OAuth validates refresh-token usability, paid LLM cost stays within reservation, inbound followers stay below DM-ready, reply/like require concrete targets, CRM progression stays follow-gated, follow-back negatives require current following evidence, D1 restore reconciles live budget totals, cached follow evidence is not replayed, unbound identity conflicts stay quarantined, Today reopens on newer same-day signals, paid X username lookups keep reserved cost, JSON restore reconciles live budget, cache/complete snapshots cannot wipe post-boundary follows or invent negatives, and concurrent restore guards abort on newer local edits.');
+console.log('Regression fixes OK: provider defaults are aligned, manual and automatic candidate operations are serialized, Today completion ignores profile-only reviews and counts one aggregate self-analysis action, auto refill keeps self-work quota stable and continues multi-batch free ranking, automatic discovery guards reject future poison, slow cloud restores cannot erase newer local work, cross-device discovery retry and first-party sync leases are enforced, reserved social paths and future sync versions fail closed, X/Instagram immutable identity changes and handle renames cannot inherit or split old CRM/evidence, mixed stable/unbound restores and manual re-adds stay quarantined until identity proof, stale X enrichment cannot rewrite identity, visible result sheets are identity-bound, cleanup accounting stays distinct from profile review, exact engagement is consumed, Instagram binds the newest comment to its own concrete post target, repairs handle-renamed legacy duplicates without reactivating stale dismissals, X OAuth validates refresh-token usability, paid LLM cost stays within reservation, inbound followers stay below DM-ready, reply/like require concrete targets, CRM progression stays follow-gated, follow-back negatives require current following evidence, D1 restore reconciles live budget totals, cached follow evidence is not replayed, unbound identity conflicts stay quarantined, Today reopens on newer same-day signals, paid X username lookups keep reserved cost, JSON restore reconciles live budget, cache/complete snapshots cannot wipe post-boundary follows or invent negatives, concurrent restore guards abort on newer local edits, same-response handle transfers preserve CRM, and cache cannot rewind immutable identity.');

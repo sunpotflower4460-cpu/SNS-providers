@@ -95,20 +95,25 @@ requireAll(xAccount, [
 ], 'Owned-X client validation/tracking can accept contradictory identity/checkpoint metadata, degraded evidence with stale proof, or ambiguous recycled handles.');
 
 requireAll(xOwnedStore, [
-  'const stableIdentityState = reconcileOwnedXStableIdentities(state, result);',
-  'const identityResetState = resetOwnedXIdentityChanges(stableIdentityState, result, identityChangedIds);',
-  'const identitySafeState = reconcileOwnedXStableIdentities(identityResetState, result);',
+  'fromCache ? state : reconcileOwnedXStableIdentities(state, result)',
+  'fromCache ? new Set<string>() : ownedXIdentityChanges(stableIdentityState, result)',
+  'resetOwnedXIdentityChanges(stableIdentityState, result, identityChangedIds)',
+  'reconcileOwnedXStableIdentities(identityResetState, result)',
+  'const fromCache = result.source === \'cache\';',
+  'if (!fromCache) {',
   'const legacyIdentityAliases = new Map<string, string>();',
   'const stableExisting = byStableId.get(user.id);',
   'const byUsername = new Map<string, Candidate[]>();',
   'for (const conflicting of usernameExisting) {',
+  'const officialUsername = officialUsernameById.get(conflictingStableId);',
+  'if (officialUsername && officialUsername !== username) continue;',
   'conflictingRemovedIds.add(conflicting.id);',
   'resolveIdentityAlias(interaction.candidateId, legacyIdentityAliases)',
   "const identityConflictResolved = stableExisting.tags.includes('identity-conflict');",
   "tags: stableExisting.tags.filter((tag) => tag !== 'identity-conflict')",
   "if (candidate.tags.includes('identity-conflict')) return candidate;",
   'existingByStableId.get(follower.id) || existingByUsername.get(username)',
-], 'X handle renames, recycled handles, or legacy same-ID duplicates can again split one immutable relationship, revive ambiguous follow evidence, or transfer stale handle history.');
+], 'X handle renames, recycled handles, or legacy same-ID duplicates can again split one immutable relationship, revive ambiguous follow evidence, transfer stale handle history, or let cache rewind identity.');
 
 requireAll(xOwned, [
   "if (result.meta.changes !== 1) throw new Error('Owned-X budget reservation disappeared before finalization')",
@@ -136,14 +141,18 @@ requireAll(instagramOwnedStore, [
   'const knownUsernameIdentities = new Set(usernameGroup.map((candidate) => stableInstagramId(candidate.platformUserId)).filter(Boolean));',
   'for (const conflicting of usernameGroup) {',
   'conflictingRemovedIds.add(conflicting.id);',
-  'else if (incomingStableId && knownUsernameIdentities.size > 1) {',
+  'else if (!fromCache && incomingStableId && knownUsernameIdentities.size > 1) {',
+  'const fromCache = result.source === \'cache\';',
+  'if (fromCache) continue;',
+  'const officialUsername = officialUsernameById.get(conflictingStableId);',
+  'if (officialUsername && officialUsername !== username) continue;',
   "const identityConflictResolved = Boolean(stableExisting && existing.tags.includes('identity-conflict'));",
   "existing.tags.filter((tag) => tag !== 'identity-conflict')",
   'const legacyIdentityAliases = new Map<string, string>();',
   'resolveIdentityAlias(interaction.candidateId, legacyIdentityAliases)',
   'username: engager.username,',
   'profileUrl: engager.profileUrl,',
-], 'Instagram handle renames, recycled handles, or legacy same-ID duplicates can again split one immutable commenter, revive stale reply routing, or transfer old handle history.');
+], 'Instagram handle renames, recycled handles, or legacy same-ID duplicates can again split one immutable commenter, revive stale reply routing, transfer old handle history, or let cache rewind identity.');
 
 requireAll(providerApi, [
   'readActiveMonthUsage(env.DB, userId)',

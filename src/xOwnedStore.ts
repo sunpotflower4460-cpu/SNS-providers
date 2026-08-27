@@ -5,29 +5,38 @@ import type { AppState, Candidate } from './types';
 const MAX_NEW_INBOUND_CANDIDATES = 40;
 
 export function applyOwnedXSyncWithDiscovery(state: AppState, result: XOwnedSyncResponse): AppState {
+  // Cached snapshots can predate a newer live sync or enrichment. Replaying identity
+  // reconcile/reset from cache would rewind platformUserId, wipe CRM, or invent
+  // followBack=false. Follow/profile merges below still run with fromCache guards.
+  const fromCache = result.source === 'cache';
+
   // X handles can be renamed while the immutable numeric user ID stays the same. Repair
   // old same-ID duplicates and route the current handle back onto the existing CRM record
   // before evaluating username-reuse identity changes. This preserves genuine history for
   // the same person without ever transferring history to a different immutable account.
-  const stableIdentityState = reconcileOwnedXStableIdentities(state, result);
+  const stableIdentityState = fromCache ? state : reconcileOwnedXStableIdentities(state, result);
 
   // If the same handle now resolves to a different immutable X user ID, any follower-cycle
   // evidence in this response was prepared against the old identity. Reset that candidate's
   // identity-bound CRM data first, then skip this cycle's evidence for it. The next fresh
   // cycle will be prepared with the new platformUserId and can safely establish follow-back.
-  const identityChangedIds = ownedXIdentityChanges(stableIdentityState, result);
-  const identityResetState = resetOwnedXIdentityChanges(stableIdentityState, result, identityChangedIds);
+  const identityChangedIds = fromCache ? new Set<string>() : ownedXIdentityChanges(stableIdentityState, result);
+  const identityResetState = fromCache
+    ? stableIdentityState
+    : resetOwnedXIdentityChanges(stableIdentityState, result, identityChangedIds);
   // A recycled handle can move through more than two immutable owners. If multiple stale
   // records are reset to the same newly observed ID in one response, collapse them again
   // immediately instead of leaving duplicate current identities until the next sync.
-  const identitySafeState = reconcileOwnedXStableIdentities(identityResetState, result);
+  const identitySafeState = fromCache
+    ? identityResetState
+    : reconcileOwnedXStableIdentities(identityResetState, result);
   let synced = applyOwnedXSync(identitySafeState, result);
   synced = preservePostSnapshotFollowState(identitySafeState, synced, result);
   synced = reconcileSelfInputs(state, synced, result);
   // Cached snapshots may still carry a previously completed followEvidence payload.
   // Replaying it on every cache hit would overwrite manual Relations decisions for ~20h.
   // Only apply full-cycle proof from a freshly observed owned sync.
-  if (result.source !== 'cache') {
+  if (!fromCache) {
     synced = applyFullCycleFollowEvidence(synced, result, identityChangedIds);
   }
   if (!result.enabled || !result.followers?.length) return synced;
@@ -136,6 +145,14 @@ function reconcileOwnedXStableIdentities(state: AppState, result: XOwnedSyncResp
     const usernameExisting = byUsername.get(username) || [];
     for (const conflicting of usernameExisting) {
       if (conflicting.id === stableExisting.id) continue;
+      const conflictingStableId = stableXId(conflicting.platformUserId);
+      // Same-response rename: this row's official handle moved elsewhere in this payload.
+      // Do not delete it while claiming the vacated handle — the rename update below (or
+      // later in this loop) must keep its CRM history attached to the immutable ID.
+      if (conflictingStableId) {
+        const officialUsername = officialUsernameById.get(conflictingStableId);
+        if (officialUsername && officialUsername !== username) continue;
+      }
       // The current official handle belongs to stableExisting. Every other candidate that
       // still occupies this handle is either an old no-ID observation or a different prior
       // immutable identity. Remove all of them, not just whichever happened to win Map order.
