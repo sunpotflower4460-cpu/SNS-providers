@@ -4,6 +4,13 @@ const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabi
 
 export function useModalA11y<T extends HTMLElement>(onDismiss: () => void) {
   const containerRef = useRef<T>(null);
+  // Keep the latest callback in a ref instead of the effect's dependency array.
+  // Callers typically pass an inline arrow function, which gets a new identity
+  // on every parent render; depending on it directly would tear down and
+  // re-run this effect (re-focusing the first element, re-adding the listener)
+  // on every unrelated parent re-render while the modal is open.
+  const onDismissRef = useRef(onDismiss);
+  onDismissRef.current = onDismiss;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -13,7 +20,7 @@ export function useModalA11y<T extends HTMLElement>(onDismiss: () => void) {
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
-        onDismiss();
+        onDismissRef.current();
         return;
       }
       if (event.key !== 'Tab' || !container) return;
@@ -35,7 +42,7 @@ export function useModalA11y<T extends HTMLElement>(onDismiss: () => void) {
       document.removeEventListener('keydown', handleKeyDown);
       previouslyFocused?.focus?.();
     };
-  }, [onDismiss]);
+  }, []);
 
   return containerRef;
 }

@@ -46,13 +46,27 @@ function App() {
   const [analyzingSelf, setAnalyzingSelf] = useState(false);
   const [apiNote, setApiNote] = useState(apiConfigured ? 'API接続待機' : 'ローカルモード');
   const [apiNoteIsError, setApiNoteIsError] = useState(false);
+  const [meNote, setMeNote] = useState('');
+  const [meNoteIsError, setMeNoteIsError] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(() => !hasSeenOnboarding());
   const [showManual, setShowManual] = useState(false);
   const localDay = useLocalDayKey();
 
+  // Updates the shared topbar status line. Self-analysis (Me tab) also calls
+  // noteMe() below so its own status doesn't leak into unrelated tabs/sections
+  // that read this same shared note (e.g. Discover's status chip).
   function note(text: string, isError = false) {
     setApiNote(text);
     setApiNoteIsError(isError);
+  }
+
+  // Self-analysis status, kept separate from note()/apiNote so a Discover or
+  // budget-sync message never shows up under the Me tab's self-analysis form
+  // (and vice versa) just because the user switched tabs.
+  function noteMe(text: string, isError = false) {
+    note(text, isError);
+    setMeNote(text);
+    setMeNoteIsError(isError);
   }
 
   useEffect(() => saveState(state), [state]);
@@ -185,21 +199,21 @@ function App() {
   async function analyzeMe(profileText: string, recentPostsText: string) {
     setState((current) => updateSelfProfileInputs(current, profileText, recentPostsText));
     if (!profileText.trim() && !recentPostsText.trim()) {
-      note('プロフィールまたは最近の投稿を入力してください', true);
+      noteMe('プロフィールまたは最近の投稿を入力してください', true);
       return;
     }
     if (!apiConfigured) {
-      note('Worker URLを設定すると自己分析が使えます', true);
+      noteMe('Worker URLを設定すると自己分析が使えます', true);
       return;
     }
     setAnalyzingSelf(true);
-    note('自分のアカウントをMissionから逆算して分析中…');
+    noteMe('自分のアカウントをMissionから逆算して分析中…');
     try {
       const result = await analyzeSelfProfile(state.mission, profileText, recentPostsText, state.budget.monthlyLimitUsd);
       setState((current) => applySelfAnalysis(updateSelfProfileInputs(current, profileText, recentPostsText), result.results[0], result.costUsd));
-      note(`${result.provider}で自己分析完了${result.paid ? ` · $${result.costUsd.toFixed(4)}` : ' · $0'}`);
+      noteMe(`${result.provider}で自己分析完了${result.paid ? ` · $${result.costUsd.toFixed(4)}` : ' · $0'}`);
     } catch (error) {
-      note(error instanceof Error ? `自己分析失敗: ${error.message}` : '自己分析に失敗しました', true);
+      noteMe(error instanceof Error ? `自己分析失敗: ${error.message}` : '自己分析に失敗しました', true);
     } finally {
       setAnalyzingSelf(false);
     }
@@ -227,7 +241,7 @@ function App() {
         {tab === 'today' && <Today state={state} doneToday={doneToday} onOpen={onOpen} onTab={setTab} />}
         {tab === 'discover' && <Discover state={state} candidates={active} onOpen={onOpen} onChange={setState} onDiscover={discoverCandidates} onRerank={rerankCandidates} onEnrichX={enrichXCandidates} discovering={discovering} ranking={ranking} enrichingX={enrichingX} apiNote={apiNote} apiNoteIsError={apiNoteIsError} />}
         {tab === 'relations' && <Relations state={state} onOpen={onOpen} onChange={setState} />}
-        {tab === 'me' && <Me state={state} onAnalyze={analyzeMe} analyzing={analyzingSelf} apiNote={apiNote} apiNoteIsError={apiNoteIsError} onSaveDraft={saveSelfProfileDraft} />}
+        {tab === 'me' && <Me state={state} onAnalyze={analyzeMe} analyzing={analyzingSelf} apiNote={meNote} apiNoteIsError={meNoteIsError} onSaveDraft={saveSelfProfileDraft} />}
         {tab === 'settings' && <Settings state={state} onChange={setState} onOpenManual={() => setShowManual(true)} />}
       </main>
 
@@ -427,6 +441,11 @@ function DiscoverEmptyState({ filter, storedCount, snoozedCount }: { filter: 'al
 
 function CandidateCard({ candidate, onOpen, onLater, onEditDraft, featured = false }: { candidate: Candidate; onOpen: (c: Candidate) => void; onLater: (c: Candidate) => void; onEditDraft: (id: string, draft: string) => void; featured?: boolean }) {
   const buttonLabel = candidate.recommendedAction === 'reply' ? `${platformLabel(candidate.platform)}で返信` : candidate.recommendedAction === 'unfollow_review' ? `${platformLabel(candidate.platform)}で整理確認` : `${platformLabel(candidate.platform)}で見る`;
+  // Buffer edits locally and only commit (onEditDraft -> full setState -> localStorage
+  // write) on blur, same pattern as the Mission/Me text fields, so typing a draft
+  // doesn't serialize the entire app state to localStorage on every keystroke.
+  const [draftText, setDraftText] = useState(candidate.draft ?? '');
+  useEffect(() => { setDraftText(candidate.draft ?? ''); }, [candidate.aiDraft]);
   return <article className={featured ? 'candidate-card featured' : 'candidate-card'}>
     <div className="candidate-head">
       <div className={`platform-avatar ${candidate.platform}`}>{candidate.platform === 'x' ? 'X' : '◎'}</div>
@@ -438,12 +457,12 @@ function CandidateCard({ candidate, onOpen, onLater, onEditDraft, featured = fal
     <p className="reason">{candidate.reason}</p>
     {candidate.strategy && <div className="strategy-note"><span>AIの提案</span><p>{candidate.strategy}</p></div>}
     <div className="tags">{candidate.tags.map((tag) => <span key={tag}>#{tag}</span>)}</div>
-    {candidate.draft && <div className="draft-box">
+    {candidate.aiDraft !== undefined && <div className="draft-box">
       <span>AI返信案 · 編集できます</span>
-      <textarea value={candidate.draft} onChange={(event) => onEditDraft(candidate.id, event.target.value)} rows={3} />
+      <textarea value={draftText} onChange={(event) => setDraftText(event.target.value)} onBlur={() => onEditDraft(candidate.id, draftText)} rows={3} />
       <div className="draft-box-actions">
-        {candidate.aiDraft && candidate.draft !== candidate.aiDraft && <button className="ghost-button" onClick={() => onEditDraft(candidate.id, candidate.aiDraft!)}>元のAI案に戻す</button>}
-        <button onClick={() => copyDraft(candidate.draft!)}>コピー</button>
+        {draftText !== candidate.aiDraft && <button className="ghost-button" onClick={() => { setDraftText(candidate.aiDraft!); onEditDraft(candidate.id, candidate.aiDraft!); }}>元のAI案に戻す</button>}
+        <button disabled={!draftText} onClick={() => copyDraft(draftText)}>コピー</button>
       </div>
     </div>}
     <div className="candidate-actions">
@@ -542,6 +561,14 @@ function Settings({ state, onChange, onOpenManual }: { state: AppState; onChange
     onChange(updateMission(state, { ...state.mission, text: missionText, primaryGoal, communicationDNA }));
   }
 
+  function saveBudget() {
+    onChange({ ...state, budget: { ...state.budget, monthlyLimitUsd: Math.max(0, budget), hardLimit: true } });
+  }
+
+  function saveFollowBackDays() {
+    onChange(updateRelationshipPolicy(state, { ...state.relationshipPolicy, followBackReviewAfterDays: Math.max(7, Math.min(90, Math.round(followBackDays || 30))) }));
+  }
+
   return <>
     <PageHeading eyebrow="SETTINGS" title="AIに目的地を教える" text="この設定が候補選び・交流文・自己改善の判断軸になります。" />
     <section className="form-card">
@@ -558,8 +585,8 @@ function Settings({ state, onChange, onOpenManual }: { state: AppState; onChange
       <label>Mission<textarea value={missionText} onChange={(event) => setMissionText(event.target.value)} onBlur={saveMissionField} /></label>
       <label>最優先ゴール<input value={primaryGoal} onChange={(event) => setPrimaryGoal(event.target.value)} onBlur={saveMissionField} /></label>
       <label>Communication DNA<textarea value={communicationDNA} onChange={(event) => setCommunicationDNA(event.target.value)} onBlur={saveMissionField} /></label>
-      <label>月間AI / API予算 <span className="inline-value">${budget.toFixed(2)}</span><input className="range" type="range" min="0" max="10" step="0.5" value={budget} onChange={(event) => { const value = Number(event.target.value); setBudget(value); onChange({ ...state, budget: { ...state.budget, monthlyLimitUsd: Math.max(0, value), hardLimit: true } }); }} /></label>
-      <label>フォローバック整理レビュー <span className="inline-value">{followBackDays}日後</span><input className="range" type="range" min="7" max="90" step="1" value={followBackDays} onChange={(event) => { const value = Number(event.target.value); setFollowBackDays(value); onChange(updateRelationshipPolicy(state, { ...state.relationshipPolicy, followBackReviewAfterDays: Math.max(7, Math.min(90, Math.round(value || 30))) })); }} /></label>
+      <label>月間AI / API予算 <span className="inline-value">${budget.toFixed(2)}</span><input className="range" type="range" min="0" max="10" step="0.5" value={budget} onChange={(event) => setBudget(Number(event.target.value))} onBlur={saveBudget} /></label>
+      <label>フォローバック整理レビュー <span className="inline-value">{followBackDays}日後</span><input className="range" type="range" min="7" max="90" step="1" value={followBackDays} onChange={(event) => setFollowBackDays(Number(event.target.value))} onBlur={saveFollowBackDays} /></label>
       <div className="hard-limit"><span>HARD LIMIT</span><strong>ON</strong><p>この上限を超える有料API処理は実行しません。</p></div>
       <button className="primary-button" onClick={persist}>設定を保存</button>
       {justSaved && <p className="form-note success">保存しました</p>}
