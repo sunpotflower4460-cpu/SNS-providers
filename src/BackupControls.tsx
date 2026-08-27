@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { apiConfigured, fetchBudget } from './api';
-import { downloadBackup, readBackup } from './backup';
+import { downloadBackup, normalizeAppState, readBackup } from './backup';
 import InstallControls from './InstallControls';
 import InstagramAccountControls from './InstagramAccountControls';
 import { detachExternalAccountSummaries } from './restoreSafety';
@@ -49,7 +49,21 @@ export default function BackupControls({ state, onRestore }: { state: AppState; 
     if (!pendingRestore || busy) return;
     setBusy(true);
     try {
-      updateState(pendingRestore);
+      const fingerprintAtConfirm = stateFingerprint(latestStateRef.current);
+      // Confirm can race with auto-replenish / ranking / SNS sync. Apply only if local
+      // state is still the same snapshot the user reviewed when pressing restore.
+      let conflicted = false;
+      updateState((current) => {
+        if (stateFingerprint(current) !== fingerprintAtConfirm) {
+          conflicted = true;
+          return current;
+        }
+        return pendingRestore;
+      });
+      if (conflicted) {
+        setStatus('復元の確定中にこの端末のデータが変更されたため、上書きせず停止しました。もう一度バックアップを選んで復元してください。');
+        return;
+      }
       setPendingRestore(null);
       setPendingFileName('');
       const token = getSyncToken().trim();
@@ -129,4 +143,8 @@ export default function BackupControls({ state, onRestore }: { state: AppState; 
       </div>
     </details>
   </div>;
+}
+
+function stateFingerprint(state: AppState) {
+  return JSON.stringify(normalizeAppState(state));
 }

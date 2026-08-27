@@ -267,18 +267,29 @@ function preservePostSnapshotFollowState(before: AppState, after: AppState, resu
   let changed = false;
   const candidates = after.candidates.map((candidate) => {
     const prior = beforeById.get(candidate.id);
-    if (!prior?.followedAt || candidate.followBack !== false || prior.followBack === false) return candidate;
+    if (!prior?.followedAt) return candidate;
     const followedAtMs = new Date(prior.followedAt).getTime();
     if (!Number.isFinite(followedAtMs) || followedAtMs <= startedAtMs) return candidate;
-    // This follow began after the server captured the X observation boundary. The follower
-    // snapshot (including a 20-hour cache) cannot prove a negative about that newer follow.
-    // Preserve the latest local unknown state until a later X cycle actually observes it.
-    changed = true;
-    return {
-      ...candidate,
-      followBack: prior.followBack,
-      recommendedAction: candidate.recommendedAction === 'unfollow_review' ? 'review' as const : candidate.recommendedAction,
-    };
+    // This follow began after the server captured the X observation boundary. A complete
+    // following/followers snapshot (including a 20-hour cache) cannot prove absence or a
+    // non-follow-back about that newer follow. Restore wiped follow state and reject
+    // negatives until a later fresh cycle actually observes the post-boundary follow.
+    let next = candidate;
+    let localChanged = false;
+    if (!candidate.followedAt) {
+      next = { ...next, followedAt: prior.followedAt };
+      localChanged = true;
+    }
+    if (candidate.followBack === false && prior.followBack !== false) {
+      next = {
+        ...next,
+        followBack: prior.followBack,
+        recommendedAction: next.recommendedAction === 'unfollow_review' ? 'review' as const : next.recommendedAction,
+      };
+      localChanged = true;
+    }
+    if (localChanged) changed = true;
+    return localChanged ? next : candidate;
   });
   return changed ? { ...after, candidates } : after;
 }

@@ -146,9 +146,10 @@ if (!sync.includes('MAX_REMOTE_CLOCK_SKEW_MS = 5 * 60 * 1000')
 }
 
 if (!syncControls.includes('const latestStateRef = useRef(state);')
-  || !syncControls.includes('latestStateRef.current = state;')
+  || !syncControls.includes('latestStateRef.current = state')
   || (syncControls.match(/const localFingerprintAtStart = stateFingerprint\(latestStateRef\.current\);/g) || []).length < 2
-  || !syncControls.includes('if (stateFingerprint(latestStateRef.current) !== localFingerprintAtStart)')
+  || !syncControls.includes('let conflicted = false')
+  || !syncControls.includes('if (stateFingerprint(current) !== localFingerprintAtStart)')
   || !syncControls.includes('const versionCleared = clearRemoteStateVersion();')
   || !syncControls.includes('復元中にこの端末のデータが変更されたため、上書きせず停止しました')) {
   throw new Error('A slow D1 restore can again erase local work completed while the download was in flight.');
@@ -283,14 +284,25 @@ if (!xOwnedStore.includes("if (result.source !== 'cache')")
   || !store.includes('const unboundIdentityConflict = candidate.tags.includes(\'identity-conflict\')')
   || !store.includes('const bindableProfile = relatedProfile && !unboundIdentityConflict ? relatedProfile : undefined')
   || !store.includes('const followingComplete = Boolean(result.coverage?.following.complete)')
+  || !store.includes('const fromCache = result.source === \'cache\'')
+  || !store.includes('followingComplete && !fromCache')
+  || !store.includes('isFollowing && followersComplete && followedAt && !fromCache')
+  || !xOwnedStore.includes('function preservePostSnapshotFollowState(')
+  || !xOwnedStore.includes('if (!candidate.followedAt)')
+  || !xOwnedStore.includes('followedAt: prior.followedAt')
   || !daily.includes('completedTodayWithoutNewerSignal')
   || !instagramOwnedStore.includes('const unboundConflict = Boolean(')
   || !instagramOwnedStore.includes('existing = unboundConflict ? undefined : usernameFallback')
   || !providerApi.includes('const costUsd = worstCaseCost')
   || !backupControls.includes('バックアップから復元し、クラウドの利用額も最新化しました')
   || !backupControls.includes("const budget = await fetchBudget('local-user', token);")
-  || !backupControls.includes('updateState((current) => syncBudget(current, budget.usedUsd, budget.limitUsd))')) {
-  throw new Error('Post-merge guards regressed: cached follow evidence can replay, unbound identity-conflict rows can absorb official IDs, complete following cycles can leave stale unfollow advice, Today can ignore same-day reopen signals, Instagram handle-only matches can clear quarantine, paid X username lookups can under-count reserved cost, or JSON restore can skip live budget reconcile.');
+  || !backupControls.includes('updateState((current) => syncBudget(current, budget.usedUsd, budget.limitUsd))')
+  || !backupControls.includes('const fingerprintAtConfirm = stateFingerprint(latestStateRef.current)')
+  || !backupControls.includes('復元の確定中にこの端末のデータが変更されたため、上書きせず停止しました')
+  || !syncControls.includes('let conflicted = false')
+  || !syncControls.includes('復元中にこの端末のデータが変更されたため、上書きせず停止しました')
+  || !syncControls.includes('latestStateRef.current = state')) {
+  throw new Error('Post-merge guards regressed: cached follow evidence can replay, unbound identity-conflict rows can absorb official IDs, complete following cycles can leave stale unfollow advice, Today can ignore same-day reopen signals, Instagram handle-only matches can clear quarantine, paid X username lookups can under-count reserved cost, JSON/D1 restore can skip live budget reconcile or clobber concurrent local edits, or cache negatives can wipe post-snapshot follows.');
 }
 
-console.log('Regression fixes OK: provider defaults are aligned, manual and automatic candidate operations are serialized, Today completion ignores profile-only reviews and counts one aggregate self-analysis action, auto refill keeps self-work quota stable and continues multi-batch free ranking, automatic discovery guards reject future poison, slow cloud restores cannot erase newer local work, cross-device discovery retry and first-party sync leases are enforced, reserved social paths and future sync versions fail closed, X/Instagram immutable identity changes and handle renames cannot inherit or split old CRM/evidence, mixed stable/unbound restores and manual re-adds stay quarantined until identity proof, stale X enrichment cannot rewrite identity, visible result sheets are identity-bound, cleanup accounting stays distinct from profile review, exact engagement is consumed, Instagram binds the newest comment to its own concrete post target, repairs handle-renamed legacy duplicates without reactivating stale dismissals, X OAuth validates refresh-token usability, paid LLM cost stays within reservation, inbound followers stay below DM-ready, reply/like require concrete targets, CRM progression stays follow-gated, follow-back negatives require current following evidence, D1 restore reconciles live budget totals, cached follow evidence is not replayed, unbound identity conflicts stay quarantined, Today reopens on newer same-day signals, paid X username lookups keep reserved cost, and JSON restore reconciles live budget.');
+console.log('Regression fixes OK: provider defaults are aligned, manual and automatic candidate operations are serialized, Today completion ignores profile-only reviews and counts one aggregate self-analysis action, auto refill keeps self-work quota stable and continues multi-batch free ranking, automatic discovery guards reject future poison, slow cloud restores cannot erase newer local work, cross-device discovery retry and first-party sync leases are enforced, reserved social paths and future sync versions fail closed, X/Instagram immutable identity changes and handle renames cannot inherit or split old CRM/evidence, mixed stable/unbound restores and manual re-adds stay quarantined until identity proof, stale X enrichment cannot rewrite identity, visible result sheets are identity-bound, cleanup accounting stays distinct from profile review, exact engagement is consumed, Instagram binds the newest comment to its own concrete post target, repairs handle-renamed legacy duplicates without reactivating stale dismissals, X OAuth validates refresh-token usability, paid LLM cost stays within reservation, inbound followers stay below DM-ready, reply/like require concrete targets, CRM progression stays follow-gated, follow-back negatives require current following evidence, D1 restore reconciles live budget totals, cached follow evidence is not replayed, unbound identity conflicts stay quarantined, Today reopens on newer same-day signals, paid X username lookups keep reserved cost, JSON restore reconciles live budget, cache/complete snapshots cannot wipe post-boundary follows or invent negatives, and concurrent restore guards abort on newer local edits.');
