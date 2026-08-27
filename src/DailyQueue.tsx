@@ -30,12 +30,7 @@ export default function DailyQueue({ state, onOpenCandidate, onOpenMe, onOpenDis
 
   if (!items.length) {
     if (!hasAnyCandidates) {
-      return <section className="daily-queue empty">
-        <span className="eyebrow">DAILY QUEUE</span>
-        <h3>今日のキューはまだ空です</h3>
-        <p>Discoverで交流したい人を追加すると、Missionに近い順でここにおすすめが並びます。</p>
-        <button className="secondary-button" onClick={onOpenDiscover}>Discoverを開く</button>
-      </section>;
+      return null;
     }
     return <section className="daily-queue empty">
       <span className="eyebrow">DAILY QUEUE</span>

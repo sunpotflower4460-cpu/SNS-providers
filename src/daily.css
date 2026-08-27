@@ -18,6 +18,10 @@
 .queue-summary b { color: #dce6f5; font-size: 14px; }
 .queue-list { display: grid; gap: 7px; }
 .queue-row { width: 100%; display: grid; grid-template-columns: 22px 32px minmax(0,1fr) 15px; gap: 8px; align-items: center; min-height: 61px; padding: 9px; border: 1px solid rgba(255,255,255,.065); border-radius: 15px; color: inherit; background: rgba(255,255,255,.025); text-align: left; }
+.queue-row:active { filter: brightness(.92); }
+@media (hover: hover) and (pointer: fine) {
+  .queue-row:hover { filter: brightness(1.08); }
+}
 .queue-row.cleanup { border-color: rgba(255,143,159,.14); background: rgba(255,143,159,.035); }
 .queue-rank { color: #657389; font-size: 9px; text-align: center; }
 .queue-action-icon { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; color: #79e7c5; background: rgba(121,231,197,.08); font-size: 13px; font-weight: 800; }

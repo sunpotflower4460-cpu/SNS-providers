@@ -25,3 +25,7 @@
 }
 .discovery-button strong { font-size: 11px; }
 .discovery-button small { color: #8f9fb3; font-size: 8px; line-height: 1.4; }
+.discovery-button:active { filter: brightness(.92); }
+@media (hover: hover) and (pointer: fine) {
+  .discovery-button:hover { filter: brightness(1.08); }
+}

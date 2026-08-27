@@ -25,6 +25,6 @@
 }
 .workload-slider > div > span { display: grid; gap: 2px; }
 .workload-slider strong { color: #d4deeb; font-size: 10px; }
-.workload-slider small { color: #65758c; font-size: 8px; }
+.workload-slider small { color: #8494a9; font-size: 8px; }
 .workload-slider b { min-width: 32px; text-align: right; color: #79e7c5; font-size: 12px; }
 .workload-warning { color: #6e7e93 !important; font-size: 8px !important; line-height: 1.6; }

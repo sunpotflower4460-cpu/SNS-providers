@@ -25,7 +25,7 @@
 }
 .sync-footer small { color: #8494a9; font-size: 8px; }
 .sync-footer button { border: 0; background: transparent; color: #718197; font-size: 8px; }
-.sync-note { color: #65758c !important; font-size: 8px !important; line-height: 1.55; }
+.sync-note { color: #8494a9 !important; font-size: 8px !important; line-height: 1.55; }
 @media (max-width: 380px) {
   .sync-actions { grid-template-columns: 1fr; }
   .sync-actions .primary-button { grid-column: auto; }

@@ -19,12 +19,12 @@
 }
 .x-connection-details span { color: #8494a9; font-size: 9px; line-height: 1.5; }
 .x-connection-details b { color: #c8d3e2; margin-right: 5px; }
-.x-sync-summary {
+.x-sync-summary, .instagram-sync-summary {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 7px;
 }
-.x-sync-summary span {
+.x-sync-summary span, .instagram-sync-summary span {
   display: grid;
   gap: 2px;
   padding: 9px 7px;
@@ -52,4 +52,4 @@
 }
 .x-pacing-note b { color: #aebdff; font-size: 8px; }
 .x-account-actions { display: grid; gap: 7px; }
-.x-account-warning { color: #65758c !important; font-size: 8px !important; line-height: 1.55; }
+.x-account-warning { color: #8494a9 !important; font-size: 8px !important; line-height: 1.55; }

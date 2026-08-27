@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { GUIDE_SECTIONS } from './guideContent';
+import { useModalA11y } from './useModalA11y';
 import './guide.css';
 
 interface Props {
@@ -11,10 +12,11 @@ export default function Onboarding({ onFinish, onOpenManual }: Props) {
   const [step, setStep] = useState(0);
   const section = GUIDE_SECTIONS[step];
   const isLast = step === GUIDE_SECTIONS.length - 1;
+  const containerRef = useModalA11y<HTMLElement>(onFinish);
 
   return (
-    <div className="guide-backdrop">
-      <section className="guide-tour" role="dialog" aria-modal="true" aria-label="Social Missionの使い方">
+    <div className="guide-backdrop" onClick={onFinish}>
+      <section ref={containerRef} className="guide-tour" role="dialog" aria-modal="true" aria-label="Social Missionの使い方" tabIndex={-1} onClick={(event) => event.stopPropagation()}>
         <div className="guide-tour-top">
           <div className="guide-dots">
             {GUIDE_SECTIONS.map((item, index) => (

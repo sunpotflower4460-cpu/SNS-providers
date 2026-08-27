@@ -32,6 +32,7 @@
   line-height: 1.35;
   text-align: right;
 }
+.status-chip.error { color: var(--danger); border-color: rgba(255,143,159,.28); background: rgba(255,143,159,.07); }
 .mini-segmented {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -48,10 +49,15 @@
   background: transparent;
   font-size: 10px;
   font-weight: 700;
+  transition: color .18s ease, background .18s ease;
 }
 .mini-segmented button.active {
   color: #eef3ff;
   background: rgba(255,255,255,.08);
+}
+.mini-segmented button:active { filter: brightness(.92); transform: scale(.97); }
+@media (hover: hover) and (pointer: fine) {
+  .mini-segmented button:hover:not(.active) { filter: brightness(1.08); }
 }
 .import-row {
   display: grid;
@@ -150,6 +156,10 @@ button:disabled { opacity: .55; cursor: not-allowed; }
   background: transparent;
   text-align: left;
 }
+.relation-main:active { filter: brightness(.92); }
+@media (hover: hover) and (pointer: fine) {
+  .relation-main:hover { filter: brightness(1.08); }
+}
 .relation-main > div:nth-child(2) { display: grid; gap: 3px; min-width: 0; }
 .relation-main > div:nth-child(2) strong,
 .relation-main > div:nth-child(2) span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -172,9 +182,14 @@ button:disabled { opacity: .55; cursor: not-allowed; }
   background: transparent;
   font-size: 8px;
   font-weight: 700;
+  transition: color .18s ease, background .18s ease;
 }
 .followback-controls button.active { color: #dce5f0; background: rgba(255,255,255,.07); }
 .followback-controls button.active.warn { color: #ffc18d; background: rgba(255,153,92,.08); }
+.followback-controls button:active { filter: brightness(.92); transform: scale(.97); }
+@media (hover: hover) and (pointer: fine) {
+  .followback-controls button:hover:not(.active) { filter: brightness(1.08); }
+}
 .self-input-card,
 .self-result-card {
   margin-top: 14px;
@@ -231,6 +246,10 @@ button:disabled { opacity: .55; cursor: not-allowed; }
   background: rgba(255,255,255,.07);
   font-size: 8px;
 }
+.rewrite-box button:active { filter: brightness(.92); transform: scale(.97); }
+@media (hover: hover) and (pointer: fine) {
+  .rewrite-box button:hover { filter: brightness(1.08); }
+}
 .hard-limit,
 .policy-toggle {
   width: 100%;
@@ -252,6 +271,10 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .policy-toggle strong { font-size: 10px; }
 .policy-toggle small { color: #7f8fa5; font-size: 8px; line-height: 1.45; }
 .form-card > .policy-toggle:first-child { border-top: 0; padding-top: 0; }
+.policy-toggle:active { filter: brightness(.92); }
+@media (hover: hover) and (pointer: fine) {
+  .policy-toggle:hover { filter: brightness(1.08); }
+}
 .budget-breakdown {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
