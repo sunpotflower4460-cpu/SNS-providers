@@ -248,4 +248,32 @@ if (!xOAuth.includes('let refreshable = false;')
   throw new Error('X OAuth status can again advertise a corrupt stored refresh token as a maintainable/usable connection.');
 }
 
-console.log('Regression fixes OK: provider defaults are aligned, manual and automatic candidate operations are serialized, Today completion ignores profile-only reviews and counts one aggregate self-analysis action, auto refill keeps self-work quota stable and continues multi-batch free ranking, automatic discovery guards reject future poison, slow cloud restores cannot erase newer local work, cross-device discovery retry and first-party sync leases are enforced, reserved social paths and future sync versions fail closed, X/Instagram immutable identity changes and handle renames cannot inherit or split old CRM/evidence, mixed stable/unbound restores and manual re-adds stay quarantined until identity proof, stale X enrichment cannot rewrite identity, visible result sheets are identity-bound, cleanup accounting stays distinct from profile review, exact engagement is consumed, Instagram binds the newest comment to its own concrete post target, repairs handle-renamed legacy duplicates without reactivating stale dismissals, and X OAuth validates refresh-token usability.');
+if (!providerApi.includes('Math.min(Math.max(0, reservedUsd), Math.max(0, actual))')
+  || !providerApi.includes('const hasEngagementContext = Boolean(candidate.engagementUrl);')
+  || !providerApi.includes("recommendedAction === 'reply' || recommendedAction === 'like'")) {
+  throw new Error('Paid LLM finalization can again exceed the reserved HARD LIMIT amount, or reply/like can be recommended from relationship stage alone.');
+}
+
+if (!store.includes('return followedAt ? \'engaged\' : stage;')
+  || !store.includes('advanceRelationshipStage(candidate.stage, priorEngagements, candidate.followedAt)')
+  || !store.includes('const hasConcreteEngagementTarget = Boolean(candidate.engagementUrl);')
+  || !store.includes("(candidate.recommendedAction === 'reply' || candidate.recommendedAction === 'like') && !hasConcreteEngagementTarget")
+  || !store.includes('isFollowing && followersComplete && followedAt')
+  || !store.includes('const scale = previousUsed > 0 ? nextUsed / previousUsed : 0;')) {
+  throw new Error('CRM stage can again skip follow gates, invent reply/like surfaces without a concrete target, infer false non-follow-backs from incomplete following pages, or leave budget category totals drifting after ledger sync.');
+}
+
+if (!xOwnedStore.includes("stage: mutual ? 'following' : 'engaged'")
+  || !xOwnedStore.includes("active && isFollower ? 'engaged' as const")
+  || xOwnedStore.includes("stage: 'recognized'")
+  || xOwnedStore.includes("isFollower ? 'recognized'")) {
+  throw new Error('Inbound X followers can again start at recognized and unlock premature DM recommendations.');
+}
+
+if (!syncControls.includes('クラウドのデータを確認して復元し、利用額も最新化しました')
+  || !syncControls.includes("const budget = await fetchBudget('local-user', next);")
+  || !syncControls.includes('onRestore((current) => syncBudget(current, budget.usedUsd, budget.limitUsd))')) {
+  throw new Error('D1 restore can again leave snapshot budget totals stale relative to the live HARD LIMIT ledger.');
+}
+
+console.log('Regression fixes OK: provider defaults are aligned, manual and automatic candidate operations are serialized, Today completion ignores profile-only reviews and counts one aggregate self-analysis action, auto refill keeps self-work quota stable and continues multi-batch free ranking, automatic discovery guards reject future poison, slow cloud restores cannot erase newer local work, cross-device discovery retry and first-party sync leases are enforced, reserved social paths and future sync versions fail closed, X/Instagram immutable identity changes and handle renames cannot inherit or split old CRM/evidence, mixed stable/unbound restores and manual re-adds stay quarantined until identity proof, stale X enrichment cannot rewrite identity, visible result sheets are identity-bound, cleanup accounting stays distinct from profile review, exact engagement is consumed, Instagram binds the newest comment to its own concrete post target, repairs handle-renamed legacy duplicates without reactivating stale dismissals, X OAuth validates refresh-token usability, paid LLM cost stays within reservation, inbound followers stay below DM-ready, reply/like require concrete targets, CRM progression stays follow-gated, follow-back negatives require current following evidence, and D1 restore reconciles live budget totals.');

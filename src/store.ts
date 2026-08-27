@@ -134,11 +134,22 @@ export function applySelfAnalysis(state: AppState, result: RankResult | undefine
 }
 
 export function syncBudget(state: AppState, usedUsd: number, serverLimitUsd: number): AppState {
+  const nextUsed = Math.max(0, usedUsd);
+  const previousUsed = Math.max(0, state.budget.usedUsd);
+  // Category totals are client-side estimates. When the authoritative ledger total changes,
+  // scale them so x/llm/search never disagree with usedUsd after a cloud budget sync.
+  const scale = previousUsed > 0 ? nextUsed / previousUsed : 0;
+  const xUsd = previousUsed > 0 ? Math.max(0, state.budget.xUsd) * scale : 0;
+  const llmUsd = previousUsed > 0 ? Math.max(0, state.budget.llmUsd) * scale : 0;
+  const searchUsd = previousUsed > 0 ? Math.max(0, state.budget.searchUsd) * scale : 0;
   return {
     ...state,
     budget: {
       ...state.budget,
-      usedUsd: Math.max(0, usedUsd),
+      usedUsd: nextUsed,
+      xUsd,
+      llmUsd,
+      searchUsd,
       monthlyLimitUsd: Math.min(state.budget.monthlyLimitUsd, Math.max(0, serverLimitUsd)),
     },
   };
@@ -328,7 +339,16 @@ export function applyOwnedXSync(state: AppState, result: XOwnedSyncResponse): Ap
     const isFollower = followerSet.has(username);
     const isFollowing = followingSet.has(username);
     const followedAt = !candidate.skipped && isFollowing ? candidate.followedAt ?? syncedAt : candidate.followedAt;
-    const followBack = candidate.skipped ? candidate.followBack : isFollower ? true : followersComplete && followedAt ? false : candidate.followBack;
+    // Negative follow-back inference requires both "we still follow them" and a complete
+    // followers cycle. A historical followedAt alone must not mark non-follow-backs while
+    // following pages are still rotating / incomplete.
+    const followBack = candidate.skipped
+      ? candidate.followBack
+      : isFollower
+        ? true
+        : isFollowing && followersComplete && followedAt
+          ? false
+          : candidate.followBack;
     const stage = !candidate.skipped && isFollowing && (candidate.stage === 'discovered' || candidate.stage === 'interested') ? 'following' as const : candidate.stage;
     return {
       ...candidate,
@@ -453,7 +473,7 @@ export function recordInteraction(state: AppState, candidateId: string, action: 
     if (recordedAction === 'kept') {
       return {
         ...candidate,
-        stage: advanceRelationshipStage(candidate.stage, priorEngagements),
+        stage: advanceRelationshipStage(candidate.stage, priorEngagements, candidate.followedAt),
         relationshipScore: addRelationshipScore(candidate.relationshipScore, 12),
         lastInteractionAt: now,
       };
@@ -472,8 +492,13 @@ export function recordInteraction(state: AppState, candidateId: string, action: 
   return refreshRelationshipAdvice({ ...state, interactions, candidates });
 }
 
-function advanceRelationshipStage(stage: Candidate['stage'], priorEngagements: number): Candidate['stage'] {
-  if (stage === 'discovered' || stage === 'interested' || stage === 'following') return 'engaged';
+function advanceRelationshipStage(stage: Candidate['stage'], priorEngagements: number, followedAt?: string): Candidate['stage'] {
+  // Keep CRM progression conservative: discovered/interested contacts must have a recorded
+  // follow before "kept" engagement can promote them into engaged/DM-adjacent stages.
+  if (stage === 'discovered' || stage === 'interested') {
+    return followedAt ? 'engaged' : stage;
+  }
+  if (stage === 'following') return 'engaged';
   if (stage === 'engaged' && priorEngagements >= 1) return 'recognized';
   if (stage === 'recognized' && priorEngagements >= 2) return 'conversation';
   if (stage === 'conversation' && priorEngagements >= 4) return 'relationship';
@@ -539,7 +564,9 @@ function normalizeLocalRelationshipAction(candidate: Candidate): Candidate {
       strategy: candidate.strategy || '現在の@usernameと過去の関係履歴が同じ人物に属すると確認できるまで、直接アクションを停止します。',
     };
   }
-  const replyReady = Boolean(candidate.engagementUrl) || ['engaged', 'recognized', 'conversation', 'relationship'].includes(candidate.stage);
+  // Reply/like need a concrete post/media URL. Stage alone must never invent a reply surface
+  // (inbound followers can be engaged without any conversation target).
+  const hasConcreteEngagementTarget = Boolean(candidate.engagementUrl);
   const dmReady = ['recognized', 'conversation', 'relationship'].includes(candidate.stage);
   if (candidate.recommendedAction === 'follow' && candidate.followedAt) {
     return {
@@ -557,12 +584,12 @@ function normalizeLocalRelationshipAction(candidate: Candidate): Candidate {
       strategy: 'フォロー済みの記録がないため、フォロー解除候補にはせず現在の状態を確認します。',
     };
   }
-  if (candidate.recommendedAction === 'reply' && !replyReady) {
+  if ((candidate.recommendedAction === 'reply' || candidate.recommendedAction === 'like') && !hasConcreteEngagementTarget) {
     return {
       ...candidate,
       recommendedAction: 'review',
       draft: undefined,
-      strategy: '返信できる具体的な接点がまだ確認できないため、まずプロフィールや実際の投稿を確認します。',
+      strategy: '反応できる具体的な投稿がまだ確認できないため、まずプロフィールや実際の発信を確認します。',
     };
   }
   if (candidate.recommendedAction === 'dm' && !dmReady) {

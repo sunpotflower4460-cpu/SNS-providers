@@ -112,7 +112,15 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
       const restored = detachExternalAccountSummaries(normalizeAppState(result.state));
       validateAppState(restored);
       onRestore(restored);
-      setStatus(`クラウドのデータを確認して復元しました · ${result.updatedAt ? new Date(result.updatedAt).toLocaleString('ja-JP') : '日時不明'} · SNSアカウントの現在情報は次回の公式同期で更新します${persistenceWarning}`);
+      // Snapshot budget totals can lag the live HARD LIMIT ledger. Reconcile from the
+      // Worker after restore so the UI and client paid ceilings match current spend.
+      try {
+        const budget = await fetchBudget('local-user', next);
+        onRestore((current) => syncBudget(current, budget.usedUsd, budget.limitUsd));
+        setStatus(`クラウドのデータを確認して復元し、利用額も最新化しました · ${result.updatedAt ? new Date(result.updatedAt).toLocaleString('ja-JP') : '日時不明'} · SNSアカウントの現在情報は次回の公式同期で更新します${persistenceWarning}`);
+      } catch {
+        setStatus(`クラウドのデータを確認して復元しました · ${result.updatedAt ? new Date(result.updatedAt).toLocaleString('ja-JP') : '日時不明'} · 利用額の再取得は後でキー確認時に更新します · SNSアカウントの現在情報は次回の公式同期で更新します${persistenceWarning}`);
+      }
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'クラウドからの復元に失敗しました');
     } finally {

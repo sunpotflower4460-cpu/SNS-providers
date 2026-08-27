@@ -277,7 +277,8 @@ requireAll(providerApi, [
   'PAID_INPUT_FRAMING_TOKENS = 4096',
   'return reservedUsd;',
   'calculateCost(result.usage, rates, preflightUsd)',
-], 'Paid LLM HARD LIMIT preflight can underestimate multibyte prompts or shrink an unknown-usage reservation.');
+  'Math.min(Math.max(0, reservedUsd), Math.max(0, actual))',
+], 'Paid LLM HARD LIMIT preflight can underestimate multibyte prompts, shrink an unknown-usage reservation, or finalize above the reserved amount.');
 
 requireAll(providerApi, [
   "return /^[A-Za-z0-9_]{1,15}$/.test(username) ? username : '';",
