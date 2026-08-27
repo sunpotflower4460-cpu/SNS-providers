@@ -66,7 +66,16 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
       }
       existing = undefined;
     } else {
-      existing = usernameGroup[0];
+      const usernameFallback = usernameGroup[0];
+      // An unbound identity-conflict row must not absorb the current Graph identity from a
+      // handle-only match. Doing so would clear quarantine on the next update and attach
+      // older CRM history to whoever currently owns the Instagram username.
+      const unboundConflict = Boolean(
+        usernameFallback
+        && usernameFallback.tags.includes('identity-conflict')
+        && !stableInstagramId(usernameFallback.platformUserId),
+      );
+      existing = unboundConflict ? undefined : usernameFallback;
     }
 
     const freshContact = !existing?.skipped || isFreshCommentAfterDismissal(existing, engager.lastCommentAt);

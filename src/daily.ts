@@ -25,11 +25,6 @@ export function buildDailyQueue(state: AppState): DailyQueueItem[] {
   const today = localDateKey(new Date());
   const limits = workloadLimits(state);
   const now = Date.now();
-  const completedCandidateIds = new Set(
-    state.interactions
-      .filter((interaction) => localDateKey(new Date(interaction.at)) === today)
-      .map((interaction) => interaction.candidateId),
-  );
   const lastHandledAt = latestInteractionByCandidate(state);
   const selfAnalyzedToday = state.selfProfile.analyzedAt
     ? localDateKey(new Date(state.selfProfile.analyzedAt)) === today
@@ -38,7 +33,7 @@ export function buildDailyQueue(state: AppState): DailyQueueItem[] {
   const relationshipItems = state.candidates
     .filter((candidate) => !candidate.skipped
       && !isSnoozed(candidate, now)
-      && !completedCandidateIds.has(candidate.id)
+      && !completedTodayWithoutNewerSignal(candidate, lastHandledAt.get(candidate.id), today, now)
       && !isCoolingDown(candidate, lastHandledAt.get(candidate.id), now))
     .map((candidate) => candidateToQueueItem(candidate, now))
     .sort((a, b) => b.priority - a.priority);
@@ -158,6 +153,24 @@ function latestInteractionByCandidate(state: AppState) {
     }
   }
   return latest;
+}
+
+function completedTodayWithoutNewerSignal(
+  candidate: Candidate,
+  handledAt: string | undefined,
+  today: string,
+  now: number,
+) {
+  if (!handledAt || localDateKey(new Date(handledAt)) !== today) return false;
+  const handledMs = new Date(handledAt).getTime();
+  if (!Number.isFinite(handledMs)) return false;
+  // Same reopen rule as cooldown: a meaningfully newer inbound signal should put the
+  // person back into Today even if we already recorded an action earlier today.
+  const signalMs = candidate.lastInteractionAt ? new Date(candidate.lastInteractionAt).getTime() : Number.NaN;
+  if (Number.isFinite(signalMs) && signalMs > handledMs + 60_000 && signalMs <= now + 5 * 60 * 1000) {
+    return false;
+  }
+  return true;
 }
 
 function isCoolingDown(candidate: Candidate, handledAt: string | undefined, now: number) {

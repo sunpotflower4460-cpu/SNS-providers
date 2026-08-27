@@ -166,10 +166,12 @@ export default {
 
         try {
           // fetchXProfiles validates raw identity/schema/count coherence against the exact
-          // requested handle set before this conservative reservation is ever shrunk.
+          // requested handle set before this conservative reservation is ever finalized.
           const profiles = await fetchXProfiles(usernames, env.X_BEARER_TOKEN);
-          const costUsd = profiles.length * unitCost;
-          await finalizeReservation(env, reservationId, 'user_read', costUsd, { prompt_tokens: profiles.length });
+          // Username lookups may be billed for the requested set even when some handles
+          // are missing. Never shrink below the reserved worst-case amount.
+          const costUsd = worstCaseCost;
+          await finalizeReservation(env, reservationId, 'user_read', costUsd, { prompt_tokens: usernames.length });
           return json({ enabled: true, costUsd, profiles }, 200, cors);
         } catch (error) {
           // The request may already have reached X and become billable before a network,

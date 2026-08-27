@@ -1,9 +1,12 @@
 import { useRef, useState } from 'react';
+import { apiConfigured, fetchBudget } from './api';
 import { downloadBackup, readBackup } from './backup';
 import InstallControls from './InstallControls';
 import InstagramAccountControls from './InstagramAccountControls';
 import { detachExternalAccountSummaries } from './restoreSafety';
+import { getSyncToken } from './sync';
 import SyncControls from './SyncControls';
+import { syncBudget } from './store';
 import WorkloadControls from './WorkloadControls';
 import XAccountControls from './XAccountControls';
 import type { AppState, AppStateUpdater } from './types';
@@ -13,6 +16,7 @@ export default function BackupControls({ state, onRestore }: { state: AppState; 
   const latestStateRef = useRef(state);
   latestStateRef.current = state;
   const [status, setStatus] = useState('');
+  const [busy, setBusy] = useState(false);
   const [pendingRestore, setPendingRestore] = useState<AppState | null>(null);
   const [pendingFileName, setPendingFileName] = useState('');
 
@@ -41,12 +45,33 @@ export default function BackupControls({ state, onRestore }: { state: AppState; 
     }
   }
 
-  function confirmRestore() {
-    if (!pendingRestore) return;
-    updateState(pendingRestore);
-    setPendingRestore(null);
-    setPendingFileName('');
-    setStatus('バックアップから復元しました。SNSアカウントの現在情報は次回の公式同期で更新されます');
+  async function confirmRestore() {
+    if (!pendingRestore || busy) return;
+    setBusy(true);
+    try {
+      updateState(pendingRestore);
+      setPendingRestore(null);
+      setPendingFileName('');
+      const token = getSyncToken().trim();
+      // Mirror D1 restore: when the Worker + personal key are available, reconcile the
+      // live HARD LIMIT ledger so snapshot spend does not leave the UI/client ceiling stale.
+      if (apiConfigured && token) {
+        try {
+          const budget = await fetchBudget('local-user', token);
+          updateState((current) => syncBudget(current, budget.usedUsd, budget.limitUsd));
+          setStatus('バックアップから復元し、クラウドの利用額も最新化しました。SNSアカウントの現在情報は次回の公式同期で更新されます');
+          return;
+        } catch {
+          setStatus('バックアップから復元しました。利用額の再取得は後でキー確認時に更新します。SNSアカウントの現在情報は次回の公式同期で更新されます');
+          return;
+        }
+      }
+      setStatus(apiConfigured
+        ? 'バックアップから復元しました。個人管理キー未設定のため利用額はバックアップ値のままです。SNSアカウントの現在情報は次回の公式同期で更新されます'
+        : 'バックアップから復元しました。SNSアカウントの現在情報は次回の公式同期で更新されます');
+    } finally {
+      setBusy(false);
+    }
   }
 
   function cancelRestore() {
@@ -94,8 +119,8 @@ export default function BackupControls({ state, onRestore }: { state: AppState; 
           {pendingRestore && <div className="restore-confirm" role="alert">
             <div><strong>現在のデータを置き換えます</strong><span>{pendingFileName || '選択したバックアップ'}を復元すると、今のMission・候補・関係・設定がバックアップ内容へ変わります。SNSアカウントの現在情報はバックアップ値を使わず、次回の公式同期で確認します。</span></div>
             <div className="restore-confirm-actions">
-              <button className="secondary-button" onClick={cancelRestore}>キャンセル</button>
-              <button className="primary-button" onClick={confirmRestore}>この内容で復元</button>
+              <button className="secondary-button" disabled={busy} onClick={cancelRestore}>キャンセル</button>
+              <button className="primary-button" disabled={busy} onClick={() => void confirmRestore()}>この内容で復元</button>
             </div>
           </div>}
 
