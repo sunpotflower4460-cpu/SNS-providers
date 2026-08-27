@@ -54,10 +54,12 @@ if (!xAccount.includes("!candidate.tags.includes('identity-conflict')")) {
 }
 
 const requiredOwnedSyncGuards = [
-  'const identityResetState = resetOwnedXIdentityChanges(stableIdentityState, result, identityChangedIds);',
-  'const identitySafeState = reconcileOwnedXStableIdentities(identityResetState, result);',
+  'fromCache ? state : reconcileOwnedXStableIdentities(state, result)',
+  'resetOwnedXIdentityChanges(stableIdentityState, result, identityChangedIds)',
+  'reconcileOwnedXStableIdentities(identityResetState, result)',
   'const byUsername = new Map<string, Candidate[]>();',
   'for (const conflicting of usernameExisting) {',
+  'if (officialUsername && officialUsername !== username) continue;',
   "if (candidate.tags.includes('identity-conflict')) return candidate;",
   "const identityConflictResolved = stableExisting.tags.includes('identity-conflict');",
   "tags: stableExisting.tags.filter((tag) => tag !== 'identity-conflict')",
@@ -72,10 +74,12 @@ const requiredInstagramGuards = [
   'const byUsername = new Map<string, Candidate[]>();',
   'const knownUsernameIdentities = new Set(usernameGroup.map((candidate) => stableInstagramId(candidate.platformUserId)).filter(Boolean));',
   'for (const conflicting of usernameGroup) {',
-  'else if (incomingStableId && knownUsernameIdentities.size > 1) {',
+  'else if (!fromCache && incomingStableId && knownUsernameIdentities.size > 1) {',
   "const identityConflictResolved = Boolean(stableExisting && existing.tags.includes('identity-conflict'));",
   "existing.tags.filter((tag) => tag !== 'identity-conflict')",
   'conflictingRemovedIds.add(conflicting.id);',
+  'if (officialUsername && officialUsername !== username) continue;',
+  'if (fromCache) continue;',
   'byUsername.set(username, [candidate]);',
 ];
 for (const fragment of requiredInstagramGuards) {

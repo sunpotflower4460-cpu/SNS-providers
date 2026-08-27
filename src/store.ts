@@ -333,6 +333,10 @@ export function applyOwnedXSync(state: AppState, result: XOwnedSyncResponse): Ap
   const syncedAt = result.syncedAt || new Date().toISOString();
 
   const followingComplete = Boolean(result.coverage?.following.complete);
+  // Cached snapshots may still advertise previously-complete coverage. Negatives and
+  // follow-state clears must only come from a freshly observed owned sync; cache hits may
+  // still promote positive follower evidence.
+  const fromCache = result.source === 'cache';
   const candidates = state.candidates.map((candidate) => {
     if (candidate.platform !== 'x') return candidate;
     const username = candidate.username.toLowerCase();
@@ -345,23 +349,23 @@ export function applyOwnedXSync(state: AppState, result: XOwnedSyncResponse): Ap
     // unbound identity-conflict row. That would let the next stable-id reconcile clear
     // quarantine and absorb old CRM history into whoever owns the handle now.
     const bindableProfile = relatedProfile && !unboundIdentityConflict ? relatedProfile : undefined;
-    // When a full following cycle proves we no longer follow them, clear historical
+    // When a fresh full following cycle proves we no longer follow them, clear historical
     // follow state so unfollow_review cannot linger for already-unfollowed accounts.
+    // Never clear from cache: the snapshot may predate a follow recorded after startedAt.
     const followedAt = candidate.skipped
       ? candidate.followedAt
       : isFollowing
         ? candidate.followedAt ?? syncedAt
-        : followingComplete
+        : followingComplete && !fromCache
           ? undefined
           : candidate.followedAt;
-    // Negative follow-back inference requires both "we still follow them" and a complete
-    // followers cycle. A historical followedAt alone must not mark non-follow-backs while
-    // following pages are still rotating / incomplete.
+    // Negative follow-back inference requires a fresh complete followers cycle while we
+    // still follow them. Cache hits may confirm positives but must not invent negatives.
     const followBack = candidate.skipped
       ? candidate.followBack
       : isFollower
         ? true
-        : isFollowing && followersComplete && followedAt
+        : isFollowing && followersComplete && followedAt && !fromCache
           ? false
           : !followedAt
             ? null

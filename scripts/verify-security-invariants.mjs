@@ -203,7 +203,9 @@ if (!backupControls.includes('latestStateRef.current = state')
   throw new Error('Async settings/X/Instagram completions can overwrite newer local state with a stale request-time snapshot.');
 }
 if (!syncControls.includes('const latestStateRef = useRef(state);')
-  || !syncControls.includes('if (stateFingerprint(latestStateRef.current) !== localFingerprintAtStart)')
+  || !syncControls.includes('latestStateRef.current = state')
+  || !syncControls.includes('let conflicted = false')
+  || !syncControls.includes('if (stateFingerprint(current) !== localFingerprintAtStart)')
   || !syncControls.includes('復元中にこの端末のデータが変更されたため、上書きせず停止しました')) {
   throw new Error('A slow D1 restore can overwrite newer local work that completed while the download was in flight.');
 }

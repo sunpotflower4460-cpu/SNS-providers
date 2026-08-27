@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { apiConfigured, fetchBudget } from './api';
 import { normalizeAppState, validateAppState } from './backup';
 import { detachExternalAccountSummaries } from './restoreSafety';
@@ -12,11 +12,10 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
   const [status, setStatus] = useState(apiConfigured ? 'まだ同期していません' : 'クラウド接続は未設定です');
   const [busy, setBusy] = useState(false);
   const [showToken, setShowToken] = useState(false);
+  // Keep the ref current during render (not only after useEffect) so a download/upload
+  // that overlaps auto-rank / SNS sync / Today writes sees the latest committed state.
   const latestStateRef = useRef(state);
-
-  useEffect(() => {
-    latestStateRef.current = state;
-  }, [state]);
+  latestStateRef.current = state;
 
   async function saveToken() {
     const previous = getSyncToken().trim();
@@ -98,20 +97,25 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
         return;
       }
 
+      const restored = detachExternalAccountSummaries(normalizeAppState(result.state));
+      validateAppState(restored);
       // A remote download can take long enough for Today, X/Instagram sync, or another
-      // local edit to finish meanwhile. Replacing state after that would silently erase
-      // the newer local work. Abort the restore and clear the optimistic version that the
-      // download learned, so a later upload cannot overwrite remote data without a fresh
-      // download/restore decision.
-      if (stateFingerprint(latestStateRef.current) !== localFingerprintAtStart) {
+      // local edit to finish meanwhile. Replace only through a functional updater that
+      // re-checks the latest state; abort and clear the optimistic version if local work
+      // advanced, so a later upload cannot overwrite remote data without a fresh restore.
+      let conflicted = false;
+      onRestore((current) => {
+        if (stateFingerprint(current) !== localFingerprintAtStart) {
+          conflicted = true;
+          return current;
+        }
+        return restored;
+      });
+      if (conflicted) {
         const versionCleared = clearRemoteStateVersion();
         setStatus(`復元中にこの端末のデータが変更されたため、上書きせず停止しました。もう一度「クラウドから復元」を実行してください${tokenPersisted && versionCleared ? '' : ' · 端末の同期情報を完全に保存できないためストレージ設定も確認してください'}`);
         return;
       }
-
-      const restored = detachExternalAccountSummaries(normalizeAppState(result.state));
-      validateAppState(restored);
-      onRestore(restored);
       // Snapshot budget totals can lag the live HARD LIMIT ledger. Reconcile from the
       // Worker after restore so the UI and client paid ceilings match current spend.
       try {
