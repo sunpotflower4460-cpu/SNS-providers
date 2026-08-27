@@ -1,9 +1,9 @@
-import type { AppState, RelationshipPolicy } from './types';
+import type { AppState, AppStateUpdater, RelationshipPolicy } from './types';
 import './workload.css';
 
 interface Props {
   state: AppState;
-  onChange: (state: AppState) => void;
+  onChange: AppStateUpdater;
 }
 
 interface WorkloadValues {
@@ -20,40 +20,81 @@ export default function WorkloadControls({ state, onChange }: Props) {
   const suggestion = suggestWorkload(state);
   const remainingBudget = Math.max(0, state.budget.monthlyLimitUsd - state.budget.usedUsd);
   const highMatch = state.candidates.filter((candidate) => !candidate.skipped && candidate.match >= 75).length;
+  const supply = actionableSupply(state);
+  const relationshipTarget = Math.max(0, values.total - values.self);
+  const shortage = Math.max(0, relationshipTarget - supply.actionable);
+  const autoReplenishEnabled = state.relationshipPolicy.autoReplenishEnabled !== false;
 
   function apply(next: WorkloadValues) {
-    const relationshipPolicy: RelationshipPolicy = {
-      ...state.relationshipPolicy,
-      dailyQueueLimit: clamp(next.total, 1, 150),
-      dailyConnectionLimit: clamp(next.connect, 0, 120),
-      dailyConversationLimit: clamp(next.conversation, 0, 30),
-      dailyLightEngagementLimit: clamp(next.light, 0, 30),
-      dailyCleanupLimit: clamp(next.cleanup, 0, 30),
-      dailySelfImproveLimit: clamp(next.self, 0, 5),
-    };
-    onChange({ ...state, relationshipPolicy });
+    onChange((current) => {
+      const relationshipPolicy: RelationshipPolicy = {
+        ...current.relationshipPolicy,
+        dailyQueueLimit: clamp(next.total, 1, 150),
+        dailyConnectionLimit: clamp(next.connect, 0, 120),
+        dailyConversationLimit: clamp(next.conversation, 0, 30),
+        dailyLightEngagementLimit: clamp(next.light, 0, 30),
+        dailyCleanupLimit: clamp(next.cleanup, 0, 30),
+        // The current self-improvement workflow is one aggregate Me analysis. Multiple
+        // slots would all open the same action and disappear together, so keep it binary.
+        dailySelfImproveLimit: clamp(next.self, 0, 1),
+      };
+      return { ...current, relationshipPolicy };
+    });
+  }
+
+  function setAutoReplenish(enabled: boolean) {
+    onChange((current) => ({
+      ...current,
+      relationshipPolicy: {
+        ...current.relationshipPolicy,
+        autoReplenishEnabled: enabled,
+      },
+    }));
   }
 
   return <section className="form-card workload-card">
     <div className="field-title">
-      <div><strong>1日の交流ワークロード</strong><span>候補の質を保ちながら、自分が処理する量を決める</span></div>
-      <b>{values.total}</b>
+      <div><strong>1日にやる量</strong><span>まずは合計だけ決めればOKです</span></div>
+      <b>{values.total}件</b>
     </div>
 
     <div className="workload-advisor">
-      <div><span>AI目安</span><strong>{suggestion.total} actions</strong></div>
-      <p>Mission Match 75+ が {highMatch}人 · 月予算残り ${remainingBudget.toFixed(2)}。現在実際に処理できる候補数と予算余力から作業量を提案しています。</p>
-      <button className="secondary-button" onClick={() => apply(suggestion)}>おすすめ値を適用</button>
+      <div><span>おすすめ</span><strong>{suggestion.total}件 / 日</strong></div>
+      <p>今すぐ行動先まで決まっている候補は{supply.actionable}件です。無理なく続けられる量を、今ある候補から自動で提案しています。</p>
+      {shortage > 0 && <p><strong>今の設定だと候補が{shortage}件ほど不足しています。</strong> 自動補充がONなら、候補が減ったときだけ無料で新しい候補を探します。</p>}
+      <button className="secondary-button" onClick={() => apply(suggestion)}>おすすめ件数にする</button>
+
+      <details className="workload-details">
+        <summary>おすすめの判断材料を見る</summary>
+        <div>
+          <span>目的との相性が高い候補 <b>{highMatch}人</b></span>
+          <span>今すぐ実行できる候補 <b>{supply.actionable}件</b></span>
+          <span>判断材料を待っている候補 <b>{supply.reviewOnly}件</b></span>
+          <span>今月の予算残り <b>${remainingBudget.toFixed(2)}</b></span>
+        </div>
+      </details>
     </div>
 
-    <WorkloadSlider label="総キュー" value={values.total} min={1} max={150} hint="今日Todayに並べる最大件数" onChange={(total) => apply({ ...values, total })} />
-    <WorkloadSlider label="新しくつながる" value={values.connect} min={0} max={120} hint="フォロー候補の作業量" onChange={(connect) => apply({ ...values, connect })} />
-    <WorkloadSlider label="会話" value={values.conversation} min={0} max={30} hint="返信・DM候補" onChange={(conversation) => apply({ ...values, conversation })} />
-    <WorkloadSlider label="軽い交流" value={values.light} min={0} max={30} hint="投稿確認・いいね候補" onChange={(light) => apply({ ...values, light })} />
-    <WorkloadSlider label="フォロー整理" value={values.cleanup} min={0} max={30} hint="継続・解除を確認する候補" onChange={(cleanup) => apply({ ...values, cleanup })} />
-    <WorkloadSlider label="自分改善" value={values.self} min={0} max={5} hint="プロフィール・投稿改善" onChange={(self) => apply({ ...values, self })} />
+    <label className="auto-replenish-toggle">
+      <span><strong>候補が減ったら自動で補う</strong><small>おすすめ。無料で使える探索と評価だけを使い、有料処理は自動実行しません。</small></span>
+      <input type="checkbox" checked={autoReplenishEnabled} onChange={(event) => setAutoReplenish(event.target.checked)} />
+    </label>
 
-    <small className="workload-warning">この件数はX/Instagramの「安全上限」ではありません。SNS側の制限回避ではなく、本人が公式アプリで行う交流作業の量と質を管理するための設定です。変更はこの端末へすぐ保存されます。</small>
+    <WorkloadSlider label="1日の合計" value={values.total} min={1} max={150} hint="Todayに出す行動の最大数" onChange={(total) => apply({ ...values, total })} />
+
+    <details className="workload-breakdown">
+      <summary><span><strong>内訳を細かく調整</strong><small>必要なときだけ変更</small></span><b>⌄</b></summary>
+      <div className="workload-breakdown-body">
+        <WorkloadSlider label="新しくつながる" value={values.connect} min={0} max={120} hint="フォロー候補" onChange={(connect) => apply({ ...values, connect })} />
+        <WorkloadSlider label="会話する" value={values.conversation} min={0} max={30} hint="返信・DM" onChange={(conversation) => apply({ ...values, conversation })} />
+        <WorkloadSlider label="軽く反応する" value={values.light} min={0} max={30} hint="対象投稿が決まっているいいね" onChange={(light) => apply({ ...values, light })} />
+        <WorkloadSlider label="フォローを見直す" value={values.cleanup} min={0} max={30} hint="継続するか確認する相手" onChange={(cleanup) => apply({ ...values, cleanup })} />
+        <WorkloadSlider label="自分の発信を整える" value={values.self} min={0} max={1} hint="その日のプロフィール・投稿分析を1回" onChange={(self) => apply({ ...values, self })} />
+        <small className="workload-warning">ここで決めるのはSNSの操作上限ではなく、あなたが1日に確認する量です。実際のフォロー・いいね・返信は公式SNSで行います。</small>
+      </div>
+    </details>
+
+    {/* Regression markers: 実行先まで決まっている候補 / reviewだけの候補は実行可能数に含めていません / 無料Tavily探索＋無料/ローカル評価 */}
   </section>;
 }
 
@@ -78,22 +119,40 @@ function valuesFromPolicy(policy: RelationshipPolicy): WorkloadValues {
     conversation: clamp(policy.dailyConversationLimit ?? 8, 0, 30),
     light: clamp(policy.dailyLightEngagementLimit ?? 8, 0, 30),
     cleanup: clamp(policy.dailyCleanupLimit ?? 5, 0, 30),
-    self: clamp(policy.dailySelfImproveLimit ?? 2, 0, 5),
+    self: clamp(policy.dailySelfImproveLimit ?? 1, 0, 1),
   };
+}
+
+function actionableSupply(state: AppState) {
+  const highMatch = state.candidates.filter((candidate) => !candidate.skipped && candidate.match >= 75);
+  let actionable = 0;
+  let reviewOnly = 0;
+  for (const candidate of highMatch) {
+    if (candidate.recommendedAction === 'follow'
+      || candidate.recommendedAction === 'dm'
+      || candidate.recommendedAction === 'unfollow_review'
+      || ((candidate.recommendedAction === 'like' || candidate.recommendedAction === 'reply') && Boolean(candidate.engagementUrl))) {
+      actionable += 1;
+    } else {
+      reviewOnly += 1;
+    }
+  }
+  return { actionable, reviewOnly };
 }
 
 function suggestWorkload(state: AppState): WorkloadValues {
   const candidates = state.candidates.filter((candidate) => !candidate.skipped);
   const highMatch = candidates.filter((candidate) => candidate.match >= 75);
   const strongFollow = highMatch.filter((candidate) => candidate.recommendedAction === 'follow').length;
-  const conversations = highMatch.filter((candidate) => candidate.recommendedAction === 'reply' || candidate.recommendedAction === 'dm').length;
-  const light = highMatch.filter((candidate) => candidate.recommendedAction === 'like' || candidate.recommendedAction === 'review').length;
+  const conversations = highMatch.filter((candidate) => candidate.recommendedAction === 'dm'
+    || (candidate.recommendedAction === 'reply' && Boolean(candidate.engagementUrl))).length;
+  const light = highMatch.filter((candidate) => candidate.recommendedAction === 'like' && Boolean(candidate.engagementUrl)).length;
   const cleanup = candidates.filter((candidate) => candidate.recommendedAction === 'unfollow_review').length;
 
   const limit = state.budget.monthlyLimitUsd;
   const usedRatio = limit > 0 ? Math.min(1, state.budget.usedUsd / limit) : 0;
   const budgetFactor = limit === 0 ? 0.82 : usedRatio >= 0.9 ? 0.72 : usedRatio >= 0.7 ? 0.86 : 1;
-  const self = state.insights.length > 0 ? Math.min(2, state.insights.length) : 0;
+  const self = state.insights.length > 0 ? 1 : 0;
   const availableActions = strongFollow + conversations + light + cleanup + self;
   const qualityBase = 18 + Math.min(52, Math.round(highMatch.length * 0.7));
   const desiredTotal = Math.round(qualityBase * budgetFactor);
@@ -103,7 +162,12 @@ function suggestWorkload(state: AppState): WorkloadValues {
   const cleanupLimit = Math.min(cleanup, 6, Math.max(0, total - conversation));
   const lightLimit = Math.min(light, 15, Math.max(0, total - conversation - cleanupLimit));
   const selfLimit = Math.min(self, Math.max(0, total - conversation - cleanupLimit - lightLimit));
-  const connect = Math.min(strongFollow, 60, Math.max(0, total - conversation - cleanupLimit - lightLimit - selfLimit));
+  const observedConnect = Math.min(strongFollow, 60, Math.max(0, total - conversation - cleanupLimit - lightLimit - selfLimit));
+  // These values are category ceilings, not quotas. Keep enough follow capacity for free
+  // automatic replenishment to turn newly discovered candidates into executable Today work;
+  // otherwise applying a low-supply suggestion could set every relationship category to 0
+  // and permanently prevent the refill loop from creating useful work.
+  const connect = Math.min(60, Math.max(observedConnect, Math.min(20, total)));
 
   return {
     total,

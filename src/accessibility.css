@@ -15,6 +15,33 @@ button {
   touch-action: manipulation;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: .48;
+  filter: saturate(.7);
+}
+
+input,
+textarea,
+select {
+  scroll-margin-block: 110px;
+}
+
+input[type="range"] {
+  min-height: 34px;
+  touch-action: pan-y;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  width: 24px;
+  height: 24px;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 24px;
+  height: 24px;
+}
+
 @media (pointer: coarse) {
   .form-card input,
   .form-card textarea,
@@ -29,7 +56,31 @@ button {
   .draft-box button,
   .coach-card button,
   .text-button {
-    min-height: 42px;
+    min-height: 44px;
+  }
+
+  input[type="range"] {
+    min-height: 44px;
+  }
+
+  input[type="range"]::-webkit-slider-thumb {
+    width: 28px;
+    height: 28px;
+  }
+
+  input[type="range"]::-moz-range-thumb {
+    width: 28px;
+    height: 28px;
+  }
+}
+
+/* iOS zooms focused text fields smaller than 16px. Keep phone inputs stable even on
+   devices/browser modes where coarse-pointer detection is unreliable. */
+@media (max-width: 640px) {
+  input:not([type="range"]):not([type="checkbox"]):not([type="radio"]),
+  textarea,
+  select {
+    font-size: 16px !important;
   }
 }
 
@@ -57,5 +108,21 @@ button {
   .relation-card,
   .daily-queue {
     border-width: 2px;
+  }
+}
+
+@media (forced-colors: active) {
+  .primary-button,
+  .secondary-button,
+  .nav-item,
+  .candidate-card,
+  .daily-queue,
+  .result-sheet {
+    forced-color-adjust: auto;
+  }
+
+  .primary-button,
+  .nav-item.active {
+    border: 1px solid ButtonText;
   }
 }

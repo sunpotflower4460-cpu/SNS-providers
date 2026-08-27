@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "security:check": "node scripts/verify-security-invariants.mjs",
+    "security:check": "node scripts/verify-security-invariants.mjs && node scripts/verify-request-context-invariants.mjs && node scripts/verify-budget-boundary-invariants.mjs && node scripts/verify-action-supply-invariants.mjs && node scripts/verify-cache-ledger-invariants.mjs && node scripts/verify-restore-identity-invariants.mjs",
+    "ux:check": "node scripts/verify-ux-invariants.mjs",
     "pwa:check": "node scripts/verify-pwa-assets.mjs",
     "dist:check": "node scripts/verify-built-pwa.mjs"
   },

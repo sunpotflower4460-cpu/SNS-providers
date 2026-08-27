@@ -46,8 +46,8 @@ INSTAGRAM_API_VERSION=
 
 # Personal control token.
 # It protects D1 state sync, budget status, AI ranking/self-analysis, Tavily discovery,
-# optional X public enrichment, X OAuth start/disconnect + owned reads, and Instagram
-# Professional engager sync. X OAuth status itself is a minimal setup/status read.
+# optional X public enrichment, X OAuth start/status/disconnect + owned reads, and Instagram
+# Professional engager sync.
 # Store only the SHA-256 hex on the Worker; the raw value stays on the user's device.
 # Example on macOS/Linux: printf '%s' 'your-long-secret' | shasum -a 256
 SYNC_TOKEN_SHA256=

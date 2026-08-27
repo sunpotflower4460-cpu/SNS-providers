@@ -9,12 +9,26 @@ export interface FollowerIdentity {
   username: string;
 }
 
+export interface FollowCycleTargetBinding {
+  key: string;
+  username: string;
+  platformUserId: string | null;
+}
+
 export interface FollowCycleEvidence {
   complete: boolean;
   cycle: number;
   targetCount: number;
   seenKeys: string[];
   unseenKeys: string[];
+  targets: FollowCycleTargetBinding[];
+}
+
+export class FollowEvidenceStorageUnavailableError extends Error {
+  constructor() {
+    super('X follow evidence storage is unavailable');
+    this.name = 'FollowEvidenceStorageUnavailableError';
+  }
 }
 
 interface TargetRow {
@@ -56,8 +70,11 @@ export async function prepareFollowCycleTargets(
       ).bind(...args).run();
     }
   } catch {
-    // Evidence is optional. Any persistence failure must disable negative inference,
-    // never turn missing evidence into a no-follow-back result.
+    // Partial/stale target rows must never survive a failed cycle initialization. If we
+    // cannot invalidate them either, abort before any paid provider read begins.
+    if (!(await invalidateCycle(db, userId, cycle))) {
+      throw new FollowEvidenceStorageUnavailableError();
+    }
   }
 }
 
@@ -74,20 +91,29 @@ export async function updateFollowCycleEvidence(
     ).bind(userId, cycle).all<TargetRow>();
     const targets = rows.results || [];
     if (!targets.length) return null;
+    if (targets.length > MAX_TARGETS || !targets.every(validTargetRow) || !uniqueTargetRows(targets)) {
+      throw new Error('corrupt follow evidence rows');
+    }
 
     const followerIds = new Set(followers.map((item) => item.id).filter(Boolean));
     const followerUsernames = new Set(followers.map((item) => item.username.toLowerCase()).filter(Boolean));
     const newlySeen = targets.filter((target) => {
       if (target.seen) return false;
-      if (target.platform_user_id && followerIds.has(target.platform_user_id)) return true;
+      // Once an immutable X user ID is known, username is only display/routing metadata.
+      // Falling back to the handle after an ID mismatch can confuse a recycled handle for
+      // the original person and create false positive follow-back evidence.
+      if (target.platform_user_id) return followerIds.has(target.platform_user_id);
       return followerUsernames.has(target.username.toLowerCase());
     });
 
     if (newlySeen.length) {
       const placeholders = newlySeen.map(() => '?').join(',');
-      await db.prepare(
+      const updated = await db.prepare(
         `UPDATE x_follow_cycle_targets SET seen = 1 WHERE user_id = ? AND cycle = ? AND target_key IN (${placeholders})`
       ).bind(userId, cycle, ...newlySeen.map((target) => target.target_key)).run();
+      // A successful SQL statement that updates fewer rows than expected is also unsafe:
+      // a later final page could misclassify one of the missing writes as unseen.
+      if (updated.meta.changes !== newlySeen.length) throw new Error('incomplete follow evidence update');
     }
 
     if (nextToken) {
@@ -97,14 +123,18 @@ export async function updateFollowCycleEvidence(
         targetCount: targets.length,
         seenKeys: [],
         unseenKeys: [],
+        targets: [],
       };
     }
 
     const completed = await db.prepare(
-      'SELECT target_key, seen FROM x_follow_cycle_targets WHERE user_id = ? AND cycle = ?'
-    ).bind(userId, cycle).all<{ target_key: string; seen: number }>();
+      'SELECT target_key, platform_user_id, username, seen FROM x_follow_cycle_targets WHERE user_id = ? AND cycle = ?'
+    ).bind(userId, cycle).all<TargetRow>();
     const completedRows = completed.results || [];
     if (!completedRows.length) return null;
+    if (completedRows.length > MAX_TARGETS || !completedRows.every(validTargetRow) || !uniqueTargetRows(completedRows)) {
+      throw new Error('corrupt completed follow evidence rows');
+    }
 
     return {
       complete: true,
@@ -112,10 +142,53 @@ export async function updateFollowCycleEvidence(
       targetCount: completedRows.length,
       seenKeys: completedRows.filter((row) => Boolean(row.seen)).map((row) => row.target_key),
       unseenKeys: completedRows.filter((row) => !row.seen).map((row) => row.target_key),
+      // Bind every result key to the identity that was tracked when this cycle began.
+      // The client reapplies async sync results to its latest AppState, so keys alone are
+      // insufficient: a JSON/D1 restore could reuse one candidate ID for different data
+      // while the X request is in flight. Re-checking this binding prevents stale evidence
+      // from mutating a replacement candidate.
+      targets: completedRows.map((row) => ({
+        key: row.target_key,
+        username: row.username,
+        platformUserId: row.platform_user_id,
+      })),
     };
   } catch {
+    // Once any page's positive evidence fails to persist or validate, invalidate the entire
+    // cycle. Continuing with partial/corrupt rows could turn a person seen on that page into
+    // a false "not following back" result when the final page is reached.
+    if (!(await invalidateCycle(db, userId, cycle))) {
+      throw new FollowEvidenceStorageUnavailableError();
+    }
     return null;
   }
+}
+
+async function invalidateCycle(db: D1Database, userId: string, cycle: number) {
+  try {
+    await db.prepare('DELETE FROM x_follow_cycle_targets WHERE user_id = ? AND cycle = ?').bind(userId, cycle).run();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function validTargetRow(row: TargetRow) {
+  return typeof row.target_key === 'string'
+    && Boolean(sanitizeKey(row.target_key))
+    && (row.platform_user_id === null || (typeof row.platform_user_id === 'string' && Boolean(sanitizePlatformUserId(row.platform_user_id))))
+    && typeof row.username === 'string'
+    && Boolean(sanitizeUsername(row.username))
+    && (row.seen === 0 || row.seen === 1);
+}
+
+function uniqueTargetRows(rows: TargetRow[]) {
+  const keys = new Set<string>();
+  for (const row of rows) {
+    if (keys.has(row.target_key)) return false;
+    keys.add(row.target_key);
+  }
+  return true;
 }
 
 function normalizeTargets(input: TrackedXAccount[]): NormalizedTarget[] {
@@ -138,7 +211,8 @@ function sanitizeKey(value: string) {
 }
 
 function sanitizeUsername(value: string) {
-  return value.trim().replace(/^@/, '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 50);
+  const username = value.trim().replace(/^@/, '');
+  return /^[A-Za-z0-9_]{1,15}$/.test(username) ? username : '';
 }
 
 function sanitizePlatformUserId(value: string) {

@@ -50,34 +50,34 @@ export default function InstallControls() {
 
   async function install() {
     if (!promptEvent) return;
-    setNote('インストール確認を開いています…');
+    setNote('追加の確認画面を開いています…');
     await promptEvent.prompt();
     const choice = await promptEvent.userChoice;
     if (choice.outcome === 'accepted') {
       setNote('ホーム画面への追加を受け付けました');
       setPromptEvent(null);
     } else {
-      setNote('今回は追加しませんでした。いつでもSettingsから追加できます');
+      setNote('今回は追加しませんでした。いつでも設定から追加できます');
     }
   }
 
   return <section className="form-card install-card">
     <div className="field-title">
-      <div><strong>スマホへインストール</strong><span>ホーム画面から普通のアプリのように起動</span></div>
-      <b>{installed ? 'APP' : 'PWA'}</b>
+      <div><strong>ホーム画面からすぐ開く</strong><span>スマホやPCに追加すると、普通のアプリのように起動できます</span></div>
+      <b>{installed ? '追加済' : '任意'}</b>
     </div>
 
-    {installed ? <div className="hard-limit"><span>INSTALL</span><strong>READY</strong><p>この端末ではホーム画面アプリとして起動しています。</p></div> : promptEvent ? <>
-      <p>このブラウザはPWAのインストールに対応しています。下のボタンからホーム画面へ追加できます。</p>
+    {installed ? <div className="hard-limit"><span>この端末</span><strong>追加済み</strong><p>ホーム画面アプリとして起動しています。</p></div> : promptEvent ? <>
+      <p>このブラウザでは、下のボタンからホーム画面へ追加できます。</p>
       <button className="primary-button" onClick={install}>ホーム画面へ追加</button>
     </> : iosSafari ? <div className="x-scope-note">
-      <strong>iPhone / iPad</strong>
-      <span>Safariの共有ボタン → 「ホーム画面に追加」 → 「追加」の順で登録してください。登録後は独立したアプリ画面で開きます。</span>
+      <strong>iPhone / iPadで追加する方法</strong>
+      <span>Safari下部の共有ボタン → 「ホーム画面に追加」 → 「追加」の順でタップしてください。</span>
     </div> : <div className="x-scope-note">
-      <strong>インストールメニューから追加</strong>
-      <span>ブラウザのメニューに「アプリをインストール」「ホーム画面に追加」が表示されていれば、そこから登録できます。</span>
+      <strong>ブラウザのメニューから追加</strong>
+      <span>「アプリをインストール」または「ホーム画面に追加」が表示されていれば、そこから登録できます。</span>
     </div>}
 
-    <small>{note || 'PWAのインストールだけならSNS/APIの追加料金は発生しません。'}</small>
+    <small>{note || 'ホーム画面への追加だけで、SNSやAIの利用料金が増えることはありません。'}</small>
   </section>;
 }
