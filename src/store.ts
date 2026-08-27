@@ -30,6 +30,7 @@ const defaultState: AppState = {
   relationshipPolicy: {
     followBackReviewAfterDays: 30,
     preserveHighMatch: true,
+    autoDraftReplies: true,
     dailyQueueLimit: 30,
     dailyConnectionLimit: 20,
     dailyConversationLimit: 8,
@@ -259,6 +260,7 @@ export function applyRankResults(state: AppState, results: RankResult[], costUsd
       reason: result.reason?.trim() || candidate.reason,
       strategy: result.strategy?.trim() || candidate.strategy,
       draft: result.draft?.trim() || undefined,
+      aiDraft: result.draft?.trim() || undefined,
     };
   });
   return refreshRelationshipAdvice({
@@ -270,6 +272,11 @@ export function applyRankResults(state: AppState, results: RankResult[], costUsd
       llmUsd: Math.max(0, state.budget.llmUsd + Math.max(0, costUsd)),
     },
   });
+}
+
+export function updateCandidateDraft(state: AppState, candidateId: string, draft: string): AppState {
+  const candidates = state.candidates.map((candidate) => candidate.id === candidateId ? { ...candidate, draft: draft.slice(0, 2400) } : candidate);
+  return { ...state, candidates };
 }
 
 export function recordInteraction(state: AppState, candidateId: string, action: Interaction['action']): AppState {

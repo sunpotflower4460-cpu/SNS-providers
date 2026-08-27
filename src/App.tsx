@@ -8,7 +8,7 @@ import { mergeDiscoveredProfiles } from './discoveryStore';
 import Manual from './Manual';
 import Onboarding from './Onboarding';
 import { hasSeenOnboarding, markOnboardingSeen } from './onboarding';
-import { addCandidateFromReference, applyRankResults, applySelfAnalysis, applyXProfiles, loadState, recordInteraction, saveState, setFollowBackStatus, syncBudget, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
+import { addCandidateFromReference, applyRankResults, applySelfAnalysis, applyXProfiles, loadState, recordInteraction, saveState, setFollowBackStatus, syncBudget, updateCandidateDraft, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
 import { copyDraft, openCandidate, platformLabel } from './social';
 import type { AppState, Candidate, Mission, Platform } from './types';
 import { useLocalDayKey } from './useLocalDay';
@@ -105,7 +105,7 @@ function App() {
     setRanking(true);
     setApiNote('Mission基準で候補を再評価中…');
     try {
-      const result = await rankCandidates(state.mission, targets, state.budget.monthlyLimitUsd);
+      const result = await rankCandidates(state.mission, targets, state.budget.monthlyLimitUsd, state.relationshipPolicy.autoDraftReplies !== false);
       setState((current) => applyRankResults(current, result.results, result.costUsd));
       setApiNote(`${result.provider}で${result.results.length}件評価${result.paid ? ` · $${result.costUsd.toFixed(4)}` : ' · $0'}`);
     } catch (error) {
@@ -348,6 +348,10 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
     });
   }
 
+  function editDraft(candidateId: string, draft: string) {
+    onChange(updateCandidateDraft(state, candidateId, draft));
+  }
+
   async function addFromClipboard() {
     try {
       const value = await navigator.clipboard.readText();
@@ -379,7 +383,7 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
     <div className="segmented">
       {(['all', 'x', 'instagram'] as const).map((item) => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}>{item === 'all' ? 'すべて' : item === 'x' ? 'X' : 'Instagram'}</button>)}
     </div>
-    {visible.length > 0 ? <div className="card-stack">{visible.map((candidate) => <CandidateCard key={candidate.id} candidate={candidate} onOpen={onOpen} onLater={snoozeCandidate} />)}</div> : <DiscoverEmptyState filter={filter} storedCount={storedCount} snoozedCount={snoozedCount} />}
+    {visible.length > 0 ? <div className="card-stack">{visible.map((candidate) => <CandidateCard key={candidate.id} candidate={candidate} onOpen={onOpen} onLater={snoozeCandidate} onEditDraft={editDraft} />)}</div> : <DiscoverEmptyState filter={filter} storedCount={storedCount} snoozedCount={snoozedCount} />}
   </>;
 }
 
@@ -394,7 +398,7 @@ function DiscoverEmptyState({ filter, storedCount, snoozedCount }: { filter: 'al
   return <section className="form-card"><div className="field-title"><div><strong>今日表示する{platform}はありません</strong><span>見送った候補や明日送りの候補は今日の一覧から外れています。</span></div><b>○</b></div></section>;
 }
 
-function CandidateCard({ candidate, onOpen, onLater, featured = false }: { candidate: Candidate; onOpen: (c: Candidate) => void; onLater: (c: Candidate) => void; featured?: boolean }) {
+function CandidateCard({ candidate, onOpen, onLater, onEditDraft, featured = false }: { candidate: Candidate; onOpen: (c: Candidate) => void; onLater: (c: Candidate) => void; onEditDraft: (id: string, draft: string) => void; featured?: boolean }) {
   const buttonLabel = candidate.recommendedAction === 'reply' ? `${platformLabel(candidate.platform)}で返信` : candidate.recommendedAction === 'unfollow_review' ? `${platformLabel(candidate.platform)}で整理確認` : `${platformLabel(candidate.platform)}で見る`;
   return <article className={featured ? 'candidate-card featured' : 'candidate-card'}>
     <div className="candidate-head">
@@ -407,7 +411,14 @@ function CandidateCard({ candidate, onOpen, onLater, featured = false }: { candi
     <p className="reason">{candidate.reason}</p>
     {candidate.strategy && <div className="strategy-note"><span>AIの提案</span><p>{candidate.strategy}</p></div>}
     <div className="tags">{candidate.tags.map((tag) => <span key={tag}>#{tag}</span>)}</div>
-    {candidate.draft && <div className="draft-box"><span>AI返信案</span><p>{candidate.draft}</p><button onClick={() => copyDraft(candidate.draft!)}>コピー</button></div>}
+    {candidate.draft && <div className="draft-box">
+      <span>AI返信案 · 編集できます</span>
+      <textarea value={candidate.draft} onChange={(event) => onEditDraft(candidate.id, event.target.value)} rows={3} />
+      <div className="draft-box-actions">
+        {candidate.aiDraft && candidate.draft !== candidate.aiDraft && <button className="ghost-button" onClick={() => onEditDraft(candidate.id, candidate.aiDraft!)}>元のAI案に戻す</button>}
+        <button onClick={() => copyDraft(candidate.draft!)}>コピー</button>
+      </div>
+    </div>}
     <div className="candidate-actions">
       <button className="secondary-button" onClick={() => onLater(candidate)}>明日へ</button>
       <button className="primary-button" onClick={() => onOpen(candidate)}>{buttonLabel}<span>↗</span></button>
@@ -486,6 +497,12 @@ function Settings({ state, onChange, onOpenManual }: { state: AppState; onChange
     <section className="form-card">
       <div className="field-title"><div><strong>アプリの使い方が分からないときは</strong><span>5つのタブの役割と、基本の流れをいつでも見返せます</span></div><b>？</b></div>
       <button className="secondary-button" onClick={onOpenManual}>使い方ガイドを見る</button>
+    </section>
+    <section className="form-card">
+      <button type="button" className="policy-toggle" onClick={() => onChange(updateRelationshipPolicy(state, { ...state.relationshipPolicy, autoDraftReplies: !(state.relationshipPolicy.autoDraftReplies !== false) }))}>
+        <span><strong>返信文案を自動で提案する</strong><small>AI再評価のとき、返信・DMが適切な候補に下書き文を自動生成します(1回の評価につき最大5件)。オフでも評価自体は行われますが下書きは作られません。送信は引き続きご自身で公式アプリから行います。</small></span>
+        <span className={state.relationshipPolicy.autoDraftReplies !== false ? 'toggle on' : 'toggle'} />
+      </button>
     </section>
     <section className="form-card">
       <label>Mission<textarea value={missionText} onChange={(event) => setMissionText(event.target.value)} /></label>

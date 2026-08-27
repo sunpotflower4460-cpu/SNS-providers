@@ -251,6 +251,7 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .policy-toggle > span { display: grid; gap: 3px; }
 .policy-toggle strong { font-size: 10px; }
 .policy-toggle small { color: #7f8fa5; font-size: 8px; line-height: 1.45; }
+.form-card > .policy-toggle:first-child { border-top: 0; padding-top: 0; }
 .budget-breakdown {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

@@ -98,7 +98,7 @@ export function discoverSocialCandidates(mission: Mission, userId = 'local-user'
   });
 }
 
-export function rankCandidates(mission: Mission, candidates: Candidate[], monthlyLimitUsd: number, userId = 'local-user') {
+export function rankCandidates(mission: Mission, candidates: Candidate[], monthlyLimitUsd: number, draftsEnabled: boolean, userId = 'local-user') {
   const selected = selectCandidatesForRanking(mission, candidates.slice(0, 50), 30);
   return apiFetch<RankResponse>('/api/ai/rank', {
     method: 'POST',
@@ -107,6 +107,7 @@ export function rankCandidates(mission: Mission, candidates: Candidate[], monthl
       mission: missionText(mission),
       communicationDNA: mission.communicationDNA,
       monthlyLimitUsd,
+      draftsEnabled,
       candidates: selected.map((candidate) => ({
         id: candidate.id,
         username: candidate.username,

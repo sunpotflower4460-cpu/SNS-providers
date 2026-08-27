@@ -46,6 +46,7 @@ export interface Candidate {
   tags: string[];
   recommendedAction: RecommendedAction;
   draft?: string;
+  aiDraft?: string;
   followedAt?: string;
   followBack?: boolean | null;
   lastInteractionAt?: string;
@@ -74,6 +75,7 @@ export interface BudgetState {
 export interface RelationshipPolicy {
   followBackReviewAfterDays: number;
   preserveHighMatch: boolean;
+  autoDraftReplies?: boolean;
   dailyQueueLimit?: number;
   dailyConnectionLimit?: number;
   dailyConversationLimit?: number;

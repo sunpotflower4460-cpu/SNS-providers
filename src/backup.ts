@@ -10,6 +10,7 @@ interface BackupEnvelope {
 const relationshipDefaults: RelationshipPolicy = {
   followBackReviewAfterDays: 30,
   preserveHighMatch: true,
+  autoDraftReplies: true,
   dailyQueueLimit: 30,
   dailyConnectionLimit: 20,
   dailyConversationLimit: 8,
@@ -131,6 +132,7 @@ function normalizeRelationshipPolicy(policy: RelationshipPolicy | undefined): Re
   return {
     followBackReviewAfterDays: clampInteger(policy?.followBackReviewAfterDays, 7, 180, relationshipDefaults.followBackReviewAfterDays),
     preserveHighMatch: typeof policy?.preserveHighMatch === 'boolean' ? policy.preserveHighMatch : relationshipDefaults.preserveHighMatch,
+    autoDraftReplies: typeof policy?.autoDraftReplies === 'boolean' ? policy.autoDraftReplies : relationshipDefaults.autoDraftReplies,
     dailyQueueLimit: clampInteger(policy?.dailyQueueLimit, 1, 200, relationshipDefaults.dailyQueueLimit || 30),
     dailyConnectionLimit: clampInteger(policy?.dailyConnectionLimit, 0, 200, relationshipDefaults.dailyConnectionLimit || 20),
     dailyConversationLimit: clampInteger(policy?.dailyConversationLimit, 0, 100, relationshipDefaults.dailyConversationLimit || 8),
@@ -167,6 +169,7 @@ function normalizeCandidate(raw: Candidate): Candidate | null {
     tags: Array.isArray(raw.tags) ? raw.tags.map((tag) => safeText(tag, 80)).filter(Boolean).slice(0, 30) : [],
     recommendedAction: allowedActions.has(raw.recommendedAction) ? raw.recommendedAction : 'review',
     draft: safeText(raw.draft, 2400) || undefined,
+    aiDraft: safeText(raw.aiDraft, 2400) || undefined,
     followedAt: validOptionalIso(raw.followedAt),
     followBack: typeof raw.followBack === 'boolean' ? raw.followBack : null,
     lastInteractionAt: validOptionalIso(raw.lastInteractionAt),
