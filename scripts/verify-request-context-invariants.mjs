@@ -166,7 +166,7 @@ requireAll(discoveryStore, [
 
 requireAll(store, [
   'bio: profile.description,',
-  'bio: relatedProfile ? relatedProfile.description : candidate.bio',
+  'bio: bindableProfile ? bindableProfile.description : candidate.bio',
   'const profileText = result.profile.description;',
   'const postsWereRead = (result.requested?.posts ?? 0) > 0;',
   'const recentPostsText = postsWereRead ? fetchedPostsText : state.selfProfile.recentPostsText;',

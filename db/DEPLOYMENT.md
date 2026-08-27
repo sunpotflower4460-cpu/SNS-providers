@@ -4,15 +4,39 @@ This file is the production boundary checklist for the optional Cloudflare Worke
 
 ## 1. Prefer a fresh D1 database for the first production deployment
 
-`db/schema.sql` is authoritative for a fresh database. The repository currently ships a placeholder D1 ID in `worker/wrangler.jsonc`; do not deploy paid/provider routes until that placeholder is replaced with the real database ID.
+`db/schema.sql` is authoritative for a fresh database. The repository ships a placeholder D1 ID (`REPLACE_WITH_D1_DATABASE_ID`) in `worker/wrangler.jsonc` on purpose so account-specific IDs are not committed. Do not deploy paid/provider routes until that placeholder is replaced with a real database ID.
 
-Typical setup from the `worker/` directory:
+### Option A — GitHub Actions (recommended)
+
+1. In the GitHub repo settings, add Actions secrets:
+   - `CLOUDFLARE_API_TOKEN` — token with D1 edit + Workers deploy permissions
+   - `CLOUDFLARE_ACCOUNT_ID` — your Cloudflare account ID
+2. Push to `main` (or run **Deploy Worker to Cloudflare** via `workflow_dispatch`).
+3. The workflow runs `scripts/resolve-d1-database-id.mjs --write`, which finds or creates the `social-mission` D1 database, patches `worker/wrangler.jsonc` for that job only, applies `db/schema.sql`, then deploys.
+
+### Option B — Local one-time setup
 
 ```bash
+cd worker
+npx wrangler login
 npx wrangler d1 create social-mission
 # copy the returned database_id into worker/wrangler.jsonc
 npx wrangler d1 execute social-mission --remote --file=../db/schema.sql
+npx wrangler deploy
 ```
+
+Or, with API credentials already exported:
+
+```bash
+export CLOUDFLARE_API_TOKEN=...
+export CLOUDFLARE_ACCOUNT_ID=...
+node scripts/resolve-d1-database-id.mjs --write
+cd worker && npx wrangler d1 execute social-mission --remote --file=../db/schema.sql && npx wrangler deploy
+```
+
+### Cloudflare Workers Builds (dashboard)
+
+If the Cloudflare dashboard is connected directly to this GitHub repo, it builds from the committed `wrangler.jsonc`. Until the placeholder is replaced (or the D1 binding is overridden in the dashboard), **Workers Builds will fail** even when GitHub Actions CI is green. Prefer Option A, or paste the real `database_id` into `wrangler.jsonc` after the first create if you rely on dashboard builds.
 
 Then deploy the Worker and verify `/api/health` before connecting the PWA.
 

@@ -24,7 +24,12 @@ export function applyOwnedXSyncWithDiscovery(state: AppState, result: XOwnedSync
   let synced = applyOwnedXSync(identitySafeState, result);
   synced = preservePostSnapshotFollowState(identitySafeState, synced, result);
   synced = reconcileSelfInputs(state, synced, result);
-  synced = applyFullCycleFollowEvidence(synced, result, identityChangedIds);
+  // Cached snapshots may still carry a previously completed followEvidence payload.
+  // Replaying it on every cache hit would overwrite manual Relations decisions for ~20h.
+  // Only apply full-cycle proof from a freshly observed owned sync.
+  if (result.source !== 'cache') {
+    synced = applyFullCycleFollowEvidence(synced, result, identityChangedIds);
+  }
   if (!result.enabled || !result.followers?.length) return synced;
 
   const existingByUsername = new Map(
@@ -237,6 +242,7 @@ function resetOwnedXIdentityChanges(state: AppState, result: XOwnedSyncResponse,
       tags: [],
       recommendedAction: 'review' as const,
       draft: undefined,
+      engagementUrl: undefined,
       followedAt: active && isFollowing ? syncedAt : undefined,
       followBack: active ? isFollower ? true : isFollowing && followersComplete ? false : null : null,
       lastInteractionAt: undefined,

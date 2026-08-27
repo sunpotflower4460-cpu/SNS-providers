@@ -332,13 +332,28 @@ export function applyOwnedXSync(state: AppState, result: XOwnedSyncResponse): Ap
   const followersComplete = Boolean(result.coverage?.followers.complete);
   const syncedAt = result.syncedAt || new Date().toISOString();
 
+  const followingComplete = Boolean(result.coverage?.following.complete);
   const candidates = state.candidates.map((candidate) => {
     if (candidate.platform !== 'x') return candidate;
     const username = candidate.username.toLowerCase();
     const relatedProfile = profileByUsername.get(username);
     const isFollower = followerSet.has(username);
     const isFollowing = followingSet.has(username);
-    const followedAt = !candidate.skipped && isFollowing ? candidate.followedAt ?? syncedAt : candidate.followedAt;
+    const unboundIdentityConflict = candidate.tags.includes('identity-conflict')
+      && !stablePlatformUserId(candidate.platformUserId);
+    // Username-only owned sync must not attach the current official ID to a restored
+    // unbound identity-conflict row. That would let the next stable-id reconcile clear
+    // quarantine and absorb old CRM history into whoever owns the handle now.
+    const bindableProfile = relatedProfile && !unboundIdentityConflict ? relatedProfile : undefined;
+    // When a full following cycle proves we no longer follow them, clear historical
+    // follow state so unfollow_review cannot linger for already-unfollowed accounts.
+    const followedAt = candidate.skipped
+      ? candidate.followedAt
+      : isFollowing
+        ? candidate.followedAt ?? syncedAt
+        : followingComplete
+          ? undefined
+          : candidate.followedAt;
     // Negative follow-back inference requires both "we still follow them" and a complete
     // followers cycle. A historical followedAt alone must not mark non-follow-backs while
     // following pages are still rotating / incomplete.
@@ -348,20 +363,22 @@ export function applyOwnedXSync(state: AppState, result: XOwnedSyncResponse): Ap
         ? true
         : isFollowing && followersComplete && followedAt
           ? false
-          : candidate.followBack;
+          : !followedAt
+            ? null
+            : candidate.followBack;
     const stage = !candidate.skipped && isFollowing && (candidate.stage === 'discovered' || candidate.stage === 'interested') ? 'following' as const : candidate.stage;
     return {
       ...candidate,
       stage,
       followedAt,
       followBack,
-      platformUserId: relatedProfile?.id || candidate.platformUserId,
-      displayName: relatedProfile?.name || candidate.displayName,
-      bio: relatedProfile ? relatedProfile.description : candidate.bio,
-      verified: relatedProfile ? relatedProfile.verified : candidate.verified,
-      publicMetrics: relatedProfile?.publicMetrics || candidate.publicMetrics,
-      profileSyncedAt: relatedProfile ? syncedAt : candidate.profileSyncedAt,
-      profileSyncAttemptedAt: relatedProfile ? syncedAt : candidate.profileSyncAttemptedAt,
+      platformUserId: bindableProfile?.id || candidate.platformUserId,
+      displayName: bindableProfile?.name || candidate.displayName,
+      bio: bindableProfile ? bindableProfile.description : candidate.bio,
+      verified: bindableProfile ? bindableProfile.verified : candidate.verified,
+      publicMetrics: bindableProfile?.publicMetrics || candidate.publicMetrics,
+      profileSyncedAt: bindableProfile ? syncedAt : candidate.profileSyncedAt,
+      profileSyncAttemptedAt: bindableProfile ? syncedAt : candidate.profileSyncAttemptedAt,
     };
   });
 
@@ -388,7 +405,7 @@ export function applyOwnedXSync(state: AppState, result: XOwnedSyncResponse): Ap
       followingSampleCount: result.coverage?.following.fetched ?? following.length,
       recentPostCount: result.coverage?.posts.fetched ?? posts.length,
       followersComplete,
-      followingComplete: Boolean(result.coverage?.following.complete),
+      followingComplete,
       postsComplete: Boolean(result.coverage?.posts.complete),
     },
     budget: {

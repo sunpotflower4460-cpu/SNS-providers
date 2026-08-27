@@ -214,8 +214,12 @@ if (!store.includes("interaction.action === 'kept'") || !store.includes('advance
 if (!store.includes('if (rawCandidate.skipped) return rawCandidate;') || !store.includes("recommendedAction: 'review' as const")) {
   throw new Error('Dismissed candidates can be re-promoted into cleanup advice immediately.');
 }
-if (!store.includes("const followedAt = !candidate.skipped && isFollowing ? candidate.followedAt ?? syncedAt : candidate.followedAt;")) {
-  throw new Error('Official X following evidence does not establish a conservative first-observed follow timestamp.');
+if (!store.includes('const followedAt = candidate.skipped')
+  || !store.includes('? candidate.followedAt ?? syncedAt')
+  || !store.includes(': followingComplete')
+  || !store.includes('? undefined')
+  || !store.includes(': candidate.followedAt;')) {
+  throw new Error('Official X following evidence does not establish a conservative first-observed follow timestamp, or complete following cycles can leave stale unfollow advice.');
 }
 if (!store.includes("candidate.recommendedAction === 'follow' && candidate.followedAt")
   || !store.includes("candidate.recommendedAction === 'unfollow_review' && !candidate.followedAt")) {

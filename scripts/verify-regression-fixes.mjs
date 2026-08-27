@@ -17,6 +17,7 @@ const store = await readFile(new URL('../src/store.ts', import.meta.url), 'utf8'
 const xOwnedStore = await readFile(new URL('../src/xOwnedStore.ts', import.meta.url), 'utf8');
 const sync = await readFile(new URL('../src/sync.ts', import.meta.url), 'utf8');
 const syncControls = await readFile(new URL('../src/SyncControls.tsx', import.meta.url), 'utf8');
+const backupControls = await readFile(new URL('../src/BackupControls.tsx', import.meta.url), 'utf8');
 const workload = await readFile(new URL('../src/WorkloadControls.tsx', import.meta.url), 'utf8');
 const statusPresentation = await readFile(new URL('../src/statusPresentation.ts', import.meta.url), 'utf8');
 const resultResolution = await readFile(new URL('../src/resultResolution.ts', import.meta.url), 'utf8');
@@ -276,4 +277,20 @@ if (!syncControls.includes('クラウドのデータを確認して復元し、�
   throw new Error('D1 restore can again leave snapshot budget totals stale relative to the live HARD LIMIT ledger.');
 }
 
-console.log('Regression fixes OK: provider defaults are aligned, manual and automatic candidate operations are serialized, Today completion ignores profile-only reviews and counts one aggregate self-analysis action, auto refill keeps self-work quota stable and continues multi-batch free ranking, automatic discovery guards reject future poison, slow cloud restores cannot erase newer local work, cross-device discovery retry and first-party sync leases are enforced, reserved social paths and future sync versions fail closed, X/Instagram immutable identity changes and handle renames cannot inherit or split old CRM/evidence, mixed stable/unbound restores and manual re-adds stay quarantined until identity proof, stale X enrichment cannot rewrite identity, visible result sheets are identity-bound, cleanup accounting stays distinct from profile review, exact engagement is consumed, Instagram binds the newest comment to its own concrete post target, repairs handle-renamed legacy duplicates without reactivating stale dismissals, X OAuth validates refresh-token usability, paid LLM cost stays within reservation, inbound followers stay below DM-ready, reply/like require concrete targets, CRM progression stays follow-gated, follow-back negatives require current following evidence, and D1 restore reconciles live budget totals.');
+if (!xOwnedStore.includes("if (result.source !== 'cache')")
+  || !xOwnedStore.includes('applyFullCycleFollowEvidence(synced, result, identityChangedIds)')
+  || !xOwnedStore.includes('engagementUrl: undefined')
+  || !store.includes('const unboundIdentityConflict = candidate.tags.includes(\'identity-conflict\')')
+  || !store.includes('const bindableProfile = relatedProfile && !unboundIdentityConflict ? relatedProfile : undefined')
+  || !store.includes('const followingComplete = Boolean(result.coverage?.following.complete)')
+  || !daily.includes('completedTodayWithoutNewerSignal')
+  || !instagramOwnedStore.includes('const unboundConflict = Boolean(')
+  || !instagramOwnedStore.includes('existing = unboundConflict ? undefined : usernameFallback')
+  || !providerApi.includes('const costUsd = worstCaseCost')
+  || !backupControls.includes('バックアップから復元し、クラウドの利用額も最新化しました')
+  || !backupControls.includes("const budget = await fetchBudget('local-user', token);")
+  || !backupControls.includes('updateState((current) => syncBudget(current, budget.usedUsd, budget.limitUsd))')) {
+  throw new Error('Post-merge guards regressed: cached follow evidence can replay, unbound identity-conflict rows can absorb official IDs, complete following cycles can leave stale unfollow advice, Today can ignore same-day reopen signals, Instagram handle-only matches can clear quarantine, paid X username lookups can under-count reserved cost, or JSON restore can skip live budget reconcile.');
+}
+
+console.log('Regression fixes OK: provider defaults are aligned, manual and automatic candidate operations are serialized, Today completion ignores profile-only reviews and counts one aggregate self-analysis action, auto refill keeps self-work quota stable and continues multi-batch free ranking, automatic discovery guards reject future poison, slow cloud restores cannot erase newer local work, cross-device discovery retry and first-party sync leases are enforced, reserved social paths and future sync versions fail closed, X/Instagram immutable identity changes and handle renames cannot inherit or split old CRM/evidence, mixed stable/unbound restores and manual re-adds stay quarantined until identity proof, stale X enrichment cannot rewrite identity, visible result sheets are identity-bound, cleanup accounting stays distinct from profile review, exact engagement is consumed, Instagram binds the newest comment to its own concrete post target, repairs handle-renamed legacy duplicates without reactivating stale dismissals, X OAuth validates refresh-token usability, paid LLM cost stays within reservation, inbound followers stay below DM-ready, reply/like require concrete targets, CRM progression stays follow-gated, follow-back negatives require current following evidence, D1 restore reconciles live budget totals, cached follow evidence is not replayed, unbound identity conflicts stay quarantined, Today reopens on newer same-day signals, paid X username lookups keep reserved cost, and JSON restore reconciles live budget.');
