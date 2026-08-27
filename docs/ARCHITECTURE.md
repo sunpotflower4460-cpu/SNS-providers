@@ -161,6 +161,8 @@ The client prefilter uses Mission lexical overlap, existing Mission Match, avail
 
 The app combines candidate score, recommended action, strategic rationale and a limited number of individualized reply/DM drafts in one AI pass to reduce token use. The Daily Queue and workload suggestion are generated locally from stored state.
 
+Draft generation is user-configurable (`relationshipPolicy.autoDraftReplies`, default on) and enforced on both sides: the client passes `draftsEnabled` on `/api/ai/rank`, the Worker prompt omits the draft instruction when it is off, and `normalizeProviderResults` discards any draft the model returns anyway unless `draftsEnabled` is true. Drafts shown in the PWA are editable before use; editing only replaces the local `draft` field and never touches `aiDraft` (the original AI suggestion, kept so the user can revert), and both are cleared/replaced together on the next re-rank. This does not change the "no automated final action" boundary above — the user still copies the (possibly edited) draft into the official app and sends it themselves.
+
 Provider availability, prices and free tiers change. Free/paid mode and paid rates are server configuration rather than hard-coded product truth.
 
 ## Provider route authentication
