@@ -148,7 +148,13 @@ function App() {
       void (async () => {
         try {
           const ranked = await rankCandidates(snapshot.mission, existingRankTargets, snapshot.budget.monthlyLimitUsd, 'local-user', false);
-          setState((current) => applyRankResults(current, ranked.results, ranked.costUsd));
+          // autoDraftReplies must not change rankCandidates' argument list here: it is
+          // pinned verbatim by scripts/verify-action-supply-invariants.mjs. Honor the
+          // toggle by stripping drafts from the response instead.
+          const rankedResults = snapshot.relationshipPolicy.autoDraftReplies === false
+            ? ranked.results.map((result) => ({ ...result, draft: undefined }))
+            : ranked.results;
+          setState((current) => applyRankResults(current, rankedResults, ranked.costUsd));
           clearRetryTimer();
           // Free ranking is capped at 30 per request. Clearing the attempt key allows the
           // next untouched batch to continue without issuing another Tavily search.
@@ -205,9 +211,15 @@ function App() {
         // Automatic replenishment is explicitly free-only. Free Groq may be used when
         // configured; otherwise the Worker falls back to deterministic local ranking.
         const ranked = await rankCandidates(merged.mission, rankTargets, merged.budget.monthlyLimitUsd, 'local-user', false);
+        // autoDraftReplies must not change rankCandidates' argument list here: it is
+        // pinned verbatim by scripts/verify-action-supply-invariants.mjs. Honor the
+        // toggle by stripping drafts from the response instead.
+        const rankedResults = merged.relationshipPolicy.autoDraftReplies === false
+          ? ranked.results.map((result) => ({ ...result, draft: undefined }))
+          : ranked.results;
         setState((current) => {
           const withDiscovery = mergeDiscoveredProfiles(current, discovered.profiles);
-          return applyRankResults(withDiscovery, ranked.results, ranked.costUsd);
+          return applyRankResults(withDiscovery, rankedResults, ranked.costUsd);
         });
         clearRetryTimer();
         // Discovery can yield up to 40 profiles while one free ranking call handles 30.

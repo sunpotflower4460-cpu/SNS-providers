@@ -20,7 +20,6 @@
   min-width: 0;
 }
 .import-head strong { font-size: 12px; line-height: 1.45; }
-.import-hint { margin: -3px 0 1px; color: #8e9bb0; font-size: 9.5px; line-height: 1.6; }
 .status-chip {
   max-width: 45%;
   padding: 5px 8px;
@@ -32,7 +31,6 @@
   line-height: 1.35;
   text-align: right;
 }
-.status-chip.error { color: var(--danger); border-color: rgba(255,143,159,.28); background: rgba(255,143,159,.07); }
 .mini-segmented {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -165,7 +163,6 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .relation-main > div:nth-child(2) span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .relation-main > div:nth-child(2) span { color: #7e8da1; font-size: 8px; }
 .relation-advice { margin: -2px 12px 10px; color: #93a2b5; font-size: 9px; line-height: 1.55; }
-.followback-label { display: block; padding: 8px 12px 0; color: #6e7d92; font-size: 8px; }
 .followback-controls {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -270,7 +267,6 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .policy-toggle > span { display: grid; gap: 3px; }
 .policy-toggle strong { font-size: 10px; }
 .policy-toggle small { color: #7f8fa5; font-size: 8px; line-height: 1.45; }
-.form-card > .policy-toggle:first-child { border-top: 0; padding-top: 0; }
 .policy-toggle:active { filter: brightness(.92); }
 @media (hover: hover) and (pointer: fine) {
   .policy-toggle:hover { filter: brightness(1.08); }
