@@ -19,6 +19,8 @@ Mission-driven, mobile-first PWA for growing meaningful social relationships wit
 - zero-cost local candidate prefilter before LLM ranking, reducing the normal ranking batch from up to 50 candidates to the strongest 30
 - relationship-aware AI ranking receives stage, relationship score, existing reason/strategy and real engagement URL context
 - reply/DM drafts are generated only when relationship/context guards allow them; stale drafts are cleared after reevaluation
+- draft generation can be turned off from Settings (`autoDraftReplies`); when off the AI still ranks/recommends actions but writes no draft text
+- suggested drafts are editable in place before use, with a one-tap revert to the AI's original suggestion; sending still happens manually in the official app
 - social profile/comment text is treated as untrusted data and never as instructions to the ranking model
 - X/Instagram official profile or real conversation-post handoff; no legacy tweet/follow intent shortcut and no automatic final action
 - one-tap outcome capture after returning to the PWA

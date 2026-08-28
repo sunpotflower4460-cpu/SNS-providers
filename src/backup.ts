@@ -23,6 +23,7 @@ const relationshipDefaults: RelationshipPolicy = {
   dailyCleanupLimit: 5,
   dailySelfImproveLimit: 1,
   autoReplenishEnabled: true,
+  autoDraftReplies: true,
 };
 
 const legacyDemoCandidates = new Set([
@@ -163,6 +164,9 @@ function normalizeRelationshipPolicy(policy: RelationshipPolicy | undefined): Re
     autoReplenishEnabled: typeof policy?.autoReplenishEnabled === 'boolean'
       ? policy.autoReplenishEnabled
       : relationshipDefaults.autoReplenishEnabled,
+    autoDraftReplies: typeof policy?.autoDraftReplies === 'boolean'
+      ? policy.autoDraftReplies
+      : relationshipDefaults.autoDraftReplies,
   };
 }
 
@@ -194,6 +198,7 @@ function normalizeCandidate(raw: Candidate): Candidate | null {
     tags: Array.isArray(raw.tags) ? raw.tags.map((tag) => safeText(tag, 80)).filter(Boolean).slice(0, 30) : [],
     recommendedAction: allowedActions.has(raw.recommendedAction) ? raw.recommendedAction : 'review',
     draft: safeText(raw.draft, 2400) || undefined,
+    aiDraft: safeText(raw.aiDraft, 2400) || undefined,
     followedAt: validPastishOptionalIso(raw.followedAt),
     followBack: typeof raw.followBack === 'boolean' ? raw.followBack : null,
     lastInteractionAt: validPastishOptionalIso(raw.lastInteractionAt),

@@ -51,6 +51,7 @@ interface RankRequest {
   candidates: CandidateInput[];
   monthlyLimitUsd?: number;
   paidAllowed?: boolean;
+  draftsEnabled?: boolean;
 }
 
 interface XEnrichRequest {
@@ -283,6 +284,7 @@ function validateRankRequest(body: RankRequest) {
   if (body.mission.length > 4000) throw new Error('mission is too long');
   if ((body.communicationDNA || '').length > 4000) throw new Error('communicationDNA is too long');
   if (body.paidAllowed != null && typeof body.paidAllowed !== 'boolean') throw new Error('paidAllowed must be boolean');
+  if (body.draftsEnabled != null && typeof body.draftsEnabled !== 'boolean') throw new Error('draftsEnabled must be boolean');
   if (!Array.isArray(body.candidates) || body.candidates.length === 0) throw new Error('candidates are required');
   if (body.candidates.length > 50) throw new Error('rank accepts at most 50 candidates per batch');
   const stateBytes = new TextEncoder().encode(JSON.stringify(body)).byteLength;
@@ -505,6 +507,7 @@ function uncertainPaidFallback(provider: 'groq' | 'deepseek', body: RankRequest,
 
 function buildProviderMessages(body: RankRequest) {
   const hasSelfProfile = body.candidates.some((candidate) => candidate.kind === 'self_profile');
+  const draftsEnabled = body.draftsEnabled !== false;
   const prompt = {
     mission: body.mission,
     communication_dna: body.communicationDNA || '',
@@ -527,8 +530,12 @@ function buildProviderMessages(body: RankRequest) {
           'Recommend dm only for an already recognized/conversation/relationship-stage contact with prior mutual recognition; do not recommend cold or premature DMs to inbound followers.',
           'Use followedAt, followBack, lastInteractionAt and profileSyncedAt when present to avoid over-contacting recent relationships and to prefer genuinely fresh opportunities.',
           'Explain the strategic reason briefly in Japanese.',
-          'For at most the five highest-value candidates where reply or dm is genuinely appropriate, include a short natural Japanese draft that follows communication_dna.',
-          'Never use generic template praise, never invent facts or post content that is not in the supplied data, and omit draft when context is insufficient.',
+          ...(draftsEnabled
+            ? [
+                'For at most the five highest-value candidates where reply or dm is genuinely appropriate, include a short natural Japanese draft that follows communication_dna.',
+                'Never use generic template praise, never invent facts or post content that is not in the supplied data, and omit draft when context is insufficient.',
+              ]
+            : ['Do not include a draft field for any candidate; omit it entirely.']),
           'strategy should explain what relationship step to take now and why.',
           'Do not recommend automated final social actions.',
         ].join(' '),
@@ -565,12 +572,12 @@ async function rankWithProvider(provider: 'groq' | 'deepseek', body: RankRequest
   if (!content) throw new Error(`${provider} returned no content`);
   const parsed = JSON.parse(content) as { results?: unknown[] };
   if (!Array.isArray(parsed.results)) throw new Error(`${provider} returned invalid ranking JSON`);
-  const results = normalizeProviderResults(parsed.results, body.candidates);
+  const results = normalizeProviderResults(parsed.results, body.candidates, body.draftsEnabled !== false);
   if (!results.length) throw new Error(`${provider} returned no usable ranking results`);
   return { results, usage: data.usage };
 }
 
-function normalizeProviderResults(rawResults: unknown[], candidates: CandidateInput[]): NormalizedRankResult[] {
+function normalizeProviderResults(rawResults: unknown[], candidates: CandidateInput[], draftsEnabled: boolean): NormalizedRankResult[] {
   const candidateById = new Map(candidates.map((candidate) => [candidate.id, candidate]));
   const seenIds = new Set<string>();
   const normalized: NormalizedRankResult[] = [];
@@ -600,9 +607,9 @@ function normalizeProviderResults(rawResults: unknown[], candidates: CandidateIn
     const reason = safeText(item.reason, 1200) || 'AIから有効な理由文が返らなかったため、人間の確認を優先します。';
     const strategy = safeText(item.strategy, 1600) || 'プロフィールと実際の発信内容を確認してから次の交流を決めます。';
     const rawDraft = safeText(item.draft, 1200);
-    const draftAllowed = candidate.kind === 'self_profile'
+    const draftAllowed = draftsEnabled && (candidate.kind === 'self_profile'
       || (recommendedAction === 'reply' && hasEngagementContext)
-      || (recommendedAction === 'dm' && dmReady);
+      || (recommendedAction === 'dm' && dmReady));
     const draft = draftAllowed ? rawDraft : '';
 
     normalized.push({

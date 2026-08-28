@@ -45,7 +45,8 @@ input[type="range"]::-moz-range-thumb {
 @media (pointer: coarse) {
   .form-card input,
   .form-card textarea,
-  .import-row input {
+  .import-row input,
+  .draft-box textarea {
     font-size: 16px;
   }
 

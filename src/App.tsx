@@ -5,11 +5,15 @@ import { getSyncToken } from './controlToken';
 import DailyQueue from './DailyQueue';
 import { buildDailyQueue, queueSummary } from './daily';
 import { mergeDiscoveredProfiles } from './discoveryStore';
+import Manual from './Manual';
+import Onboarding from './Onboarding';
+import { hasSeenOnboarding, markOnboardingSeen } from './onboarding';
 import { resolveVisibleResult } from './resultResolution';
-import { addCandidateFromReference, applyRankResults, applySelfAnalysis, applyXProfiles, loadState, saveState, setFollowBackStatus, syncBudget, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
+import { addCandidateFromReference, applyRankResults, applySelfAnalysis, applyXProfiles, loadState, saveState, setFollowBackStatus, syncBudget, updateCandidateDraft, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
 import { copyDraft, openCandidate, platformLabel } from './social';
 import type { AppState, AppStateUpdater, Candidate, Platform } from './types';
 import { useLocalDayKey } from './useLocalDay';
+import { useModalA11y } from './useModalA11y';
 
 type Tab = 'today' | 'discover' | 'relations' | 'me' | 'settings';
 
@@ -60,6 +64,8 @@ function App() {
   const [analyzingSelf, setAnalyzingSelf] = useState(false);
   const [apiNote, setApiNote] = useState(apiConfigured ? 'API接続待機' : 'ローカルモード');
   const [persistenceError, setPersistenceError] = useState('');
+  const [showOnboarding, setShowOnboarding] = useState(() => !hasSeenOnboarding());
+  const [showManual, setShowManual] = useState(false);
   const [autoRetryTick, setAutoRetryTick] = useState(0);
   const autoReplenishingRef = useRef(false);
   const autoReplenishAttemptKeyRef = useRef('');
@@ -273,7 +279,7 @@ function App() {
     setRanking(true);
     setApiNote('Mission基準で候補を再評価中…');
     try {
-      const result = await rankCandidates(state.mission, targets, state.budget.monthlyLimitUsd);
+      const result = await rankCandidates(state.mission, targets, state.budget.monthlyLimitUsd, 'local-user', true, state.relationshipPolicy.autoDraftReplies !== false);
       setState((current) => applyRankResults(current, result.results, result.costUsd));
       setApiNote(`${result.provider}で${result.results.length}件評価${result.paid ? ` · $${result.costUsd.toFixed(4)}` : ' · $0'}`);
     } catch (error) {
@@ -390,7 +396,10 @@ function App() {
           <strong>Social Mission</strong>
           <span className="status-line" title={statusNote}><i aria-hidden="true" />{statusNote}</span>
         </div>
-        <BudgetPill state={state} />
+        <div className="topbar-actions">
+          <button className="help-button" onClick={() => setShowManual(true)} aria-label="使い方ガイドを開く">？</button>
+          <BudgetPill state={state} />
+        </div>
       </header>
 
       <main className="page">
@@ -398,7 +407,7 @@ function App() {
         {tab === 'discover' && <Discover state={state} candidates={active} onOpen={onOpen} onChange={setState} onDiscover={discoverCandidates} onRerank={rerankCandidates} onEnrichX={enrichXCandidates} discovering={discovering} ranking={ranking} enrichingX={enrichingX} apiNote={statusNote} />}
         {tab === 'relations' && <Relations state={state} onOpen={onOpen} onChange={setState} />}
         {tab === 'me' && <Me state={state} onAnalyze={analyzeMe} analyzing={analyzingSelf} />}
-        {tab === 'settings' && <Settings state={state} onChange={setState} />}
+        {tab === 'settings' && <Settings state={state} onChange={setState} onOpenManual={() => setShowManual(true)} />}
       </main>
 
       <nav className="bottom-nav" aria-label="メインナビゲーション">
@@ -410,6 +419,8 @@ function App() {
       </nav>
 
       {pending && <ResultSheet candidate={pending} onResolve={resolvePending} />}
+      {showOnboarding && <Onboarding onFinish={() => { markOnboardingSeen(); setShowOnboarding(false); }} onOpenManual={() => setShowManual(true)} />}
+      {!showOnboarding && showManual && <Manual onClose={() => setShowManual(false)} />}
     </div>
   );
 }
@@ -510,6 +521,10 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
     }));
   }
 
+  function editDraft(candidateId: string, draft: string) {
+    onChange((current) => updateCandidateDraft(current, candidateId, draft));
+  }
+
   async function addFromClipboard() {
     try {
       const value = await navigator.clipboard.readText();
@@ -566,7 +581,7 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
       </div>
     </div>
     {visible.length > 0 ? <>
-      <div className="card-stack">{displayed.map((candidate) => <CandidateCard key={candidate.id} candidate={candidate} onOpen={onOpen} onLater={snoozeCandidate} />)}</div>
+      <div className="card-stack">{displayed.map((candidate) => <CandidateCard key={candidate.id} candidate={candidate} onOpen={onOpen} onLater={snoozeCandidate} onEditDraft={editDraft} />)}</div>
       {hiddenCount > 0 && <button className="load-more-button" onClick={() => setVisibleLimit((current) => Math.min(visible.length, current + 12))}>
         <span>次の{Math.min(12, hiddenCount)}人を見る</span><small>{displayed.length} / {visible.length}人を表示中</small>
       </button>}
@@ -585,9 +600,13 @@ function DiscoverEmptyState({ filter, storedCount, snoozedCount }: { filter: 'al
   return <section className="empty-state"><div>○</div><strong>今日表示する{platform}はありません</strong><p>見送った候補と明日送りの候補は、今日の一覧から外れています。</p></section>;
 }
 
-function CandidateCard({ candidate, onOpen, onLater, featured = false }: { candidate: Candidate; onOpen: (c: Candidate) => void; onLater: (c: Candidate) => void; featured?: boolean }) {
+function CandidateCard({ candidate, onOpen, onLater, onEditDraft, featured = false }: { candidate: Candidate; onOpen: (c: Candidate) => void; onLater: (c: Candidate) => void; onEditDraft: (id: string, draft: string) => void; featured?: boolean }) {
   const buttonLabel = candidateActionButtonLabel(candidate);
   const detailsAvailable = Boolean(candidate.strategy || candidate.publicMetrics || candidate.tags.length);
+  // Buffer edits locally and commit (onEditDraft -> full state write) only on blur, so
+  // typing doesn't serialize the whole app state to localStorage on every keystroke.
+  const [draftText, setDraftText] = useState(candidate.draft ?? '');
+  useEffect(() => setDraftText(candidate.draft ?? ''), [candidate.draft]);
   return <article className={featured ? 'candidate-card featured' : 'candidate-card'}>
     <div className="candidate-context">
       <span className={`action-pill action-${candidate.recommendedAction}`}>おすすめ · {actionLabel[candidate.recommendedAction]}</span>
@@ -599,7 +618,14 @@ function CandidateCard({ candidate, onOpen, onLater, featured = false }: { candi
     </div>
     {candidate.bio && <p className="candidate-bio">{candidate.bio}</p>}
     <div className="candidate-reason"><span>おすすめ理由</span><p>{candidate.reason}</p></div>
-    {candidate.draft && <div className="draft-box"><span>そのまま使える返信案</span><p>{candidate.draft}</p><button onClick={() => copyDraft(candidate.draft!)}>コピー</button></div>}
+    {candidate.draft !== undefined && <div className="draft-box">
+      <span>そのまま使える返信案 · 編集できます</span>
+      <textarea value={draftText} onChange={(event) => setDraftText(event.target.value)} onBlur={() => onEditDraft(candidate.id, draftText)} rows={3} />
+      <div className="draft-box-actions">
+        {candidate.aiDraft !== undefined && draftText !== candidate.aiDraft && <button className="ghost-button" onClick={() => { setDraftText(candidate.aiDraft!); onEditDraft(candidate.id, candidate.aiDraft!); }}>元のAI案に戻す</button>}
+        <button disabled={!draftText} onClick={() => copyDraft(draftText)}>コピー</button>
+      </div>
+    </div>}
     {detailsAvailable && <details className="candidate-details">
       <summary>判断材料を見る</summary>
       <div className="candidate-details-body">
@@ -672,7 +698,7 @@ function Me({ state, onAnalyze, analyzing }: { state: AppState; onAnalyze: (prof
   </>;
 }
 
-function Settings({ state, onChange }: { state: AppState; onChange: AppStateUpdater }) {
+function Settings({ state, onChange, onOpenManual }: { state: AppState; onChange: AppStateUpdater; onOpenManual: () => void }) {
   const [missionText, setMissionText] = useState(state.mission.text);
   const [primaryGoal, setPrimaryGoal] = useState(state.mission.primaryGoal);
   const [communicationDNA, setCommunicationDNA] = useState(state.mission.communicationDNA);
@@ -702,6 +728,7 @@ function Settings({ state, onChange }: { state: AppState; onChange: AppStateUpda
 
   return <>
     <PageHeading eyebrow="設定" title="AIの判断軸を決める" text="普段触るのはここだけで十分です。接続や細かい調整は下の詳細設定へまとめています。" />
+    <button className="text-button" onClick={onOpenManual}>使い方ガイドを見る</button>
     <section className="form-card settings-primary-card">
       <div className="form-intro"><strong>目的と話し方</strong><p>ここが「誰を選ぶか」「何を勧めるか」の基準になります。</p></div>
       <label>このアプリに任せたいこと<textarea value={missionText} onChange={(event) => { setMissionText(event.target.value); markEdited(); }} /></label>
@@ -714,6 +741,10 @@ function Settings({ state, onChange }: { state: AppState; onChange: AppStateUpda
           <label>月間AI / API予算 <span className="inline-value">${budget.toFixed(2)}</span><input className="range" type="range" min="0" max="10" step="0.5" value={budget} onChange={(event) => { setBudget(Number(event.target.value)); markEdited(); }} /></label>
           <label>フォローバック整理を確認するまで <span className="inline-value">{followBackDays}日</span><input className="range" type="range" min="7" max="90" step="1" value={followBackDays} onChange={(event) => { setFollowBackDays(Number(event.target.value)); markEdited(); }} /></label>
           <div className="hard-limit-row"><span><strong>予算上限を超えない</strong><small>設定額を超える有料API処理は実行しません</small></span><b>ON</b></div>
+          <button type="button" className="policy-toggle" onClick={() => onChange((current) => updateRelationshipPolicy(current, { ...current.relationshipPolicy, autoDraftReplies: !(current.relationshipPolicy.autoDraftReplies !== false) }))}>
+            <span><strong>返信文案を自動で提案する</strong><small>AI再評価のとき、返信・DMが適切な候補に下書き文を自動生成します(1回の評価につき最大5件)。オフでも評価自体は行われますが下書きは作られません。送信は引き続きご自身で公式アプリから行います。</small></span>
+            <span className={state.relationshipPolicy.autoDraftReplies !== false ? 'toggle on' : 'toggle'} />
+          </button>
         </div>
       </details>
       <button className="primary-button" onClick={persist} aria-live="polite">{saved ? '保存しました' : 'この設定を保存'}</button>

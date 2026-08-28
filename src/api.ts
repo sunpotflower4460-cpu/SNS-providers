@@ -157,6 +157,7 @@ export async function rankCandidates(
   monthlyLimitUsd: number,
   userId = 'local-user',
   paidAllowed = true,
+  draftsEnabled = true,
 ) {
   // Automatic/free-only ranking must not revisit a candidate that a prior AI pass has
   // already left at review. Both profile-only and concrete-post discoveries start with
@@ -187,6 +188,7 @@ export async function rankCandidates(
       communicationDNA: mission.communicationDNA.slice(0, 4000),
       monthlyLimitUsd,
       paidAllowed,
+      draftsEnabled,
       candidates: selected.map((candidate) => ({
         id: candidate.id,
         username: candidate.username,
