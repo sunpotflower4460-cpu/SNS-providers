@@ -1,8 +1,11 @@
 import type { Candidate } from './types';
 
+const xReservedPaths = new Set(['home', 'explore', 'notifications', 'messages', 'search', 'i', 'settings', 'compose', 'intent']);
+const instagramReservedPaths = new Set(['p', 'reel', 'reels', 'stories', 'explore', 'accounts', 'direct', 'about', 'developer']);
+
 export function openCandidate(candidate: Candidate) {
   const engagementUrl = safeEngagementUrl(candidate.platform, candidate.engagementUrl);
-  if (candidate.recommendedAction === 'reply' && engagementUrl) {
+  if ((candidate.recommendedAction === 'reply' || candidate.recommendedAction === 'like') && engagementUrl) {
     window.open(engagementUrl, '_blank', 'noopener,noreferrer');
     return;
   }
@@ -16,7 +19,30 @@ export function openCandidate(candidate: Candidate) {
 }
 
 export async function copyDraft(text: string) {
-  await navigator.clipboard.writeText(text);
+  const button = document.activeElement instanceof HTMLButtonElement ? document.activeElement : null;
+  const originalLabel = button?.textContent || 'コピー';
+  try {
+    await navigator.clipboard.writeText(text);
+    showCopyFeedback(button, originalLabel, 'コピーしました', 'success');
+  } catch {
+    showCopyFeedback(button, originalLabel, 'コピーできませんでした', 'error');
+  }
+}
+
+function showCopyFeedback(button: HTMLButtonElement | null, originalLabel: string, message: string, state: 'success' | 'error') {
+  if (!button || !button.isConnected) return;
+  const generation = String(Date.now());
+  button.dataset.copyGeneration = generation;
+  button.dataset.copyState = state;
+  button.textContent = message;
+  button.setAttribute('aria-live', 'polite');
+  window.setTimeout(() => {
+    if (!button.isConnected || button.dataset.copyGeneration !== generation) return;
+    button.textContent = originalLabel;
+    delete button.dataset.copyGeneration;
+    delete button.dataset.copyState;
+    button.removeAttribute('aria-live');
+  }, 1_800);
 }
 
 export function platformLabel(platform: Candidate['platform']) {
@@ -25,22 +51,38 @@ export function platformLabel(platform: Candidate['platform']) {
 
 function canonicalProfileUrl(platform: Candidate['platform'], rawUsername: string) {
   const username = rawUsername.trim().replace(/^@/, '');
+  const lowered = username.toLowerCase();
   if (platform === 'x') {
-    if (!/^[A-Za-z0-9_]{1,15}$/.test(username)) return '';
+    if (xReservedPaths.has(lowered) || !/^[A-Za-z0-9_]{1,15}$/.test(username)) return '';
     return `https://x.com/${username}`;
   }
-  if (!/^[A-Za-z0-9._]{1,30}$/.test(username)) return '';
+  if (instagramReservedPaths.has(lowered) || !/^[A-Za-z0-9._]{1,30}$/.test(username)) return '';
   return `https://www.instagram.com/${username}/`;
 }
 
 function safeEngagementUrl(platform: Candidate['platform'], value?: string) {
-  if (!value) return '';
+  if (!value || value.length > 2000) return '';
   try {
     const url = new URL(value);
     if (url.protocol !== 'https:') return '';
     const host = url.hostname.replace(/^www\./, '').toLowerCase();
-    const allowed = platform === 'x' ? new Set(['x.com', 'twitter.com']) : new Set(['instagram.com']);
-    return allowed.has(host) ? url.toString() : '';
+    const parts = url.pathname.split('/').filter(Boolean);
+
+    if (platform === 'x') {
+      if (host !== 'x.com' && host !== 'twitter.com') return '';
+      const [username, statusSegment, postId] = parts;
+      if (parts.length < 3
+        || !/^[A-Za-z0-9_]{1,15}$/.test(username || '')
+        || statusSegment !== 'status'
+        || !/^\d{1,30}$/.test(postId || '')) return '';
+      return `https://x.com/${username}/status/${postId}`;
+    }
+
+    if (host !== 'instagram.com') return '';
+    const [kind, shortcode] = parts;
+    if (!['p', 'reel', 'reels', 'tv'].includes((kind || '').toLowerCase())
+      || !/^[A-Za-z0-9_-]{1,100}$/.test(shortcode || '')) return '';
+    return `https://www.instagram.com/${kind.toLowerCase()}/${shortcode}/`;
   } catch {
     return '';
   }

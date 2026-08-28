@@ -1,0 +1,268 @@
+/* Final real-device resilience layer. Keep this focused on overflow, viewport safety,
+   truthful status affordances, and narrow-screen behavior rather than visual restyling. */
+
+html,
+body,
+#root {
+  max-width: 100%;
+  overflow-x: clip;
+}
+
+/* The global status can contain errors, offline mode, or success. A permanently green
+   dot looked like a connection-success indicator, so keep it neutral and let text speak. */
+.status-line i {
+  background: #7d8b9d;
+  box-shadow: none;
+}
+
+.mission-card h1,
+.page-heading h1,
+.candidate-reason p,
+.draft-box p,
+.strategy-note p,
+.relation-advice,
+.rewrite-card > p,
+.result-sheet h2,
+.result-sheet p {
+  overflow-wrap: anywhere;
+}
+
+.mission-card h1 {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.candidate-identity strong,
+.candidate-identity span,
+.relation-main > div:nth-child(2) strong,
+.relation-main > div:nth-child(2) span {
+  min-width: 0;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.field-title span {
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.stage-pill {
+  font-size: 10px;
+}
+
+.relation-score small {
+  font-size: 9px;
+}
+
+.candidate-actions button,
+.discovery-button,
+.next-action-card,
+.queue-row,
+.sheet-actions button,
+.load-more-button {
+  -webkit-tap-highlight-color: rgba(114, 223, 189, .14);
+}
+
+.candidate-actions button {
+  padding-inline: 10px;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+button[data-copy-state="success"] {
+  color: #bdf0df !important;
+  border-color: rgba(114, 223, 189, .2) !important;
+  background: rgba(114, 223, 189, .09) !important;
+}
+
+button[data-copy-state="error"] {
+  color: #ffc0c9 !important;
+  border-color: rgba(255, 154, 168, .22) !important;
+  background: rgba(255, 154, 168, .08) !important;
+}
+
+.load-more-button {
+  width: 100%;
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  min-height: 52px;
+  margin-top: 11px;
+  padding: 9px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  color: var(--text-soft);
+  background: rgba(255, 255, 255, .025);
+  font: inherit;
+}
+
+.load-more-button span {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.load-more-button small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.restore-confirm {
+  display: grid;
+  gap: 11px;
+  padding: 13px;
+  border: 1px solid rgba(255, 194, 124, .18);
+  border-radius: 14px;
+  background: rgba(255, 194, 124, .055);
+}
+
+.restore-confirm > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.restore-confirm strong {
+  color: #f3d2aa;
+  font-size: 12px;
+}
+
+.restore-confirm span {
+  color: #9eacbc;
+  font-size: 10px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.restore-confirm-actions {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 8px;
+}
+
+.candidate-details > summary,
+.disclosure-card > summary,
+.inline-disclosure > summary,
+.settings-group > summary {
+  user-select: none;
+}
+
+.candidate-details > summary:focus-visible,
+.disclosure-card > summary:focus-visible,
+.inline-disclosure > summary:focus-visible,
+.settings-group > summary:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: -3px;
+}
+
+.insight-card > div:last-child > span {
+  display: inline-block;
+  color: #8393a6;
+  font-size: 10px;
+}
+
+/* A result sheet can become taller with long handles, accessibility text scaling, or
+   landscape phones. Keep every outcome reachable without allowing the sheet to escape
+   the viewport. */
+.result-sheet {
+  max-height: min(88dvh, 720px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.result-sheet:focus-within {
+  scroll-behavior: smooth;
+}
+
+@media (pointer: coarse) {
+  .candidate-details > summary,
+  .followback-controls button {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 420px) {
+  .mission-card,
+  .candidate-card,
+  .discover-primary-card,
+  .score-card,
+  .form-card {
+    border-radius: 18px;
+  }
+
+  .mission-card {
+    padding: 18px;
+  }
+
+  .candidate-card {
+    padding: 16px;
+  }
+
+  .candidate-context {
+    align-items: flex-start;
+  }
+
+  .action-pill {
+    max-width: calc(100% - 62px);
+    white-space: normal;
+    line-height: 1.3;
+  }
+
+  .match-inline {
+    flex: none;
+  }
+
+  .restore-confirm-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .result-sheet {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .result-sheet h2 {
+    font-size: 19px;
+  }
+}
+
+@media (max-width: 350px) {
+  .budget-pill {
+    padding-left: 7px;
+    padding-right: 7px;
+  }
+
+  .budget-pill strong {
+    font-size: 10px;
+  }
+
+  .nav-item small {
+    font-size: 9px;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 600px) {
+  .result-sheet {
+    max-height: 94dvh;
+    padding-top: 7px;
+  }
+
+  .sheet-handle {
+    margin-bottom: 12px;
+  }
+
+  .result-sheet h2 {
+    margin-top: 5px;
+    font-size: 18px;
+  }
+
+  .result-sheet p {
+    margin-bottom: 10px;
+  }
+
+  .sheet-actions button {
+    min-height: 46px;
+  }
+}

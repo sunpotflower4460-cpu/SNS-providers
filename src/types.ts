@@ -37,6 +37,7 @@ export interface Candidate {
   verified?: boolean;
   publicMetrics?: PublicMetrics;
   profileSyncedAt?: string;
+  profileSyncAttemptedAt?: string;
   kind: CandidateKind;
   match: number;
   relationshipScore: number;
@@ -82,6 +83,7 @@ export interface RelationshipPolicy {
   dailyLightEngagementLimit?: number;
   dailyCleanupLimit?: number;
   dailySelfImproveLimit?: number;
+  autoReplenishEnabled?: boolean;
 }
 
 export interface SelfInsight {
@@ -139,3 +141,5 @@ export interface AppState {
   xAccount: XOwnedAccountState;
   instagramAccount?: InstagramOwnedAccountState;
 }
+
+export type AppStateUpdater = (value: AppState | ((current: AppState) => AppState)) => void;

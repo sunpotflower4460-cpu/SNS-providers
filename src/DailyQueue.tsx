@@ -1,7 +1,8 @@
 import { useMemo } from 'react';
-import { buildDailyQueue, queueSummary } from './daily';
+import { buildDailyQueue } from './daily';
+import { platformLabel } from './social';
 import type { AppState, Candidate } from './types';
-import { useLocalDayKey } from './useLocalDay';
+import { localDayKey, useLocalDayKey } from './useLocalDay';
 import './daily.css';
 
 interface Props {
@@ -21,54 +22,133 @@ const actionIcon: Record<string, string> = {
   self_improve: '✦',
 };
 
+const actionLabel: Record<string, string> = {
+  follow: 'フォロー',
+  like: 'いいね',
+  reply: '返信',
+  dm: 'DM',
+  review: '確認',
+  unfollow_review: 'フォロー整理',
+  self_improve: '自分を改善',
+};
+
 export default function DailyQueue({ state, onOpenCandidate, onOpenMe, onOpenDiscover }: Props) {
   const localDay = useLocalDayKey();
   const items = useMemo(() => buildDailyQueue(state), [state, localDay]);
-  const summary = useMemo(() => queueSummary(items), [items]);
   const candidateById = useMemo(() => new Map(state.candidates.map((candidate) => [candidate.id, candidate])), [state.candidates]);
-  const hasAnyCandidates = state.candidates.some((candidate) => !candidate.skipped);
+  const activeCandidateCount = state.candidates.filter((candidate) => !candidate.skipped).length;
+  const completedToday = useMemo(() => {
+    const selfCompleted = state.selfProfile.analyzedAt
+      ? localDayKey(new Date(state.selfProfile.analyzedAt)) === localDay
+      : false;
+    return selfCompleted || state.interactions.some((interaction) => {
+      const at = new Date(interaction.at);
+      return interaction.action !== 'review'
+        && Number.isFinite(at.getTime())
+        && localDayKey(at) === localDay;
+    });
+  }, [state.interactions, state.selfProfile.analyzedAt, localDay]);
 
-  if (!items.length) {
-    if (!hasAnyCandidates) {
-      return null;
+  function openItem(item: (typeof items)[number]) {
+    if (item.kind === 'self') {
+      onOpenMe();
+      return;
     }
-    return <section className="daily-queue empty">
-      <span className="eyebrow">DAILY QUEUE</span>
-      <h3>今日のキューは完了です</h3>
-      <p>新しい候補を追加するか、明日またMissionに沿って組み直します。</p>
-      <button className="secondary-button" onClick={onOpenDiscover}>候補を追加する</button>
+    const candidate = item.candidateId ? candidateById.get(item.candidateId) : undefined;
+    if (candidate) onOpenCandidate(candidate);
+    else onOpenDiscover();
+  }
+
+  if (activeCandidateCount === 0) {
+    return <section className="daily-queue empty onboarding-empty">
+      <div className="queue-complete-icon">＋</div>
+      <span className="section-kicker">最初の一歩</span>
+      <h3>まず、つながる候補を見つけましょう</h3>
+      <p>Missionを基準に候補を探すと、誰に何をするかがTodayへ自動で並びます。細かい設定は後からで大丈夫です。</p>
+      <button className="primary-button empty-action" onClick={onOpenDiscover}>候補を探す</button>
     </section>;
   }
 
+  if (!items.length && completedToday) {
+    return <section className="daily-queue empty completed-empty">
+      <div className="queue-complete-icon">✓</div>
+      <span className="section-kicker">今日のおすすめ</span>
+      <h3>今日のおすすめは完了です</h3>
+      <p>追加で無理に行動する必要はありません。新しい相手を見たいときだけ、候補一覧を確認できます。</p>
+      <button className="secondary-button empty-action" onClick={onOpenDiscover}>候補を見る</button>
+    </section>;
+  }
+
+  if (!items.length) {
+    return <section className="daily-queue empty waiting-empty">
+      <div className="queue-wait-icon">○</div>
+      <span className="section-kicker">今日のおすすめ</span>
+      <h3>今は実行できる候補がありません</h3>
+      <p>今ある候補には、まだ具体的な投稿や十分な判断材料がありません。必要なら新しい候補を探せます。</p>
+      <button className="primary-button empty-action" onClick={onOpenDiscover}>新しい候補を探す</button>
+    </section>;
+  }
+
+  const first = items[0];
+  const firstCandidate = first.candidateId ? candidateById.get(first.candidateId) : undefined;
+  const firstCta = nextActionCta(first.action, firstCandidate);
+  const remaining = items.slice(1, 8);
+
   return <section className="daily-queue">
     <div className="daily-queue-head">
-      <div><span className="eyebrow">DAILY QUEUE</span><h2>今日のおすすめ順</h2></div>
-      <span className="queue-count">{items.length}件</span>
-    </div>
-    <p className="queue-hint">上から順にタップして進めましょう</p>
-
-    <div className="queue-summary">
-      <span><b>{summary.connect}</b>つながる</span>
-      <span><b>{summary.engage}</b>交流</span>
-      <span><b>{summary.cleanup}</b>整理</span>
-      <span><b>{summary.self}</b>自分改善</span>
+      <div>
+        <span className="section-kicker">今日のおすすめ</span>
+        <h2>まず、この1件から</h2>
+      </div>
+      <span className="queue-count">残り {items.length}件</span>
     </div>
 
-    <div className="queue-list">
-      {items.slice(0, 8).map((item, index) => {
-        const candidate = item.candidateId ? candidateById.get(item.candidateId) : undefined;
-        return <button
+    <button
+      className={first.action === 'unfollow_review' ? 'next-action-card cleanup' : 'next-action-card'}
+      onClick={() => openItem(first)}
+      aria-label={`${first.title}：${firstCta}`}
+    >
+      <span className="next-action-order">次にやること</span>
+      <span className="next-action-icon">{actionIcon[first.action] || '◎'}</span>
+      <span className="next-action-copy">
+        <small>{actionLabel[first.action] || '確認'}</small>
+        <strong>{first.title}</strong>
+        <p>{first.reason}</p>
+      </span>
+      <span className="next-action-cta">{firstCta} <b>›</b></span>
+    </button>
+
+    {remaining.length > 0 && <div className="queue-list-block">
+      <div className="queue-list-label"><span>その次</span><small>1件終えると自動で繰り上がります</small></div>
+      <div className="queue-list">
+        {remaining.map((item, index) => <button
           key={item.id}
           className={item.action === 'unfollow_review' ? 'queue-row cleanup' : 'queue-row'}
-          onClick={() => candidate ? onOpenCandidate(candidate) : onOpenMe()}
+          onClick={() => openItem(item)}
         >
-          <span className="queue-rank">{index + 1}</span>
+          <span className="queue-rank">{index + 2}</span>
           <span className="queue-action-icon">{actionIcon[item.action] || '◎'}</span>
-          <span className="queue-copy"><strong>{item.title}</strong><small>{item.reason}</small></span>
+          <span className="queue-copy">
+            <small>{actionLabel[item.action] || '確認'}</small>
+            <strong>{item.title}</strong>
+          </span>
           <span className="queue-arrow">›</span>
-        </button>;
-      })}
-    </div>
-    {items.length > 8 && <p className="queue-more">上位8件を表示中 · 完了すると次の候補が繰り上がります</p>}
+        </button>)}
+      </div>
+    </div>}
+    {items.length > 8 && <p className="queue-more">まず上位8件だけ表示しています。完了すると次の候補が自動で繰り上がります。</p>}
   </section>;
+}
+
+function nextActionCta(action: string, candidate?: Candidate) {
+  if (action === 'self_improve') return '自分を整える';
+  const platform = candidate ? platformLabel(candidate.platform) : 'SNS';
+  switch (action) {
+    case 'follow': return `${platform}でフォロー`;
+    case 'like': return `${platform}で対象投稿を開く`;
+    case 'reply': return `${platform}で返信先を開く`;
+    case 'dm': return `${platform}でDM先を開く`;
+    case 'unfollow_review': return `${platform}で確認する`;
+    default: return `${platform}で確認する`;
+  }
 }

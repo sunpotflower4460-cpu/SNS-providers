@@ -1,6 +1,7 @@
 import api from './index';
 import { discoverSocialProfiles } from './discovery';
 import { syncInstagramEngagers, type InstagramOwnedSyncRequest } from './instagramOwned';
+import { reserveSyncLease, releaseSyncLease } from './syncLease';
 import { completeXOAuth, disconnectXOAuth, startXOAuth, xOAuthStatus } from './xOAuth';
 import { syncOwnedXData, type XOwnedSyncRequest } from './xOwned';
 
@@ -29,6 +30,7 @@ interface DiscoverRequest {
   userId?: string;
   mission: string;
   maxPerPlatform?: number;
+  automatic?: boolean;
 }
 
 interface StateSyncRequest {
@@ -36,6 +38,10 @@ interface StateSyncRequest {
   state: unknown;
   expectedUpdatedAt?: string | null;
 }
+
+const MAX_ROUTED_BODY_BYTES = 2_100_000;
+const AUTO_DISCOVERY_COOLDOWN_MS = 20 * 60 * 60 * 1000;
+const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 const ROUTER_CORS_PATHS = new Set([
   '/api/budget',
@@ -62,6 +68,11 @@ export default {
     const url = new URL(request.url);
     if (request.method === 'OPTIONS' && ROUTER_CORS_PATHS.has(url.pathname)) {
       return new Response(null, { status: 204, headers: corsHeaders(request, env) });
+    }
+
+    if (ROUTER_CORS_PATHS.has(url.pathname)) {
+      const userBoundary = await enforceSingleUserRequest(request, url);
+      if (!userBoundary.ok) return json({ error: userBoundary.reason }, userBoundary.status, request, env);
     }
 
     if (PROVIDER_COST_PATHS.has(url.pathname)) {
@@ -92,6 +103,8 @@ export default {
     }
 
     if (request.method === 'GET' && url.pathname === '/api/x/oauth/status') {
+      const authorized = await authorizeSync(request, env);
+      if (!authorized.ok) return json({ error: authorized.reason }, authorized.status, request, env);
       try {
         const userId = sanitizeUserId(url.searchParams.get('userId') || 'local-user');
         return json(await xOAuthStatus(env, userId), 200, request, env);
@@ -117,9 +130,18 @@ export default {
       const authorized = await authorizeSync(request, env);
       if (!authorized.ok) return json({ error: authorized.reason }, authorized.status, request, env);
       try {
-        const body = await request.json<XOwnedSyncRequest>();
-        const result = await syncOwnedXData(env, body || {});
-        return json(result, 200, request, env);
+        const body = (await request.json<XOwnedSyncRequest>()) || {};
+        const userId = sanitizeUserId(body.userId || 'local-user');
+        const leaseResult = await reserveSyncLease(env.DB, userId, 'x_owned_sync', 3 * 60 * 1000);
+        if (!leaseResult.ok) {
+          return json({ enabled: false, source: 'disabled', costUsd: 0, reason: leaseResult.reason }, 200, request, env);
+        }
+        try {
+          const result = await syncOwnedXData(env, body);
+          return json(result, 200, request, env);
+        } finally {
+          await releaseSyncLease(env.DB, leaseResult.lease);
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Owned X sync failed';
         return json({ error: message }, 400, request, env);
@@ -130,9 +152,18 @@ export default {
       const authorized = await authorizeSync(request, env);
       if (!authorized.ok) return json({ error: authorized.reason }, authorized.status, request, env);
       try {
-        const body = await request.json<InstagramOwnedSyncRequest>();
-        const result = await syncInstagramEngagers(env, body || {});
-        return json(result, 200, request, env);
+        const body = (await request.json<InstagramOwnedSyncRequest>()) || {};
+        const userId = sanitizeUserId(body.userId || 'local-user');
+        const leaseResult = await reserveSyncLease(env.DB, userId, 'instagram_owned_sync', 5 * 60 * 1000);
+        if (!leaseResult.ok) {
+          return json({ enabled: false, source: 'disabled', externalCostUsd: 0, engagers: [], reason: leaseResult.reason }, 200, request, env);
+        }
+        try {
+          const result = await syncInstagramEngagers(env, body);
+          return json(result, 200, request, env);
+        } finally {
+          await releaseSyncLease(env.DB, leaseResult.lease);
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Instagram engager sync failed';
         return json({ error: message }, 400, request, env);
@@ -150,6 +181,7 @@ export default {
             .bind(userId)
             .first<{ state_json: string; updated_at: string }>();
           if (!row) return json({ found: false, state: null, updatedAt: null }, 200, request, env);
+          if (!validPastishIso(row.updated_at)) throw new Error('Stored state version is invalid or too far in the future');
           return json({ found: true, state: JSON.parse(row.state_json), updatedAt: row.updated_at }, 200, request, env);
         } catch (error) {
           const message = error instanceof Error ? error.message : 'State download failed';
@@ -168,10 +200,13 @@ export default {
           if (body.expectedUpdatedAt !== null && typeof body.expectedUpdatedAt !== 'string') {
             return json({ error: 'expectedUpdatedAt must be a string or null' }, 400, request, env);
           }
+          if (typeof body.expectedUpdatedAt === 'string' && !validPastishIso(body.expectedUpdatedAt)) {
+            return json({ error: 'expectedUpdatedAt must be a valid ISO timestamp and not too far in the future' }, 400, request, env);
+          }
 
           const stateJson = JSON.stringify(body.state);
-          if (stateJson.length > 2_000_000) return json({ error: 'state snapshot is too large' }, 413, request, env);
-          const updatedAt = new Date().toISOString();
+          if (new TextEncoder().encode(stateJson).byteLength > 2_000_000) return json({ error: 'state snapshot is too large' }, 413, request, env);
+          const updatedAt = nextSnapshotVersion(body.expectedUpdatedAt);
 
           if (body.expectedUpdatedAt === null) {
             const inserted = await env.DB.prepare(
@@ -200,19 +235,45 @@ export default {
     }
 
     if (request.method === 'POST' && url.pathname === '/api/discover/social') {
+      let automaticGuardId: string | null = null;
       try {
         const body = await request.json<DiscoverRequest>();
         if (!body || typeof body.mission !== 'string' || !body.mission.trim()) {
           return json({ error: 'mission is required' }, 400, request, env);
         }
         if (body.mission.length > 4000) return json({ error: 'mission is too long' }, 400, request, env);
+        if (body.automatic != null && typeof body.automatic !== 'boolean') {
+          return json({ error: 'automatic must be boolean' }, 400, request, env);
+        }
+        const userId = sanitizeUserId(body.userId || 'local-user');
+        if (body.automatic) {
+          const guard = await reserveAutomaticDiscovery(env, userId);
+          if (!guard.ok) {
+            return json({
+              enabled: false,
+              provider: 'tavily',
+              costUsd: 0,
+              credits: 0,
+              profiles: [],
+              reason: guard.reason,
+              ...(guard.retryAfterSeconds ? { retryAfterSeconds: guard.retryAfterSeconds } : {}),
+            }, 200, request, env);
+          }
+          automaticGuardId = guard.id;
+        }
+
         const maxPerPlatform = Math.max(1, Math.min(20, Number(body.maxPerPlatform || 12)));
         const result = await discoverSocialProfiles(body.mission, env, maxPerPlatform);
+        if (!result.enabled && automaticGuardId) {
+          await releaseAutomaticDiscovery(env, automaticGuardId);
+          automaticGuardId = null;
+        }
         if (result.enabled && result.credits > 0) {
-          await recordFreeSearchUsage(env, body.userId || 'local-user', result.credits);
+          await recordFreeSearchUsage(env, userId, result.credits);
         }
         return json(result, 200, request, env);
       } catch (error) {
+        if (automaticGuardId) await releaseAutomaticDiscovery(env, automaticGuardId);
         const message = error instanceof Error ? error.message : 'Discovery failed';
         return json({ error: message }, 400, request, env);
       }
@@ -221,6 +282,46 @@ export default {
     return (api as { fetch(request: Request, env: unknown): Promise<Response> }).fetch(request, env);
   },
 };
+
+async function enforceSingleUserRequest(request: Request, url: URL) {
+  const queryUserId = url.searchParams.get('userId');
+  if (queryUserId !== null && queryUserId.trim() !== 'local-user') {
+    return { ok: false as const, status: 400, reason: 'This deployment only supports userId=local-user.' };
+  }
+
+  if (request.method === 'POST' || request.method === 'PUT') {
+    const declaredLength = Number(request.headers.get('content-length') || '0');
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_ROUTED_BODY_BYTES) {
+      return { ok: false as const, status: 413, reason: 'Request body is too large.' };
+    }
+
+    let rawBody = '';
+    try {
+      rawBody = await request.clone().text();
+    } catch {
+      return { ok: false as const, status: 400, reason: 'Request body could not be read.' };
+    }
+    if (new TextEncoder().encode(rawBody).byteLength > MAX_ROUTED_BODY_BYTES) {
+      return { ok: false as const, status: 413, reason: 'Request body is too large.' };
+    }
+
+    if (rawBody.trim()) {
+      let body: { userId?: unknown };
+      try {
+        body = JSON.parse(rawBody) as { userId?: unknown };
+      } catch {
+        return { ok: false as const, status: 400, reason: 'Request body must be valid JSON.' };
+      }
+      if (Object.prototype.hasOwnProperty.call(body, 'userId') && body.userId != null) {
+        if (typeof body.userId !== 'string' || body.userId.trim() !== 'local-user') {
+          return { ok: false as const, status: 400, reason: 'This deployment only supports userId=local-user.' };
+        }
+      }
+    }
+  }
+
+  return { ok: true as const, status: 200, reason: '' };
+}
 
 async function authorizeSync(request: Request, env: Env) {
   const expected = (env.SYNC_TOKEN_SHA256 || '').trim().toLowerCase();
@@ -248,8 +349,74 @@ function constantTimeEqual(a: string, b: string) {
 
 function sanitizeUserId(value: string) {
   const userId = value.trim();
-  if (!/^[A-Za-z0-9._-]{1,80}$/.test(userId)) throw new Error('invalid userId');
+  if (userId !== 'local-user') throw new Error('unsupported userId');
   return userId;
+}
+
+function validPastishIso(value: string) {
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) && time <= Date.now() + MAX_CLOCK_SKEW_MS;
+}
+
+function nextSnapshotVersion(previous: string | null | undefined) {
+  const now = Date.now();
+  const previousMs = previous ? new Date(previous).getTime() : Number.NaN;
+  const nextMs = Number.isFinite(previousMs) ? Math.max(now, previousMs + 1) : now;
+  return new Date(nextMs).toISOString();
+}
+
+async function reserveAutomaticDiscovery(env: Env, userId: string) {
+  const id = crypto.randomUUID();
+  const now = new Date();
+  const cutoff = new Date(now.getTime() - AUTO_DISCOVERY_COOLDOWN_MS).toISOString();
+  const futureLimit = new Date(now.getTime() + MAX_CLOCK_SKEW_MS).toISOString();
+  try {
+    const result = await env.DB.prepare(
+      `INSERT INTO budget_ledger (id, user_id, provider, operation, cost_usd, input_units, output_units, cache_hit, occurred_at)
+       SELECT ?, ?, 'tavily', 'search_auto_guard', 0, 0, 0, 0, ?
+       WHERE NOT EXISTS (
+         SELECT 1 FROM budget_ledger
+         WHERE user_id = ?
+           AND provider = 'tavily'
+           AND operation = 'search_auto_guard'
+           AND occurred_at >= ?
+           AND occurred_at <= ?
+       )`
+    ).bind(id, userId, now.toISOString(), userId, cutoff, futureLimit).run();
+    if (result.meta.changes > 0) return { ok: true as const, id };
+
+    const latest = await env.DB.prepare(
+      `SELECT occurred_at FROM budget_ledger
+       WHERE user_id = ?
+         AND provider = 'tavily'
+         AND operation = 'search_auto_guard'
+         AND occurred_at >= ?
+         AND occurred_at <= ?
+       ORDER BY occurred_at DESC LIMIT 1`
+    ).bind(userId, cutoff, futureLimit).first<{ occurred_at: string }>();
+    const latestMs = latest?.occurred_at ? new Date(latest.occurred_at).getTime() : Number.NaN;
+    const remainingMs = Number.isFinite(latestMs)
+      ? Math.max(1_000, latestMs + AUTO_DISCOVERY_COOLDOWN_MS - now.getTime())
+      : AUTO_DISCOVERY_COOLDOWN_MS;
+    return {
+      ok: false as const,
+      reason: '自動候補補充は直近20時間以内に実行済みです。必要ならDiscoverから手動探索できます。',
+      retryAfterSeconds: Math.max(1, Math.min(86_400, Math.ceil(remainingMs / 1000))),
+    };
+  } catch {
+    return {
+      ok: false as const,
+      reason: 'D1の自動補充ガードを確認できないため、自動探索だけ安全側で停止しました。手動探索は利用できます。',
+    };
+  }
+}
+
+async function releaseAutomaticDiscovery(env: Env, id: string) {
+  try {
+    await env.DB.prepare("DELETE FROM budget_ledger WHERE id = ? AND operation = 'search_auto_guard'").bind(id).run();
+  } catch {
+    // Keeping the zero-cost guard is safer than risking repeated automatic free-quota use.
+  }
 }
 
 async function recordFreeSearchUsage(env: Env, userId: string, credits: number) {

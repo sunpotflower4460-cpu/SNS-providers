@@ -1,3 +1,6 @@
+import { fetchWithTimeout } from './fetchWithTimeout';
+import { releaseSyncLease, reserveSyncLease } from './syncLease';
+
 export interface XOAuthEnv {
   DB: D1Database;
   X_CLIENT_ID?: string;
@@ -27,6 +30,7 @@ const READ_ONLY_SCOPES = ['tweet.read', 'users.read', 'follows.read', 'offline.a
 const READ_ONLY_SCOPE_SET = new Set(READ_ONLY_SCOPES);
 const SESSION_TTL_MS = 10 * 60 * 1000;
 const REFRESH_EARLY_MS = 60 * 1000;
+const X_IDENTITY_LEASE_MS = 3 * 60 * 1000;
 
 export function xOAuthConfigured(env: XOAuthEnv) {
   return Boolean(
@@ -68,20 +72,33 @@ export async function completeXOAuth(env: XOAuthEnv, requestUrl: URL, userId = '
   const oauthError = requestUrl.searchParams.get('error');
   if (oauthError) return returnUrl(env, `x_oauth=${encodeURIComponent(oauthError)}`);
 
-  const code = requestUrl.searchParams.get('code') || '';
-  const state = requestUrl.searchParams.get('state') || '';
-  if (!code || !state) throw new Error('Missing OAuth code or state');
+  // Account replacement and owned-data sync share one lease. Without this boundary an
+  // old-account sync can finish after a new OAuth callback clears derived rows and then
+  // recreate the old account's cache/paging under the newly connected identity.
+  const leaseResult = await reserveSyncLease(env.DB, userId, 'x_owned_sync', X_IDENTITY_LEASE_MS);
+  if (!leaseResult.ok) throw new Error('Xの情報更新中です。完了後にX接続をもう一度お試しください。');
 
-  const session = await env.DB.prepare('SELECT code_verifier, created_at FROM x_oauth_sessions WHERE state = ?')
-    .bind(state)
-    .first<{ code_verifier: string; created_at: string }>();
-  await env.DB.prepare('DELETE FROM x_oauth_sessions WHERE state = ?').bind(state).run();
-  if (!session) throw new Error('OAuth session not found or already used');
-  if (Date.now() - new Date(session.created_at).getTime() > SESSION_TTL_MS) throw new Error('OAuth session expired');
+  try {
+    const code = requestUrl.searchParams.get('code') || '';
+    const state = requestUrl.searchParams.get('state') || '';
+    if (!code || !state) throw new Error('Missing OAuth code or state');
 
-  const token = await exchangeAuthorizationCode(env, code, session.code_verifier);
-  await persistTokenResponse(env, userId, token);
-  return returnUrl(env, 'x_oauth=connected');
+    const session = await env.DB.prepare('SELECT code_verifier, created_at FROM x_oauth_sessions WHERE state = ?')
+      .bind(state)
+      .first<{ code_verifier: string; created_at: string }>();
+    await env.DB.prepare('DELETE FROM x_oauth_sessions WHERE state = ?').bind(state).run();
+    if (!session) throw new Error('OAuth session not found or already used');
+    const createdMs = new Date(session.created_at).getTime();
+    const sessionAgeMs = Date.now() - createdMs;
+    if (!Number.isFinite(createdMs) || sessionAgeMs < 0 || sessionAgeMs > SESSION_TTL_MS) throw new Error('OAuth session expired or malformed');
+
+    const token = await exchangeAuthorizationCode(env, code, session.code_verifier);
+    await clearOwnedXDerivedState(env, userId);
+    await persistTokenResponse(env, userId, token);
+    return returnUrl(env, 'x_oauth=connected');
+  } finally {
+    await releaseSyncLease(env.DB, leaseResult.lease);
+  }
 }
 
 export async function xOAuthStatus(env: XOAuthEnv, userId = 'local-user') {
@@ -89,35 +106,106 @@ export async function xOAuthStatus(env: XOAuthEnv, userId = 'local-user') {
     return { configured: false, connected: false, scopes: [], expiresAt: null, updatedAt: null, refreshable: false };
   }
   const row = await loadStoredToken(env, userId);
-  return {
-    configured: true,
-    connected: Boolean(row),
-    scopes: row?.scope ? row.scope.split(/\s+/).filter(Boolean) : [],
-    expiresAt: row?.expires_at || null,
-    updatedAt: row?.updated_at || null,
-    refreshable: Boolean(row?.refresh_token_enc),
-  };
+  if (!row) return { configured: true, connected: false, scopes: [], expiresAt: null, updatedAt: null, refreshable: false };
+
+  try {
+    const scopes = validateGrantedScopes(row.scope);
+    await decryptToken(env, row.access_token_enc);
+    const expiresAtMs = parseStoredExpiry(row.expires_at);
+    const accessUsable = expiresAtMs > Date.now();
+    let refreshable = false;
+    if (row.refresh_token_enc) {
+      try {
+        // A non-empty encrypted refresh token is not enough to claim the connection can
+        // be maintained. Verify its ciphertext now so an expired access token with a
+        // corrupt refresh row does not appear connected until the first real sync fails.
+        await decryptToken(env, row.refresh_token_enc);
+        refreshable = true;
+      } catch {
+        refreshable = false;
+      }
+    }
+    const usable = accessUsable || refreshable;
+    return {
+      configured: true,
+      connected: usable,
+      scopes: usable ? scopes : [],
+      expiresAt: usable ? row.expires_at : null,
+      updatedAt: usable && validIso(row.updated_at) ? row.updated_at : null,
+      refreshable: usable && refreshable,
+    };
+  } catch {
+    // A malformed/undecryptable access-token row is not a usable connection. Keep
+    // configuration true so the UI offers a fresh OAuth connection that can replace it.
+    return { configured: true, connected: false, scopes: [], expiresAt: null, updatedAt: null, refreshable: false };
+  }
 }
 
 export async function getValidXAccessToken(env: XOAuthEnv, userId = 'local-user') {
   assertConfigured(env);
   const row = await loadStoredToken(env, userId);
   if (!row) throw new Error('X account is not connected');
+  validateGrantedScopes(row.scope);
 
-  const expiresAt = row.expires_at ? new Date(row.expires_at).getTime() : Number.POSITIVE_INFINITY;
+  const expiresAt = parseStoredExpiry(row.expires_at);
   if (expiresAt > Date.now() + REFRESH_EARLY_MS) return decryptToken(env, row.access_token_enc);
   if (!row.refresh_token_enc) throw new Error('X access token expired and no refresh token is available');
 
   const refreshToken = await decryptToken(env, row.refresh_token_enc);
   const refreshed = await refreshAccessToken(env, refreshToken);
-  await persistTokenResponse(env, userId, refreshed, row.refresh_token_enc);
+  try {
+    await persistTokenResponse(env, userId, refreshed, row.refresh_token_enc, row.scope);
+  } catch {
+    // OAuth providers may rotate/invalidate the old refresh token as soon as a refresh
+    // succeeds. 古い資格情報を再利用しないため、the stale D1 row is invalidated
+    // best-effort before any paid owned-read is allowed to start.
+    await invalidateStoredConnectionAfterRefreshPersistenceFailure(env, userId);
+    throw new Error('Xの接続更新は完了しましたが、新しい認証情報を安全に保存できませんでした。Xを接続し直してから再度お試しください。');
+  }
   if (!refreshed.access_token) throw new Error('X refresh response did not include access_token');
   return refreshed.access_token;
 }
 
 export async function disconnectXOAuth(env: XOAuthEnv, userId = 'local-user') {
-  await env.DB.prepare('DELETE FROM x_oauth_tokens WHERE user_id = ?').bind(userId).run();
-  return { ok: true };
+  // A cross-tab disconnect must not race an owned read. Otherwise the old read can write
+  // derived cache/paging after token deletion and leave it waiting for a later reconnect.
+  const leaseResult = await reserveSyncLease(env.DB, userId, 'x_owned_sync', X_IDENTITY_LEASE_MS);
+  if (!leaseResult.ok) throw new Error('Xの情報更新中です。完了後に接続解除をもう一度お試しください。');
+
+  try {
+    // Token deletion is the authoritative disconnect. Derived-cache cleanup is hygiene only:
+    // owned-cache reads now require a connected token record, so a cleanup failure must not
+    // report "disconnect failed" after the credential has already been removed.
+    await env.DB.prepare('DELETE FROM x_oauth_tokens WHERE user_id = ?').bind(userId).run();
+    try {
+      await clearOwnedXDerivedState(env, userId);
+    } catch {
+      // Stale derived rows are unreachable while disconnected and will be cleared on reconnect.
+    }
+    return { ok: true };
+  } finally {
+    await releaseSyncLease(env.DB, leaseResult.lease);
+  }
+}
+
+async function invalidateStoredConnectionAfterRefreshPersistenceFailure(env: XOAuthEnv, userId: string) {
+  try {
+    await env.DB.prepare('DELETE FROM x_oauth_tokens WHERE user_id = ?').bind(userId).run();
+  } catch {
+    // The original persistence failure may be a wider D1 outage. The caller still aborts
+    // before the paid reservation/provider boundary, so no X owned-read starts in this run.
+  }
+  try {
+    await clearOwnedXDerivedState(env, userId);
+  } catch {
+    // A later successful reconnect clears these rows before the replacement token is stored.
+  }
+}
+
+async function clearOwnedXDerivedState(env: XOAuthEnv, userId: string) {
+  await env.DB.prepare('DELETE FROM x_owned_snapshots WHERE user_id = ?').bind(userId).run();
+  await env.DB.prepare('DELETE FROM x_owned_paging WHERE user_id = ?').bind(userId).run();
+  await env.DB.prepare('DELETE FROM x_follow_cycle_targets WHERE user_id = ?').bind(userId).run();
 }
 
 async function loadStoredToken(env: XOAuthEnv, userId: string) {
@@ -126,16 +214,24 @@ async function loadStoredToken(env: XOAuthEnv, userId: string) {
     .first<StoredTokenRow>();
 }
 
-async function persistTokenResponse(env: XOAuthEnv, userId: string, token: XTokenResponse, existingRefreshTokenEnc?: string | null) {
+async function persistTokenResponse(
+  env: XOAuthEnv,
+  userId: string,
+  token: XTokenResponse,
+  existingRefreshTokenEnc?: string | null,
+  existingGrantedScope?: string,
+) {
   if (!token.access_token) throw new Error('X token response did not include access_token');
-  const grantedScopes = validateGrantedScopes(token.scope);
+  if ((token.token_type || '').trim().toLowerCase() !== 'bearer') throw new Error('X token response did not include a Bearer token type');
+  if (typeof token.expires_in !== 'number' || !Number.isFinite(token.expires_in) || token.expires_in <= 0) {
+    throw new Error('X token response did not include a valid positive expires_in');
+  }
+  const grantedScopes = validateGrantedScopes(token.scope, existingGrantedScope);
   const accessTokenEnc = await encryptToken(env, token.access_token);
   const refreshTokenEnc = token.refresh_token
     ? await encryptToken(env, token.refresh_token)
     : existingRefreshTokenEnc || null;
-  const expiresAt = Number.isFinite(token.expires_in)
-    ? new Date(Date.now() + Number(token.expires_in) * 1000).toISOString()
-    : null;
+  const expiresAt = new Date(Date.now() + token.expires_in * 1000).toISOString();
   const updatedAt = new Date().toISOString();
 
   await env.DB.prepare(
@@ -150,10 +246,12 @@ async function persistTokenResponse(env: XOAuthEnv, userId: string, token: XToke
   ).bind(userId, accessTokenEnc, refreshTokenEnc, expiresAt, grantedScopes.join(' '), updatedAt).run();
 }
 
-function validateGrantedScopes(scopeValue?: string) {
-  const scopes = scopeValue?.trim()
-    ? [...new Set(scopeValue.trim().split(/\s+/).filter(Boolean))]
-    : [...READ_ONLY_SCOPES];
+function validateGrantedScopes(scopeValue?: string, verifiedFallbackScope?: string) {
+  // Authorization-code responses must prove the granted scopes. A refresh response may
+  // omit an unchanged scope; in that one case only, reuse the already-validated stored scope.
+  const rawScope = scopeValue?.trim() || verifiedFallbackScope?.trim();
+  if (!rawScope) throw new Error('X OAuth response is missing granted scope metadata');
+  const scopes = [...new Set(rawScope.split(/\s+/).filter(Boolean))];
   const unexpected = scopes.filter((scope) => !READ_ONLY_SCOPE_SET.has(scope));
   if (unexpected.length) throw new Error(`X OAuth returned unexpected scope(s): ${unexpected.join(', ')}`);
   const missing = READ_ONLY_SCOPES.filter((scope) => !scopes.includes(scope));
@@ -181,16 +279,18 @@ async function refreshAccessToken(env: XOAuthEnv, refreshToken: string) {
 
 async function tokenRequest(env: XOAuthEnv, form: URLSearchParams, operation: string) {
   const credentials = btoa(`${env.X_CLIENT_ID!.trim()}:${env.X_CLIENT_SECRET!.trim()}`);
-  const response = await fetch('https://api.x.com/2/oauth2/token', {
+  const response = await fetchWithTimeout('https://api.x.com/2/oauth2/token', {
     method: 'POST',
     headers: {
       authorization: `Basic ${credentials}`,
       'content-type': 'application/x-www-form-urlencoded',
     },
     body: form.toString(),
-  });
+  }, 20_000, `X OAuth ${operation}`);
   if (!response.ok) throw new Error(`X OAuth ${operation} returned ${response.status}`);
-  return response.json<XTokenResponse>();
+  const body = await response.json().catch(() => null) as XTokenResponse | null;
+  if (!body || typeof body !== 'object') throw new Error(`X OAuth ${operation} returned invalid JSON`);
+  return body;
 }
 
 async function encryptToken(env: XOAuthEnv, plaintext: string) {
@@ -252,6 +352,17 @@ function validHttpsOrLocalUrl(value?: string) {
   } catch {
     return false;
   }
+}
+
+function parseStoredExpiry(value: string | null) {
+  if (!value) throw new Error('Stored OAuth token expiry is missing');
+  const time = new Date(value).getTime();
+  if (!Number.isFinite(time)) throw new Error('Stored OAuth token expiry is invalid');
+  return time;
+}
+
+function validIso(value: string) {
+  return Number.isFinite(new Date(value).getTime());
 }
 
 function randomBase64Url(bytes: number) {

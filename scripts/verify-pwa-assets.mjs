@@ -46,7 +46,20 @@ for (const icon of ['icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png'])
   if (!serviceWorker.includes(icon)) throw new Error(`Service Worker CORE cache missing ${icon}`);
 }
 
-console.log('PWA assets OK: manifest identity, iOS metadata, 180/192/512 PNG dimensions, SVG fallback and offline cache are consistent.');
+if (!serviceWorker.includes('isApiLikeRequest(event.request, requestUrl)')
+  || !serviceWorker.includes("relativePath.startsWith('api/')")
+  || !serviceWorker.includes("accept.toLowerCase().includes('application/json')")
+  || !serviceWorker.includes('responseForbidsStorage(response)')
+  || !serviceWorker.includes('no-store|private')) {
+  throw new Error('Service Worker can cache personal API/JSON or Cache-Control: no-store responses.');
+}
+
+if (!serviceWorker.includes("const CACHE_PREFIX = 'social-mission-'")
+  || !serviceWorker.includes('key.startsWith(CACHE_PREFIX) && key !== CACHE')) {
+  throw new Error('Service Worker cache cleanup can delete Cache Storage owned by another app on the same origin.');
+}
+
+console.log('PWA assets OK: manifest identity, iOS metadata, icon dimensions, offline shell, private-response no-store and app-scoped cache eviction are consistent.');
 
 async function assertNonEmpty(url) {
   const info = await stat(url);
