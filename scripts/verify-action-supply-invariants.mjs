@@ -11,6 +11,8 @@ const discoveryWorker = await readFile(new URL('../worker/src/discovery.ts', imp
 const router = await readFile(new URL('../worker/src/router.ts', import.meta.url), 'utf8');
 const workerApi = await readFile(new URL('../worker/src/index.ts', import.meta.url), 'utf8');
 const store = await readFile(new URL('../src/store.ts', import.meta.url), 'utf8');
+const localAction = await readFile(new URL('../src/localAction.ts', import.meta.url), 'utf8');
+const firstQueue = await readFile(new URL('../src/firstQueue.ts', import.meta.url), 'utf8');
 
 function requireAll(source, fragments, message) {
   if (!fragments.every((fragment) => source.includes(fragment))) throw new Error(message);
@@ -21,7 +23,8 @@ requireAll(store, [
   'dailyConnectionLimit: 20',
   'dailyConversationLimit: 8',
   'dailyLightEngagementLimit: 8',
-], 'Default daily workload targets changed without updating supply assumptions.');
+  'monthlyLimitUsd: 3',
+], 'Default daily workload targets or the $3 default budget changed without updating supply assumptions.');
 
 requireAll(api, [
   'maxPerPlatform: 20',
@@ -66,10 +69,22 @@ requireAll(requestContext, [
   'candidate.profileSyncedAt || null',
 ], 'AI request fingerprints can ignore current match or relationship timing/follow state and accept stale recommendations.');
 
-requireAll(daily, [
-  'effectiveAction(candidate)',
+requireAll(localAction, [
+  'export function queueAction',
   "candidate.recommendedAction === 'like' || candidate.recommendedAction === 'reply'",
   '!candidate.engagementUrl',
+  '!candidate.followedAt',
+  "tags.includes('identity-conflict')",
+], 'Local queue actions can again require a paid rank, invent people, or force a post choice without a concrete target.');
+
+requireAll(firstQueue, [
+  'queueAction(candidate)',
+  'Todayにフォロー / いいね / 返信が並ぶ',
+], 'First-use path can again require a paid AI rank before Today shows follow/like/reply work.');
+
+requireAll(daily, [
+  'effectiveAction(candidate)',
+  'queueAction(candidate)',
   'freshnessBoost(candidate, action, now)',
   'staleConversationBoost(candidate, action, staleDays)',
   'isCoolingDown(candidate, lastHandledAt.get(candidate.id), now)',
@@ -85,8 +100,8 @@ requireAll(workload, [
   'reviewだけの候補は実行可能数に含めていません',
   'autoReplenishEnabled !== false',
   '無料Tavily探索＋無料/ローカル評価',
-  "candidate.recommendedAction === 'like' && Boolean(candidate.engagementUrl)",
-  "candidate.recommendedAction === 'reply' && Boolean(candidate.engagementUrl)",
+  "action === 'like' && Boolean(candidate.engagementUrl)",
+  "action === 'reply' && Boolean(candidate.engagementUrl)",
 ], 'Workload advisor can again inflate supply or hide/lose the automatic free-only replenishment control.');
 
 requireAll(app, [

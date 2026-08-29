@@ -1,4 +1,5 @@
 import { recordInteraction } from './store';
+import { queueAction } from './localAction';
 import type { AppState, Candidate, Interaction, RecommendedAction } from './types';
 
 export type ResultSheetAction = 'followed' | 'skipped' | 'later' | 'kept';
@@ -24,11 +25,13 @@ export function resolveVisibleResult(
   // or the same platform+handle only while neither side has an immutable ID yet.
   if (!sameVisibleCandidateIdentity(visibleCandidate, current)) return state;
 
-  const visibleCleanup = visibleCandidate.recommendedAction === 'unfollow_review';
-  const visibleReview = visibleCandidate.recommendedAction === 'review';
-  const visibleEngagement = ['like', 'reply', 'dm'].includes(visibleCandidate.recommendedAction);
-  const sameVisibleAction = current.recommendedAction === visibleCandidate.recommendedAction;
-  const sameVisibleTarget = visibleCandidate.recommendedAction === 'like' || visibleCandidate.recommendedAction === 'reply'
+  const visibleAction = queueAction(visibleCandidate);
+  const currentAction = queueAction(current);
+  const visibleCleanup = visibleAction === 'unfollow_review';
+  const visibleReview = visibleAction === 'review';
+  const visibleEngagement = ['like', 'reply', 'dm'].includes(visibleAction);
+  const sameVisibleAction = currentAction === visibleAction;
+  const sameVisibleTarget = visibleAction === 'like' || visibleAction === 'reply'
     ? Boolean(visibleCandidate.engagementUrl) && current.engagementUrl === visibleCandidate.engagementUrl
     : true;
   const completedVisibleEngagement = action === 'kept' && visibleEngagement && sameVisibleAction && sameVisibleTarget;
@@ -51,7 +54,7 @@ export function resolveVisibleResult(
               recommendedAction: contextualAction,
               ...(completedVisibleEngagement ? {
                 draft: undefined,
-                engagementUrl: visibleCandidate.recommendedAction === 'like' || visibleCandidate.recommendedAction === 'reply'
+                engagementUrl: visibleAction === 'like' || visibleAction === 'reply'
                   ? undefined
                   : candidate.engagementUrl,
               } : {}),

@@ -1,5 +1,6 @@
 import { getSyncToken } from './controlToken';
 import { apiConfigured } from './api';
+import { queueAction } from './localAction';
 import type { AppState } from './types';
 
 export type FirstQueueTab = 'today' | 'discover' | 'relations' | 'me' | 'settings';
@@ -24,9 +25,8 @@ export function firstQueueSteps(
   const hasCandidates = state.candidates.some((candidate) => !candidate.skipped);
   const hasActionable = state.candidates.some((candidate) => {
     if (candidate.skipped) return false;
-    if (candidate.recommendedAction === 'review' || candidate.recommendedAction === 'unfollow_review') return false;
-    if ((candidate.recommendedAction === 'like' || candidate.recommendedAction === 'reply') && !candidate.engagementUrl) return false;
-    return candidate.match > 0;
+    const action = queueAction(candidate);
+    return action === 'follow' || action === 'like' || action === 'reply' || action === 'dm';
   });
   const synced = Boolean(state.xAccount.lastSyncedAt || state.instagramAccount?.lastSyncedAt);
 
@@ -38,7 +38,7 @@ export function firstQueueSteps(
     steps.push({
       id: 'sync',
       index: steps.length + 1,
-      label: synced ? 'X / Instagramを同期済み' : 'X同期・IGコメント同期、または無料探索',
+      label: synced ? 'X / Instagramを同期済み' : 'URL追加・無料探索、またはキャッシュ同期',
       done: synced || hasCandidates,
       tab: 'discover',
     });
@@ -52,9 +52,9 @@ export function firstQueueSteps(
     });
   }
   steps.push({
-    id: 'rank',
+    id: 'queue',
     index: steps.length + 1,
-    label: hasCandidates ? 'AIで候補を再評価してTodayへ並べる' : '候補が入ったらAI再評価する',
+    label: hasCandidates ? 'Todayにフォロー / いいね / 返信が並ぶ' : '候補を足すとTodayに並びます',
     done: hasActionable,
     tab: 'discover',
   });

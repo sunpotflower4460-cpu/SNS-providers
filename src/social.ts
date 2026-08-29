@@ -1,3 +1,4 @@
+import { queueAction } from './localAction';
 import type { Candidate, Platform } from './types';
 
 const xReservedPaths = new Set(['home', 'explore', 'notifications', 'messages', 'search', 'i', 'settings', 'compose', 'intent']);
@@ -10,7 +11,8 @@ export function openCandidate(candidate: Candidate) {
   if (draft) void copyDraftText(draft);
 
   const engagementUrl = safeEngagementUrl(candidate.platform, candidate.engagementUrl);
-  if ((candidate.recommendedAction === 'reply' || candidate.recommendedAction === 'like') && engagementUrl) {
+  const action = queueAction(candidate);
+  if ((action === 'reply' || action === 'like') && engagementUrl) {
     window.open(engagementUrl, '_blank', 'noopener,noreferrer');
     return;
   }

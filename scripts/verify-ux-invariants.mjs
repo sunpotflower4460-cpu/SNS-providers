@@ -108,12 +108,13 @@ requireAll(statusPresentation, [
 requireAll(main, ['installStatusPresentation();'], 'Human-readable status presentation is no longer installed at app startup.');
 
 requireAll(social, [
-  "candidate.recommendedAction === 'reply' || candidate.recommendedAction === 'like'",
+  "action === 'reply' || action === 'like'",
   'safeEngagementUrl(candidate.platform, candidate.engagementUrl)',
   "'コピーしました'",
   "'コピーできませんでした'",
   'button.dataset.copyState = state',
   'if (draft) void copyDraftText(draft)',
+  'queueAction(candidate)',
 ], 'Exact actionable handoff or visible clipboard success/failure feedback regressed.');
 
 requireAll(app, [

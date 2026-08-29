@@ -89,7 +89,7 @@ Access and refresh tokens are AES-GCM encrypted before D1 storage. Expired acces
 
 ## Owned X data sync
 
-`POST /api/x/owned/sync` can read the connected account's own profile, recent posts, followers, following lists and (when available) the official user mentions timeline, then return them to the PWA for self-analysis, follow-back reconciliation and reply-queue items.
+`POST /api/x/owned/sync` can read the connected account's own profile, recent posts, followers and following lists, then return them to the PWA for self-analysis and follow-back reconciliation. Mentions timeline ingest is skipped so the daily loop does not spend extra owned reads or depend on a paid X API product.
 
 The adapter is deliberately fail-closed. It runs only when all of the following are true:
 
@@ -110,7 +110,6 @@ Example body:
   "maxFollowers": 100,
   "maxFollowing": 100,
   "maxPosts": 20,
-  "maxMentions": 20,
   "trackedAccounts": [
     { "key": "candidate-123", "username": "example", "platformUserId": "123456" }
   ]
@@ -127,14 +126,11 @@ Only when the follower cycle reaches its final page does the Worker return compl
 
 If evidence persistence fails, the Worker returns no negative evidence rather than guessing.
 
-### Official mentions timeline
+### Mentions timeline (skipped)
 
-Owned-X sync also requests `GET /2/users/:id/mentions` with the existing read-only OAuth scopes (`tweet.read`, `users.read`). This is the authenticated user's official mentions timeline, not a search scrape.
+Owned-X sync does **not** call `GET /2/users/:id/mentions`. That endpoint costs extra owned-X reads and typically requires a paid X API product the user may not already have. Mentions are skipped rather than scraped, and no write scopes are added.
 
-- Mentions are budget-paced like other owned reads and cached with the 20-hour owned-X snapshot.
-- Each mention is turned into a reply-queue candidate with a canonical `https://x.com/{author}/status/{id}` engagement URL.
-- If the endpoint returns 403 or 404 (product/app does not include this read, or it is otherwise unavailable), the rest of owned-X sync still succeeds. Mentions are skipped and documented; no write scopes are added and the Worker does not scrape.
-- Mention text is stored as quoted relationship context and is never treated as model instructions.
+Inbound reply candidates come from Instagram commenters on the user's own media, plus people added by URL/handle. Cached X followers can seed the local follow queue. If a later configuration already includes mentions on a paid X product, turning that on would be an optional extra read — it is not part of the default $0 loop.
 
 ## Instagram Professional engager sync
 

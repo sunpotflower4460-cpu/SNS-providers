@@ -1,3 +1,4 @@
+import { queueAction } from './localAction';
 import type { AppState, AppStateUpdater, RelationshipPolicy } from './types';
 import './workload.css';
 
@@ -124,14 +125,16 @@ function valuesFromPolicy(policy: RelationshipPolicy): WorkloadValues {
 }
 
 function actionableSupply(state: AppState) {
-  const highMatch = state.candidates.filter((candidate) => !candidate.skipped && candidate.match >= 75);
   let actionable = 0;
   let reviewOnly = 0;
-  for (const candidate of highMatch) {
-    if (candidate.recommendedAction === 'follow'
-      || candidate.recommendedAction === 'dm'
-      || candidate.recommendedAction === 'unfollow_review'
-      || ((candidate.recommendedAction === 'like' || candidate.recommendedAction === 'reply') && Boolean(candidate.engagementUrl))) {
+  for (const candidate of state.candidates) {
+    if (candidate.skipped) continue;
+    const action = queueAction(candidate);
+    if (action === 'follow'
+      || action === 'dm'
+      || action === 'unfollow_review'
+      || (action === 'like' && Boolean(candidate.engagementUrl))
+      || (action === 'reply' && Boolean(candidate.engagementUrl))) {
       actionable += 1;
     } else {
       reviewOnly += 1;
@@ -142,19 +145,21 @@ function actionableSupply(state: AppState) {
 
 function suggestWorkload(state: AppState): WorkloadValues {
   const candidates = state.candidates.filter((candidate) => !candidate.skipped);
-  const highMatch = candidates.filter((candidate) => candidate.match >= 75);
-  const strongFollow = highMatch.filter((candidate) => candidate.recommendedAction === 'follow').length;
-  const conversations = highMatch.filter((candidate) => candidate.recommendedAction === 'dm'
-    || (candidate.recommendedAction === 'reply' && Boolean(candidate.engagementUrl))).length;
-  const light = highMatch.filter((candidate) => candidate.recommendedAction === 'like' && Boolean(candidate.engagementUrl)).length;
-  const cleanup = candidates.filter((candidate) => candidate.recommendedAction === 'unfollow_review').length;
+  const executable = candidates.filter((candidate) => queueAction(candidate) !== 'review');
+  const strongFollow = executable.filter((candidate) => queueAction(candidate) === 'follow').length;
+  const conversations = executable.filter((candidate) => {
+    const action = queueAction(candidate);
+    return action === 'dm' || (action === 'reply' && Boolean(candidate.engagementUrl));
+  }).length;
+  const light = executable.filter((candidate) => queueAction(candidate) === 'like' && Boolean(candidate.engagementUrl)).length;
+  const cleanup = candidates.filter((candidate) => queueAction(candidate) === 'unfollow_review').length;
 
   const limit = state.budget.monthlyLimitUsd;
   const usedRatio = limit > 0 ? Math.min(1, state.budget.usedUsd / limit) : 0;
   const budgetFactor = limit === 0 ? 0.82 : usedRatio >= 0.9 ? 0.72 : usedRatio >= 0.7 ? 0.86 : 1;
   const self = state.insights.length > 0 ? 1 : 0;
   const availableActions = strongFollow + conversations + light + cleanup + self;
-  const qualityBase = 18 + Math.min(52, Math.round(highMatch.length * 0.7));
+  const qualityBase = 18 + Math.min(52, Math.round(executable.length * 0.7));
   const desiredTotal = Math.round(qualityBase * budgetFactor);
   const total = Math.max(1, Math.min(70, availableActions || 1, desiredTotal));
 

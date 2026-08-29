@@ -1,3 +1,4 @@
+import { queueAction } from './localAction';
 import { daysSinceTimestamp, engagementSurfaceLabel } from './social';
 import type { AppState, Candidate, RecommendedAction } from './types';
 
@@ -97,12 +98,7 @@ function candidateToQueueItem(candidate: Candidate, now: number): DailyQueueItem
 }
 
 function effectiveAction(candidate: Candidate): RecommendedAction {
-  // Like/reply are only "do this now" actions when the app knows the concrete post/media
-  // surface. Otherwise Today should say review rather than forcing the user to choose a post.
-  if ((candidate.recommendedAction === 'like' || candidate.recommendedAction === 'reply') && !candidate.engagementUrl) {
-    return 'review';
-  }
-  return candidate.recommendedAction;
+  return queueAction(candidate);
 }
 
 function freshnessBoost(candidate: Candidate, action: RecommendedAction, now: number) {
@@ -206,7 +202,8 @@ function completedTodayWithoutNewerSignal(
 }
 
 function isCoolingDown(candidate: Candidate, handledAt: string | undefined, now: number) {
-  if (!handledAt || candidate.recommendedAction === 'unfollow_review') return false;
+  const action = queueAction(candidate);
+  if (!handledAt || action === 'unfollow_review') return false;
   const handledMs = new Date(handledAt).getTime();
   if (!Number.isFinite(handledMs) || handledMs > now + 5 * 60 * 1000) return false;
 
@@ -215,11 +212,11 @@ function isCoolingDown(candidate: Candidate, handledAt: string | undefined, now:
   const signalMs = candidate.lastInteractionAt ? new Date(candidate.lastInteractionAt).getTime() : Number.NaN;
   if (Number.isFinite(signalMs) && signalMs > handledMs + 60_000 && signalMs <= now + 5 * 60 * 1000) return false;
 
-  const cooldownHours = candidate.recommendedAction === 'reply' || candidate.recommendedAction === 'dm'
+  const cooldownHours = action === 'reply' || action === 'dm'
     ? 36
-    : candidate.recommendedAction === 'like'
+    : action === 'like'
       ? 48
-      : candidate.recommendedAction === 'review'
+      : action === 'review'
         ? 72
         : 24;
   return now - handledMs < cooldownHours * 3_600_000;

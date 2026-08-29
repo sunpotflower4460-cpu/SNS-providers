@@ -10,6 +10,7 @@ import Onboarding from './Onboarding';
 import { hasSeenOnboarding, markOnboardingSeen } from './onboarding';
 import { resolveVisibleResult } from './resultResolution';
 import { addCandidateFromReference, applyRankResults, applySelfAnalysis, applyXProfiles, loadState, saveState, setFollowBackStatus, syncBudget, updateCandidateDraft, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
+import { queueAction } from './localAction';
 import { copyDraft, daysSinceTimestamp, engagementSurfaceLabel, openCandidate, platformLabel, staleConversationCue } from './social';
 import type { AppState, AppStateUpdater, Candidate, Platform } from './types';
 import { useLocalDayKey } from './useLocalDay';
@@ -460,7 +461,7 @@ function Today({ state, doneToday, onOpen, onTab }: {
   const queuedFollowIds = new Set(queue.filter((item) => item.action === 'follow').map((item) => item.candidateId));
   const followOverflowCount = hasCandidates
     ? state.candidates.filter((candidate) => !candidate.skipped
-      && candidate.recommendedAction === 'follow'
+      && queueAction(candidate) === 'follow'
       && !queuedFollowIds.has(candidate.id)
       && (!candidate.snoozedUntil || new Date(candidate.snoozedUntil).getTime() <= Date.now())).length
     : 0;
@@ -523,7 +524,7 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
   const visible = candidates.filter((candidate) => {
     if (filter !== 'all' && candidate.platform !== filter) return false;
     if (actionFilter === 'all') return true;
-    return candidate.recommendedAction === actionFilter;
+    return queueAction(candidate) === actionFilter;
   });
   const displayed = visible.slice(0, visibleLimit);
   const hiddenCount = Math.max(0, visible.length - displayed.length);
@@ -536,7 +537,7 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
   }).length;
   const storedCount = state.candidates.filter((candidate) => !candidate.skipped && matchesFilter(candidate)).length;
   const candidateOperationBusy = discovering || ranking || enrichingX;
-  const actionCount = (action: 'follow' | 'reply' | 'like') => candidates.filter((candidate) => matchesFilter(candidate) && candidate.recommendedAction === action).length;
+  const actionCount = (action: 'follow' | 'reply' | 'like') => candidates.filter((candidate) => matchesFilter(candidate) && queueAction(candidate) === action).length;
 
   useEffect(() => setVisibleLimit(12), [filter, actionFilter]);
 
@@ -569,7 +570,7 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
   }
 
   return <>
-    <PageHeading eyebrow="探す" title="つながる相手を見つける" text="基本は自動探索だけでOKです。見つかった候補はMissionとの相性順に並びます。" />
+    <PageHeading eyebrow="探す" title="つながる相手を見つける" text="URL追加だけでもTodayに並びます。無料探索があるときはそれを優先します。" />
 
     <section className="discover-primary-card">
       <div className="discover-primary-copy">
@@ -656,6 +657,7 @@ function DiscoverEmptyState({ filter, actionFilter, storedCount, snoozedCount }:
 }
 
 function CandidateCard({ candidate, onOpen, onLater, onEditDraft, featured = false }: { candidate: Candidate; onOpen: (c: Candidate) => void; onLater: (c: Candidate) => void; onEditDraft: (id: string, draft: string) => void; featured?: boolean }) {
+  const action = queueAction(candidate);
   const buttonLabel = candidateActionButtonLabel(candidate);
   const detailsAvailable = Boolean(candidate.strategy || candidate.publicMetrics || candidate.tags.length);
   const surface = engagementSurfaceLabel(candidate.platform, candidate.engagementUrl);
@@ -666,7 +668,7 @@ function CandidateCard({ candidate, onOpen, onLater, onEditDraft, featured = fal
   useEffect(() => setDraftText(candidate.draft ?? ''), [candidate.draft]);
   return <article className={featured ? 'candidate-card featured' : 'candidate-card'}>
     <div className="candidate-context">
-      <span className={`action-pill action-${candidate.recommendedAction}`}>おすすめ · {actionLabel[candidate.recommendedAction]}</span>
+      <span className={`action-pill action-${action}`}>おすすめ · {actionLabel[action]}</span>
       <span className="match-inline">相性 <b>{candidate.match}</b></span>
     </div>
     <div className="candidate-head">
@@ -674,7 +676,7 @@ function CandidateCard({ candidate, onOpen, onLater, onEditDraft, featured = fal
       <div className="candidate-identity"><strong>{candidate.displayName}{candidate.verified ? ' ✓' : ''}</strong><span>@{candidate.username} · {kindLabel[candidate.kind]}</span></div>
     </div>
     {staleCue && <p className="stale-cue">{staleCue}</p>}
-    {surface && (candidate.recommendedAction === 'reply' || candidate.recommendedAction === 'like') && <p className="engagement-surface">対象 · {surface}</p>}
+    {surface && (action === 'reply' || action === 'like') && <p className="engagement-surface">対象 · {surface}</p>}
     {candidate.bio && <p className="candidate-bio">{candidate.bio}</p>}
     <div className="candidate-reason"><span>おすすめ理由</span><p>{candidate.reason}</p></div>
     {candidate.draft !== undefined && <div className="draft-box">
@@ -852,14 +854,15 @@ function PageHeading({ eyebrow, title, text }: { eyebrow: string; title: string;
 }
 
 function ResultSheet({ candidate, onResolve }: { candidate: Candidate; onResolve: (action: 'followed' | 'skipped' | 'later' | 'kept') => void }) {
-  const cleanup = candidate.recommendedAction === 'unfollow_review';
+  const action = queueAction(candidate);
+  const cleanup = action === 'unfollow_review';
   const completion = outcomeForAction(candidate);
   const copied = Boolean(candidate.draft?.trim());
   const surface = engagementSurfaceLabel(candidate.platform, candidate.engagementUrl);
   return <div className="sheet-backdrop"><section className="result-sheet" role="dialog" aria-modal="true" aria-labelledby="result-title">
     <div className="sheet-handle" />
     <span className="section-kicker">結果を記録</span>
-    <h2 id="result-title">@{candidate.username} への{actionLabel[candidate.recommendedAction]}はどうでしたか？</h2>
+    <h2 id="result-title">@{candidate.username} への{actionLabel[action]}はどうでしたか？</h2>
     <p>{cleanup
       ? '公式SNSで確認した結果だけ記録します。自動でフォロー解除することはありません。'
       : copied
@@ -881,7 +884,7 @@ function ResultSheet({ candidate, onResolve }: { candidate: Candidate; onResolve
 function candidateActionButtonLabel(candidate: Candidate) {
   const platform = platformLabel(candidate.platform);
   const hasDraft = Boolean(candidate.draft?.trim());
-  switch (candidate.recommendedAction) {
+  switch (queueAction(candidate)) {
     case 'follow': return hasDraft ? `コピーして${platform}でフォロー` : `${platform}で確認してフォロー`;
     case 'like': return `${platform}で対象投稿を開く`;
     case 'reply': return hasDraft ? `コピーして${platform}で開く` : `${platform}で返信先を開く`;
@@ -892,7 +895,7 @@ function candidateActionButtonLabel(candidate: Candidate) {
 }
 
 function outcomeForAction(candidate: Candidate): { label: string; result: 'followed' | 'kept' } {
-  switch (candidate.recommendedAction) {
+  switch (queueAction(candidate)) {
     case 'follow': return { label: 'フォローした', result: 'followed' };
     case 'like': return { label: 'いいねした', result: 'kept' };
     case 'reply': return { label: '返信した', result: 'kept' };

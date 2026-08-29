@@ -89,6 +89,8 @@ export interface XOwnedSyncResponse {
   followers?: XOwnedUser[];
   following?: XOwnedUser[];
   posts?: XOwnedPost[];
+  // Mentions fields are accepted only so older cached snapshots still validate.
+  // Owned-X sync no longer requests or applies mentions.
   mentions?: XOwnedMention[];
   mentionsUnavailable?: boolean;
   mentionsUnavailableReason?: string;
@@ -160,7 +162,6 @@ export async function syncOwnedXData(monthlyLimitUsd: number, candidates: Candid
       maxFollowers: 100,
       maxFollowing: 100,
       maxPosts: 20,
-      maxMentions: 20,
       trackedAccounts,
     }),
   }, token, 90_000);

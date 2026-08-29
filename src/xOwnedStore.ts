@@ -1,5 +1,4 @@
 import { applyOwnedXSync } from './store';
-import { canonicalXStatusUrl } from './social';
 import type { XFollowEvidenceTarget, XOwnedSyncResponse, XOwnedUser } from './xAccount';
 import type { AppState, Candidate } from './types';
 
@@ -40,7 +39,8 @@ export function applyOwnedXSyncWithDiscovery(state: AppState, result: XOwnedSync
   if (!fromCache) {
     synced = applyFullCycleFollowEvidence(synced, result, identityChangedIds);
   }
-  synced = applyXMentions(synced, result);
+  // X mentions ingest is skipped: extra owned reads and a paid X product are not required
+  // for the daily loop. Inbound stays Instagram commenters + manual/URL + cached followers.
   if (!result.enabled || !result.followers?.length) return synced;
 
   const existingByUsername = new Map(
@@ -102,147 +102,6 @@ export function applyOwnedXSyncWithDiscovery(state: AppState, result: XOwnedSync
   return additions.length
     ? { ...synced, candidates: [...additions, ...synced.candidates] }
     : synced;
-}
-
-const MAX_NEW_MENTION_CANDIDATES = 20;
-
-function applyXMentions(state: AppState, result: XOwnedSyncResponse): AppState {
-  if (!result.enabled) return state;
-  const mentions = result.mentions || [];
-  if (!mentions.length) return state;
-  const fromCache = result.source === 'cache';
-  const syncedAt = result.syncedAt || new Date().toISOString();
-  const xCandidates = state.candidates.filter((candidate) => candidate.platform === 'x');
-  const byStableId = new Map(
-    xCandidates
-      .filter((candidate) => stableXId(candidate.platformUserId))
-      .map((candidate) => [stableXId(candidate.platformUserId), candidate]),
-  );
-  const byUsername = new Map(
-    xCandidates.map((candidate) => [candidate.username.toLowerCase(), candidate]),
-  );
-  const additions: Candidate[] = [];
-  const updates = new Map<string, Candidate>();
-
-  for (const mention of mentions) {
-    const engagementUrl = canonicalXStatusUrl(mention.authorUsername, mention.id);
-    if (!engagementUrl || engagementUrl !== mention.engagementUrl) continue;
-    const username = mention.authorUsername.toLowerCase();
-    const existing = byStableId.get(mention.authorId) || byUsername.get(username);
-    if (existing?.tags.includes('identity-conflict') && !stableXId(existing.platformUserId)) continue;
-
-    const quote = mention.text.trim().slice(0, 120);
-    const reason = quote
-      ? `Xの公式メンション欄で、あなたの投稿やアカウントへの言及を確認しました。`
-      : 'Xの公式メンション欄で、すでにあなたへ話しかけている人として見つかりました。';
-    const strategy = quote
-      ? `直近の言及「${quote}」の文脈から、まずその投稿へ自然に返信します。営業DMには進めません。`
-      : '公式メンションの投稿を開き、文脈を確認してから返信します。';
-
-    if (!existing) {
-      if (additions.length >= MAX_NEW_MENTION_CANDIDATES) continue;
-      const candidate: Candidate = {
-        id: `x-mention-${crypto.randomUUID()}`,
-        platform: 'x',
-        username: mention.authorUsername,
-        displayName: mention.authorName || mention.authorUsername,
-        bio: mention.authorDescription || '',
-        profileUrl: `https://x.com/${mention.authorUsername}`,
-        engagementUrl,
-        platformUserId: mention.authorId,
-        verified: mention.authorVerified,
-        profileSyncedAt: syncedAt,
-        kind: 'fan',
-        match: 70,
-        relationshipScore: 36,
-        stage: 'engaged',
-        reason,
-        strategy,
-        tags: ['inbound', 'mention', 'x-owned-sync'],
-        recommendedAction: 'reply',
-        lastInteractionAt: mention.createdAt || syncedAt,
-      };
-      additions.push(candidate);
-      byUsername.set(username, candidate);
-      byStableId.set(mention.authorId, candidate);
-      continue;
-    }
-
-    const freshContact = !existing.skipped || isFreshMentionAfterDismissal(existing, mention.createdAt);
-    if (existing.skipped && !freshContact) continue;
-
-    const newMentionSignal = isNewerMentionSignal(existing, mention.createdAt);
-    if (fromCache && existing && !newMentionSignal && !existing.skipped) continue;
-    if (!newMentionSignal && !existing.skipped) {
-      updates.set(existing.id, {
-        ...existing,
-        lastInteractionAt: latestIso(existing.lastInteractionAt, mention.createdAt),
-      });
-      continue;
-    }
-
-    const keepCleanup = existing.recommendedAction === 'unfollow_review';
-    const recommendedAction: Candidate['recommendedAction'] = keepCleanup ? 'unfollow_review' : 'reply';
-    const nextUrl = keepCleanup ? existing.engagementUrl : engagementUrl;
-    updates.set(existing.id, {
-      ...existing,
-      username: mention.authorUsername,
-      displayName: sameUsername(existing.displayName, existing.username) ? mention.authorName || mention.authorUsername : existing.displayName,
-      skipped: false,
-      snoozedUntil: undefined,
-      bio: mention.authorDescription || existing.bio,
-      verified: mention.authorVerified,
-      engagementUrl: nextUrl,
-      platformUserId: mention.authorId,
-      profileSyncedAt: syncedAt,
-      match: Math.max(existing.match, 70),
-      relationshipScore: Math.max(existing.relationshipScore, 36),
-      stage: existing.stage === 'discovered' || existing.stage === 'interested' || existing.stage === 'following' ? 'engaged' : existing.stage,
-      reason: existing.skipped && freshContact
-        ? `過去に候補から外していましたが、その後の新しいXメンションを確認したため再確認候補へ戻しました。${reason}`
-        : reason,
-      strategy: keepCleanup ? existing.strategy : strategy,
-      tags: [...new Set([...existing.tags, 'inbound', 'mention', 'x-owned-sync'])],
-      recommendedAction,
-      draft: recommendedAction === 'reply' && existing.engagementUrl === nextUrl ? existing.draft : undefined,
-      lastInteractionAt: latestIso(existing.lastInteractionAt, mention.createdAt) || syncedAt,
-    });
-  }
-
-  if (!additions.length && !updates.size) return state;
-  return {
-    ...state,
-    candidates: [...additions, ...state.candidates.map((candidate) => updates.get(candidate.id) || candidate)],
-  };
-}
-
-function isFreshMentionAfterDismissal(candidate: Candidate, incomingAt: string | null) {
-  if (!incomingAt) return false;
-  const incoming = new Date(incomingAt).getTime();
-  if (!Number.isFinite(incoming)) return false;
-  const baselines = [candidate.lastInteractionAt, candidate.profileSyncedAt]
-    .map((value) => value ? new Date(value).getTime() : Number.NaN)
-    .filter(Number.isFinite);
-  if (!baselines.length) return false;
-  return incoming > Math.max(...baselines);
-}
-
-function isNewerMentionSignal(candidate: Candidate, incomingAt: string | null) {
-  if (!incomingAt) return false;
-  const incoming = new Date(incomingAt).getTime();
-  if (!Number.isFinite(incoming)) return false;
-  if (!candidate.lastInteractionAt) return true;
-  const handled = new Date(candidate.lastInteractionAt).getTime();
-  return !Number.isFinite(handled) || incoming > handled;
-}
-
-function latestIso(current?: string, incoming?: string | null) {
-  const currentMs = current ? new Date(current).getTime() : Number.NaN;
-  const incomingMs = incoming ? new Date(incoming).getTime() : Number.NaN;
-  if (Number.isFinite(currentMs) && Number.isFinite(incomingMs)) return incomingMs > currentMs ? incoming! : current!;
-  if (Number.isFinite(incomingMs)) return incoming!;
-  if (Number.isFinite(currentMs)) return current!;
-  return undefined;
 }
 
 function reconcileOwnedXStableIdentities(state: AppState, result: XOwnedSyncResponse): AppState {

@@ -34,10 +34,10 @@ export function mergeDiscoveredProfiles(state: AppState, profiles: DiscoveredPro
       relationshipScore: 0,
       stage: 'discovered',
       reason: engagementUrl
-        ? '無料Web検索から候補と具体的な投稿接点を発見しました。Missionへの本評価後、投稿単位の交流候補にできます。'
-        : '無料Web検索から候補として発見しました。Missionへの本評価はAI再評価または本人確認で行います。',
+        ? '無料Web検索から候補と具体的な投稿接点を発見しました。フォロー候補としてTodayに出せます。AI再評価は任意です。'
+        : '無料Web検索から候補として発見しました。フォロー候補としてTodayに出せます。AI再評価は任意です。',
       strategy: engagementUrl
-        ? '具体的な投稿URLを保持しています。AI再評価でMissionとの一致と、いいね・返信のどちらが自然かを判断します。'
+        ? '具体的な投稿URLを保持しています。まずプロフィールを確認してつながるか、投稿へ反応するかを選べます。'
         : 'まずプロフィール内容を確認し、関連性が十分なら交流候補として残します。',
       tags: engagementUrl ? ['web-discovered', 'concrete-post'] : ['web-discovered'],
       recommendedAction: 'review',

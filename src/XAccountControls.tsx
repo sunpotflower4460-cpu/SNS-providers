@@ -119,12 +119,7 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
         // continue from the saved cursor without re-reading the same paid page.
         setNote(result.reason || `${source}は更新しました${cost}。フォローバック確認だけ安全のため今回の判定を破棄し、次の確認周回から再開します`);
       } else {
-        const mentionsNote = result.mentionsUnavailable
-          ? '。Xメンション欄はこのAPI製品では既存の読み取り権限では使えなかったため、スクレイピングせずスキップしました'
-          : result.mentions?.length
-            ? ` · メンション${result.mentions.length}件`
-            : '';
-        setNote(`${source}から更新しました${cost}${evidence}${mentionsNote}`);
+        setNote(`${source}から更新しました${cost}${evidence}`);
       }
     } catch (error) {
       setNote(error instanceof Error ? error.message : 'Xデータを更新できませんでした');

@@ -17,7 +17,7 @@ The product is a mobile-first PWA that helps a user grow meaningful social relat
 9. On return, the user records the result in one tap.
 10. Completed candidates roll out of the current Daily Queue and relationship state feeds future advice.
 11. The Me surface analyzes the user's own profile/recent posts against the same Mission.
-12. Optional read-only X sync can refresh the user's own profile/posts/follow graph, seed inbound followers, and ingest the official mentions timeline as reply items when that read API is available with existing scopes.
+12. Optional read-only X sync can refresh the user's own profile/posts/follow graph and seed inbound followers. Official X mentions are not ingested: that read costs extra and typically needs a paid X product the user may not have.
 13. Optional Instagram Professional sync can turn people who already commented on the user's own media into higher-signal relationship candidates.
 
 ## Client
@@ -34,7 +34,8 @@ The product is a mobile-first PWA that helps a user grow meaningful social relat
 - Discover action filters keep follow/reply/like lists usable beyond the mixed Daily Queue
 - Instagram reply candidates may retain the original engagement-post permalink so the user returns to the real context
 - clipboard/profile-URL candidate import for iPhone-friendly operation
-- local Daily Queue generation without a mandatory daily LLM call
+- local Daily Queue generation without a mandatory daily LLM call; follow/like/reply still appear from local candidates and last-known relationship state when Worker/LLM is unavailable
+- one-tap copy-draft-then-open, stale-days display, persistent follow list and outcome capture with no network spend
 - Today progress and summary derived from the actual current Daily Queue
 - user-configurable daily workload caps by action family
 - deterministic local workload suggestion from candidate quality and budget state
@@ -68,7 +69,7 @@ Implemented server responsibilities:
 - accumulated full-cycle follower evidence for the tracked followed-account set
 - monthly-budget pacing for owned-X resource allocation
 - official Instagram Professional owned-media/comment engager reads
-- official X user-mention timeline reads during owned-X sync when available with existing `tweet.read`/`users.read`; 403/404 skips without scraping or new write scopes
+- owned-X mentions timeline is skipped to avoid extra owned reads and a paid X API product dependency
 - 12-hour Instagram engager response cache
 - budget ledger and HARD LIMIT enforcement
 - pre-request budget reservations for paid calls
@@ -92,12 +93,13 @@ Discovery is adapter-based. Current sources are:
 - official X User Lookup for known usernames when a bearer token and explicit current read rate are configured
 - read-only owned-X followers already returned by the user's connected account sync
 - Instagram Professional commenters on media owned by the configured account
-- official X mentions of the authenticated user when `GET /2/users/:id/mentions` is available with existing read scopes
 - previously stored candidates and relationship history
 
-The Tavily adapter searches only the public web, canonicalizes profile-shaped X/Instagram URLs, rejects obvious non-profile paths, and sends discovered profiles into the candidate pool for later Mission ranking. It is not a social-platform DOM crawler.
+Official X mentions are **not** a candidate source. `GET /2/users/:id/mentions` costs extra owned reads and typically requires a paid X API product beyond the existing read-only app. The Worker never scrapes mentions and never adds write scopes to obtain them.
 
-Owned-X inbound followers are candidate **seeds**, not automatic follow targets. They enter with a preliminary review state and should still be ranked against Mission before strategic outreach.
+The Tavily adapter searches only the public web, canonicalizes profile-shaped X/Instagram URLs, rejects obvious non-profile paths, and sends discovered profiles into the candidate pool. They can appear in Today as local follow recommendations without a paid rank. It is not a social-platform DOM crawler.
+
+Owned-X inbound followers are candidate **seeds**, not automatic follow targets. They are never auto-followed. At $0 they can still appear in the local follow queue from relationship state (not yet followed). Optional AI ranking may later refine Mission match.
 
 Instagram commenters are different from cold discovery: they have already chosen to interact with the user's content. They may enter at an `engaged` relationship stage with higher preliminary relationship value. The PWA preserves the related post URL when available so the recommended next action can return the user to the real conversation rather than inventing context.
 
@@ -164,7 +166,7 @@ Current order of preference for ranking/self-analysis:
 
 The client prefilter uses Mission lexical overlap, existing Mission Match, available candidate context, relationship stage and action value. It is not a replacement for semantic model ranking; it reduces obvious low-value token spend before the model is called.
 
-The app combines candidate score, recommended action, strategic rationale and a limited number of individualized reply/DM drafts in one AI pass to reduce token use. The Daily Queue and workload suggestion are generated locally from stored state.
+The app combines candidate score, recommended action, strategic rationale and a limited number of individualized reply/DM drafts in one AI pass to reduce token use. That pass is optional. The Daily Queue, one-tap handoff, stale-days cue, persistent follow list and workload suggestion are generated locally from stored state and keep working when Worker/LLM is unavailable.
 
 Draft generation is user-configurable (`relationshipPolicy.autoDraftReplies`, default on) and enforced on both sides: the client passes `draftsEnabled` on `/api/ai/rank`, the Worker prompt omits the draft instruction when it is off, and `normalizeProviderResults` discards any draft the model returns anyway unless `draftsEnabled` is true. Drafts shown in the PWA are editable before use; editing only replaces the local `draft` field and never touches `aiDraft` (the original AI suggestion, kept so the user can revert), and both are cleared/replaced together on the next re-rank. This does not change the "no automated final action" boundary above — the user still copies the (possibly edited) draft into the official app and sends it themselves.
 
@@ -211,7 +213,7 @@ A candidate may be moved to `snoozedUntil` the next local midnight. Snoozing rem
 - If a network failure happens after paid X work may already have occurred, the conservative reservation may be retained rather than risk under-counting spend.
 - Free-provider usage may be logged with cost `$0`.
 - Instagram owned-comment sync is tracked as `$0` application cost but remains bounded/cached for rate-limit discipline.
-- Core UI, local candidates, workload advisor, Daily Queue, relationship management and manual handoff continue to work with all paid providers disabled.
+- Core UI, local candidates, workload advisor, Daily Queue, relationship management and manual handoff continue to work with all paid providers disabled. One-tap copy+open, stale-days, persistent follow list and outcome capture never require a network call. Never spend to make the loop faster.
 
 The product should degrade acquisition volume, refresh frequency and model depth before degrading core features.
 

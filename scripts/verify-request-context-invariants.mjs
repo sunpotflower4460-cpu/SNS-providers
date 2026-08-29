@@ -148,9 +148,9 @@ requireAll(resultResolution, [
   'if (!sameVisibleCandidateIdentity(visibleCandidate, current)) return state;',
   'const visibleStableId = stablePlatformUserId(visible.platformUserId);',
   'const currentStableId = stablePlatformUserId(current.platformUserId);',
-  "visibleCandidate.recommendedAction === 'unfollow_review'",
+  "visibleAction === 'unfollow_review'",
   "current.recommendedAction === 'unfollow_review'",
-  'const sameVisibleAction = current.recommendedAction === visibleCandidate.recommendedAction;',
+  'const sameVisibleAction = currentAction === visibleAction;',
   'const sameVisibleTarget =',
   "const recordedAction: Interaction['action'] = visibleReview && action === 'kept'",
   'recordInteraction(contextualState, current.id, recordedAction)',
@@ -295,10 +295,8 @@ requireAll(xOwned, [
   'validPagingState(snapshot.resumePaging)',
   'validListMeta(response.meta, data.length, maxResults)',
   'X API returned an empty or invalid JSON response',
-  '/mentions?',
-  'response.status === 403 || response.status === 404',
-  'canonicalXStatusUrl(author.username, tweet.id)',
-], 'Owned-X can trust malformed/future cache state, corrupted paging/checkpoint state, incoherent raw list metadata, invalid successful JSON, or ingest X mentions without a canonical official tweet URL.');
+  'Mentions timeline is skipped',
+], 'Owned-X can trust malformed/future cache state, corrupted paging/checkpoint state, incoherent raw list metadata, invalid successful JSON, or spend extra on mentions ingest.');
 
 requireAll(instagramOwned, [
   'snapshot.syncedAt !== row.synced_at',

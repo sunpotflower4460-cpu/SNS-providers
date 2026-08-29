@@ -72,7 +72,7 @@ export default function DailyQueue({ state, onOpenCandidate, onOpenMe, onOpenDis
       <div className="queue-complete-icon">＋</div>
       <span className="section-kicker">最初の一歩</span>
       <h3>まず、つながる候補を見つけましょう</h3>
-      <p>Missionを基準に候補を探すと、誰に何をするかがTodayへ自動で並びます。実在しない人は出しません。</p>
+      <p>Missionを基準に候補を探すと、誰に何をするかがTodayへ自動で並びます。WorkerやAIがなくても、URL追加と保存済みの関係状態だけで使えます。実在しない人は出しません。</p>
       <ol className="first-queue-steps">
         {steps.map((step) => (
           <li key={step.id} className={step.done ? 'done' : undefined}>
@@ -103,7 +103,7 @@ export default function DailyQueue({ state, onOpenCandidate, onOpenMe, onOpenDis
       <div className="queue-wait-icon">○</div>
       <span className="section-kicker">今日のおすすめ</span>
       <h3>今は実行できる候補がありません</h3>
-      <p>今ある候補には、まだ具体的な投稿や十分な判断材料がありません。設定の同期かAI再評価で、実行先まで決まった候補が増えます。</p>
+      <p>候補はありますが、まだフォロー・いいね・返信に落とせない人が残っています。URL追加や無料探索、キャッシュ済みのフォロワー・IGコメントで足せます。AI再評価は任意です。</p>
       <div className="empty-actions">
         <button className="primary-button empty-action" onClick={onOpenDiscover}>新しい候補を探す</button>
         <button className="secondary-button empty-action" onClick={onOpenSettings}>設定と同期を確認</button>

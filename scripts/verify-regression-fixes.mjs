@@ -208,7 +208,7 @@ if (!resultResolution.includes('if (!sameVisibleCandidateIdentity(visibleCandida
   || !resultResolution.includes('const visibleStableId = stablePlatformUserId(visible.platformUserId);')
   || !resultResolution.includes('const currentStableId = stablePlatformUserId(current.platformUserId);')
   || !resultResolution.includes('const completedVisibleEngagement =')
-  || !resultResolution.includes("engagementUrl: visibleCandidate.recommendedAction === 'like' || visibleCandidate.recommendedAction === 'reply'")
+  || !resultResolution.includes("engagementUrl: visibleAction === 'like' || visibleAction === 'reply'")
   || !resultResolution.includes("const recordedAction: Interaction['action'] = visibleReview && action === 'kept'")
   || !resultResolution.includes("? 'review'")) {
   throw new Error('A result sheet can again record an old visible person onto a replacement identity, replay exact engagement, or count profile review as relationship engagement.');
