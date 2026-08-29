@@ -306,8 +306,10 @@ export function applyXProfiles(state: AppState, profiles: XProfileResultList, at
           ? '最新の公式プロフィールを反映した状態でAI再評価してから、フォローするかを決めます。古い推薦のままTodayには出しません。'
           : candidate.strategy,
       tags: identityConflictResolved
-        ? candidate.tags.filter((tag) => tag !== 'identity-conflict')
-        : candidate.tags,
+        ? [...candidate.tags.filter((tag) => tag !== 'identity-conflict'), 'hold-review'].slice(0, 30)
+        : staleFollowAdvice
+          ? [...new Set([...candidate.tags, 'hold-review'])].slice(0, 30)
+          : candidate.tags,
     };
   });
   const normalized = normalizeAppState({
@@ -441,6 +443,7 @@ export function applyRankResults(state: AppState, results: RankResult[], costUsd
       strategy: result.strategy?.trim() || candidate.strategy,
       draft: result.draft?.trim() || undefined,
       aiDraft: result.draft?.trim() || undefined,
+      tags: candidate.tags.filter((tag) => tag !== 'hold-review'),
     };
   });
   return refreshRelationshipAdvice({

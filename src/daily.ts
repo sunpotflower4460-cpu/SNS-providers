@@ -70,6 +70,20 @@ export function queueSummary(items: DailyQueueItem[]) {
   };
 }
 
+export function countFollowOverflow(state: AppState, queue = buildDailyQueue(state)) {
+  const today = localDateKey(new Date());
+  const now = Date.now();
+  const lastHandledAt = latestInteractionByCandidate(state);
+  const queuedFollowIds = new Set(queue.filter((item) => item.action === 'follow').map((item) => item.candidateId));
+  return state.candidates.filter((candidate) => {
+    if (candidate.skipped || isSnoozed(candidate, now)) return false;
+    if (completedTodayWithoutNewerSignal(candidate, lastHandledAt.get(candidate.id), today, now)) return false;
+    if (isCoolingDown(candidate, lastHandledAt.get(candidate.id), now)) return false;
+    if (queueAction(candidate) !== 'follow') return false;
+    return !queuedFollowIds.has(candidate.id);
+  }).length;
+}
+
 function candidateToQueueItem(candidate: Candidate, now: number): DailyQueueItem {
   const action = effectiveAction(candidate);
   const relationshipBoost = Math.min(18, Math.round(candidate.relationshipScore * 0.2));

@@ -3,7 +3,7 @@ import { analyzeSelfProfile, apiConfigured, discoverSocialCandidates, enrichXPro
 import BackupControls from './BackupControls';
 import { getSyncToken } from './controlToken';
 import DailyQueue from './DailyQueue';
-import { buildDailyQueue, queueSummary } from './daily';
+import { buildDailyQueue, countFollowOverflow, queueSummary } from './daily';
 import { mergeDiscoveredProfiles } from './discoveryStore';
 import Manual from './Manual';
 import Onboarding from './Onboarding';
@@ -458,13 +458,7 @@ function Today({ state, doneToday, onOpen, onTab }: {
   const configuredLimit = Math.max(1, state.relationshipPolicy.dailyQueueLimit ?? 30);
   const plannedTotal = hasCandidates ? Math.min(configuredLimit, doneToday + queue.length) : 0;
   const progress = plannedTotal > 0 ? Math.min(100, Math.round((doneToday / plannedTotal) * 100)) : 0;
-  const queuedFollowIds = new Set(queue.filter((item) => item.action === 'follow').map((item) => item.candidateId));
-  const followOverflowCount = hasCandidates
-    ? state.candidates.filter((candidate) => !candidate.skipped
-      && queueAction(candidate) === 'follow'
-      && !queuedFollowIds.has(candidate.id)
-      && (!candidate.snoozedUntil || new Date(candidate.snoozedUntil).getTime() <= Date.now())).length
-    : 0;
+  const followOverflowCount = hasCandidates ? countFollowOverflow(state, queue) : 0;
 
   return <>
     <section className="mission-card">
@@ -697,7 +691,10 @@ function CandidateCard({ candidate, onOpen, onLater, onEditDraft, featured = fal
     </details>}
     <div className="candidate-actions">
       <button className="secondary-button" onClick={() => onLater(candidate)}>明日へ</button>
-      <button className="primary-button" onClick={() => onOpen(candidate)}>{buttonLabel}<span>↗</span></button>
+      <button className="primary-button" onClick={() => {
+        if (draftText !== (candidate.draft ?? '')) onEditDraft(candidate.id, draftText);
+        onOpen({ ...candidate, draft: draftText.trim() || undefined });
+      }}>{buttonLabel}<span>↗</span></button>
     </div>
   </article>;
 }

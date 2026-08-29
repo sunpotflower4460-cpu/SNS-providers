@@ -24,6 +24,8 @@ requireAll(store, [
   'dailyConversationLimit: 8',
   'dailyLightEngagementLimit: 8',
   'monthlyLimitUsd: 3',
+  'hold-review',
+  '古い推薦のままTodayには出しません',
 ], 'Default daily workload targets or the $3 default budget changed without updating supply assumptions.');
 
 requireAll(api, [
@@ -75,7 +77,9 @@ requireAll(localAction, [
   '!candidate.engagementUrl',
   '!candidate.followedAt',
   "tags.includes('identity-conflict')",
-], 'Local queue actions can again require a paid rank, invent people, or force a post choice without a concrete target.');
+  "tags.includes('hold-review')",
+  '古い推薦のままTodayには出しません',
+], 'Local queue actions can again require a paid rank, invent people, force a post choice without a concrete target, or revive withdrawn follow advice.');
 
 requireAll(firstQueue, [
   'queueAction(candidate)',
@@ -85,9 +89,10 @@ requireAll(firstQueue, [
 requireAll(daily, [
   'effectiveAction(candidate)',
   'queueAction(candidate)',
+  'export function countFollowOverflow',
+  'isCoolingDown(candidate, lastHandledAt.get(candidate.id), now)',
   'freshnessBoost(candidate, action, now)',
   'staleConversationBoost(candidate, action, staleDays)',
-  'isCoolingDown(candidate, lastHandledAt.get(candidate.id), now)',
   'signalMs > handledMs + 60_000',
   "light: relationshipItems.filter((item) => item.action === 'like')",
   'Keep those\n    // candidates in Discover instead of putting a human decision back into Today.',
@@ -112,6 +117,7 @@ requireAll(app, [
   "rankCandidates(merged.mission, rankTargets, merged.budget.monthlyLimitUsd, 'local-user', false)",
   "candidate.recommendedAction !== 'review'",
   'relationshipTarget - completedToday',
+  'countFollowOverflow(state, queue)',
 ], 'Automatic replenishment can again overfill completed work, run without a low-water threshold, or use a paid ranking path.');
 
 requireAll(api, [

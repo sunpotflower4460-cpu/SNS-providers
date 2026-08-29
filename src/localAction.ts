@@ -8,7 +8,7 @@ const inboundReplyTags = new Set(['inbound', 'commenter', 'mention']);
  * infer follow/like/reply from stored relationship evidence only — never invent people.
  */
 export function queueAction(candidate: Candidate): RecommendedAction {
-  if (candidate.tags.includes('identity-conflict')) return 'review';
+  if (isHeldForReview(candidate)) return 'review';
 
   const stored = candidate.recommendedAction;
   if (stored === 'unfollow_review') return 'unfollow_review';
@@ -26,6 +26,13 @@ export function isExecutableQueueAction(action: RecommendedAction) {
     || action === 'reply'
     || action === 'dm'
     || action === 'unfollow_review';
+}
+
+function isHeldForReview(candidate: Candidate) {
+  if (candidate.tags.includes('identity-conflict') || candidate.tags.includes('hold-review')) return true;
+  const strategy = candidate.strategy || '';
+  return strategy.includes('古い推薦のままTodayには出しません')
+    || strategy.includes('直接アクションは再評価してから再開します');
 }
 
 function localFallbackAction(candidate: Candidate): RecommendedAction {
