@@ -13,11 +13,11 @@ The product is a mobile-first PWA that helps a user grow meaningful social relat
 5. A local-first Daily Queue mixes new connections, conversations, light engagement, self-improvement and follow cleanup so the day is not dominated by raw following volume.
 6. User-configured workload caps and a local workload advisor control how much work appears without treating any number as a platform safety threshold.
 7. A candidate can be snoozed until the next local day without deleting relationship history.
-8. The PWA hands off to the official social surface.
+8. The PWA hands off to the official social surface, copying a draft first when one exists.
 9. On return, the user records the result in one tap.
 10. Completed candidates roll out of the current Daily Queue and relationship state feeds future advice.
 11. The Me surface analyzes the user's own profile/recent posts against the same Mission.
-12. Optional read-only X sync can refresh the user's own profile/posts/follow graph and seed inbound followers into the same candidate loop.
+12. Optional read-only X sync can refresh the user's own profile/posts/follow graph, seed inbound followers, and ingest the official mentions timeline as reply items when that read API is available with existing scopes.
 13. Optional Instagram Professional sync can turn people who already commented on the user's own media into higher-signal relationship candidates.
 
 ## Client
@@ -29,6 +29,9 @@ The product is a mobile-first PWA that helps a user grow meaningful social relat
 - GitHub Pages subpath-safe deployment
 - production CSP restricts network connections to the configured Worker origin; CI verifies the built binding
 - X/Instagram official-surface handoff for final social actions
+- one-tap copy-draft-then-open when a reply/DM draft exists; otherwise open the canonical post or profile
+- reply cards name the concrete post and show days since last interaction
+- Discover action filters keep follow/reply/like lists usable beyond the mixed Daily Queue
 - Instagram reply candidates may retain the original engagement-post permalink so the user returns to the real context
 - clipboard/profile-URL candidate import for iPhone-friendly operation
 - local Daily Queue generation without a mandatory daily LLM call
@@ -65,6 +68,7 @@ Implemented server responsibilities:
 - accumulated full-cycle follower evidence for the tracked followed-account set
 - monthly-budget pacing for owned-X resource allocation
 - official Instagram Professional owned-media/comment engager reads
+- official X user-mention timeline reads during owned-X sync when available with existing `tweet.read`/`users.read`; 403/404 skips without scraping or new write scopes
 - 12-hour Instagram engager response cache
 - budget ledger and HARD LIMIT enforcement
 - pre-request budget reservations for paid calls
@@ -88,6 +92,7 @@ Discovery is adapter-based. Current sources are:
 - official X User Lookup for known usernames when a bearer token and explicit current read rate are configured
 - read-only owned-X followers already returned by the user's connected account sync
 - Instagram Professional commenters on media owned by the configured account
+- official X mentions of the authenticated user when `GET /2/users/:id/mentions` is available with existing read scopes
 - previously stored candidates and relationship history
 
 The Tavily adapter searches only the public web, canonicalizes profile-shaped X/Instagram URLs, rejects obvious non-profile paths, and sends discovered profiles into the candidate pool for later Mission ranking. It is not a social-platform DOM crawler.

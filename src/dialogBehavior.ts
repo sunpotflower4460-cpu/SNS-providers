@@ -44,13 +44,24 @@ export function installDialogBehavior() {
     };
 
     document.addEventListener('keydown', onKeyDown, true);
-    queueMicrotask(() => {
+    const focusPrimary = () => {
       const primary = dialog.querySelector<HTMLButtonElement>('.sheet-actions .sheet-primary');
       (primary || dialog).focus();
-    });
+    };
+    queueMicrotask(focusPrimary);
+
+    const onReturned = () => {
+      if (document.visibilityState && document.visibilityState !== 'visible') return;
+      if (!dialog.isConnected) return;
+      focusPrimary();
+    };
+    document.addEventListener('visibilitychange', onReturned);
+    window.addEventListener('pageshow', onReturned);
 
     cleanupActiveDialog = () => {
       document.removeEventListener('keydown', onKeyDown, true);
+      document.removeEventListener('visibilitychange', onReturned);
+      window.removeEventListener('pageshow', onReturned);
       delete dialog.dataset.focusManaged;
       if (previous?.isConnected) previous.focus();
       cleanupActiveDialog = null;

@@ -12,6 +12,8 @@ Mission-driven, mobile-first PWA for growing meaningful social relationships wit
 - user-configurable daily workload caps for total queue / new connections / conversations / light engagement / cleanup / self-improvement
 - local workload advisor that proposes a practical daily action volume from candidate quality and remaining budget; this is not a platform safety limit
 - Today progress and summary cards are derived from the actual current Daily Queue instead of the raw candidate pool
+- Discover action filters keep follow recommendations visible as a load-more list of dozens when those candidates exist
+- reply cards name the concrete post, show suggested wording, and show `この人とはN日空いている`
 - queue items automatically roll forward as today's interactions are recorded
 - `明日へ` snooze temporarily removes a candidate from Today/Discover until the next local day without deleting relationship history
 - local-day boundary refresh updates Today/Discover after midnight even when the PWA was left open; returning from the background also rechecks the current local day
@@ -40,6 +42,8 @@ Mission-driven, mobile-first PWA for growing meaningful social relationships wit
 - inbound X followers can be reused as candidate seeds without another X request
 - optional Instagram Professional comment-engager sync using only the official API on the user's own media
 - Instagram commenters can become high-signal `engaged` candidates and retain the related post as the next conversation surface
+- official X mentions timeline ingest during owned-X sync when `GET /2/users/:id/mentions` is available with existing `tweet.read`/`users.read`; 403/404 skips without scraping or new write scopes
+- one-tap official-app handoff copies a draft (if any) and opens the canonical post/profile in the same gesture
 - 12-hour D1 cache for Instagram engager sync
 - local relationship history and relationship stages
 - configurable follow-back review window with Mission-aware keep/cleanup advice
@@ -108,7 +112,7 @@ Paid usage is fail-closed. If D1 budget accounting is unavailable, paid provider
 2. Optionally tap the local workload recommendation; it uses candidate quality and remaining budget only as a productivity guide, not as an X/Instagram enforcement threshold.
 3. Save the personal control key before using Worker-backed budget/provider/social sync features.
 4. Optionally connect X in read-only mode. The PWA never requests follow/post/DM write scopes.
-5. Tap `Xデータを同期` to import the connected account's profile/recent posts and budget-permitted follower/following samples. Repeated taps within the cache window reuse D1 data at `$0` application-tracked cost.
+5. Tap `Xの情報を更新` to import the connected account's profile/recent posts, budget-permitted follower/following samples, and (when the official mentions timeline is available with existing read scopes) recent mentions as reply-queue items. Repeated taps within the cache window reuse D1 data at `$0` application-tracked cost.
 6. Each non-cached X sync is paced from remaining monthly budget and continues followers/following from stored pagination cursors, gradually widening coverage instead of repeatedly buying the first page.
 7. For X candidates already marked as followed, the Worker snapshots the tracked set at the start of a follower cycle and records whether each one is seen across rotated pages. Only a completed cycle can create negative follow-back evidence.
 8. Existing tracked candidates are reconciled with follower data; inbound X followers can become new candidate seeds for later Mission ranking.
@@ -118,8 +122,8 @@ Paid usage is fail-closed. If D1 budget accounting is unavailable, paid provider
 12. Run `AIで候補を再評価`. A zero-cost local filter chooses the strongest subset first; the AI then receives relationship context and produces Mission Match, strategy and only context-justified drafts.
 13. Today automatically builds a Daily Queue from Mission Match, relationship state, recommended action, workload caps, self-improvement items and cleanup reviews. Its progress target and summary are based on that actual queue.
 14. Use `明日へ` when a candidate is relevant but not worth handling now; the relationship record stays intact and the candidate returns after the next local-day boundary.
-15. Open the recommended person/post in the official social experience; the user performs the actual social action there.
-16. Return to the PWA and record the result. Genuine interactions conservatively strengthen the CRM relationship stage/score; cleanup keep decisions are tracked without pretending they were social engagement.
+15. Open the recommended person/post in the official social experience; if a draft exists it is copied first so you can paste and send. The user performs the actual social action there.
+16. Return to the PWA and record the result in one tap. Genuine interactions conservatively strengthen the CRM relationship stage/score; cleanup keep decisions are tracked without pretending they were social engagement.
 17. In Relations, review mutual/no-follow-back/unknown state. Cleanup advice never auto-unfollows, and the return sheet explicitly distinguishes `フォローを継続する` from `フォロー解除した`.
 18. In Me, run AI analysis on the synced or manually pasted profile/recent posts to get Mission-based account improvement guidance. Before the first analysis, Mission Score remains unmeasured rather than displaying a fake value.
 19. When moving state between devices, use JSON backup or D1 sync. Both restore paths normalize the complete AppState before it becomes active.
@@ -130,7 +134,7 @@ The initial product is designed to remain useful at $0-$3/month:
 
 1. reuse locally stored candidates instead of re-reading them
 2. use free public-web discovery before paid social reads when configured
-3. reuse inbound X followers and Instagram commenters as high-signal candidates instead of buying more cold discovery
+3. reuse inbound X followers, official X mentions (when the read API allows them), and Instagram commenters as high-signal candidates instead of buying more cold discovery
 4. use X Owned Reads only when the connected account is explicitly confirmed eligible
 5. cache owned X snapshots for 20 hours and Instagram engager snapshots for 12 hours
 6. pace each non-cached owned-X sync from the actual remaining monthly budget divided by the remaining billing-month days

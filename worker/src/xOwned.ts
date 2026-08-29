@@ -21,6 +21,7 @@ export interface XOwnedSyncRequest {
   maxFollowers?: number;
   maxFollowing?: number;
   maxPosts?: number;
+  maxMentions?: number;
   trackedAccounts?: TrackedXAccount[];
   force?: boolean;
 }
@@ -44,12 +45,31 @@ interface XPost {
   id: string;
   text: string;
   created_at?: string;
+  author_id?: string;
   public_metrics?: {
     like_count?: number;
     reply_count?: number;
     repost_count?: number;
     quote_count?: number;
   };
+}
+
+interface XMention {
+  id: string;
+  text: string;
+  authorId: string;
+  authorUsername: string;
+  authorName: string;
+  authorDescription: string;
+  authorVerified: boolean;
+  createdAt: string | null;
+  engagementUrl: string;
+}
+
+interface MentionsResponse {
+  data?: XPost[];
+  includes?: { users?: XUser[] };
+  meta?: { next_token?: string; result_count?: number };
 }
 
 interface ListResponse<T> {
@@ -75,6 +95,7 @@ interface PagingState {
 
 const CACHE_TTL_MS = 20 * 60 * 60 * 1000;
 const MAX_PAGING_CYCLE = 1_000_000;
+const X_RESERVED_PATHS = new Set(['home', 'explore', 'notifications', 'messages', 'search', 'i', 'settings', 'compose', 'intent']);
 
 export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
   const userId = sanitizeUserId(body.userId || 'local-user');
@@ -112,10 +133,11 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
   const requestedFollowers = clampInt(body.maxFollowers, 100, 0, 500);
   const requestedFollowing = clampInt(body.maxFollowing, 100, 0, 500);
   const requestedPosts = clampInt(body.maxPosts, 20, 0, 50);
+  const requestedMentions = clampInt(body.maxMentions, 20, 0, 20);
   const pacedCapUsd = Math.min(budget.remainingUsd, Math.max(userReadRate, budget.remainingUsd / daysRemainingInUtcMonth()));
   const maxOwnedResourcesByBudget = Math.max(0, Math.floor(((pacedCapUsd - userReadRate) + 1e-9) / ownedReadRate));
-  const allocation = allocateResources(maxOwnedResourcesByBudget, requestedFollowers, requestedFollowing, requestedPosts);
-  const worstCaseCost = userReadRate + (allocation.followers + allocation.following + allocation.posts) * ownedReadRate;
+  const allocation = allocateResources(maxOwnedResourcesByBudget, requestedFollowers, requestedFollowing, requestedPosts, requestedMentions);
+  const worstCaseCost = userReadRate + (allocation.followers + allocation.following + allocation.posts + allocation.mentions) * ownedReadRate;
   const paging = await loadPaging(env, userId);
 
   // A page that closes a cycle increments its counter. Refuse the practically unreachable
@@ -147,10 +169,11 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
     const profile = await fetchMe(accessToken);
     if (!profile) throw new Error('X /2/users/me returned no user');
 
-    const [followersResult, followingResult, postsResult] = await Promise.all([
+    const [followersResult, followingResult, postsResult, mentionsResult] = await Promise.all([
       allocation.followers > 0 ? fetchUsersPage(accessToken, profile.id, 'followers', allocation.followers, paging.followersCursor) : emptyList<XUser>(),
       allocation.following > 0 ? fetchUsersPage(accessToken, profile.id, 'following', allocation.following, paging.followingCursor) : emptyList<XUser>(),
       allocation.posts >= 5 ? fetchPostsPage(accessToken, profile.id, allocation.posts) : emptyList<XPost>(),
+      allocation.mentions >= 5 ? fetchMentionsPage(accessToken, profile.id, allocation.mentions) : emptyMentions(),
     ]);
 
     // The two lists are fetched concurrently. A handle rename or inconsistent upstream
@@ -165,7 +188,8 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
     const followerCount = followersResult.data.length;
     const followingCount = followingResult.data.length;
     const postCount = postsResult.data.length;
-    const actualCost = userReadRate + (followerCount + followingCount + postCount) * ownedReadRate;
+    const mentionCount = mentionsResult.data.length;
+    const actualCost = userReadRate + (followerCount + followingCount + postCount + mentionCount) * ownedReadRate;
     const ordinaryNextPaging = advancePaging(paging, allocation, followersResult.nextToken, followingResult.nextToken);
     const syncedAt = new Date().toISOString();
 
@@ -193,6 +217,11 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
           quotes: post.public_metrics?.quote_count || 0,
         },
       })),
+      mentions: mentionsResult.data,
+      ...(mentionsResult.unavailable ? {
+        mentionsUnavailable: true,
+        mentionsUnavailableReason: mentionsResult.unavailableReason,
+      } : {}),
       coverage: {
         followers: {
           fetched: followerCount,
@@ -207,6 +236,11 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
           rotated: paging.followingCursor !== null,
         },
         posts: { fetched: postCount, complete: !postsResult.nextToken },
+        mentions: {
+          fetched: mentionCount,
+          complete: !mentionsResult.nextToken,
+          unavailable: Boolean(mentionsResult.unavailable),
+        },
       },
       followEvidence: null,
       requested: allocation,
@@ -222,7 +256,7 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
     // All raw/normalized paid X data is now validated. Only now shrink the reservation to
     // the known resource count. If this statement itself is uncertain, the outer catch keeps
     // or reconstructs the conservative reservation as before.
-    await finalizeReservation(env, reservationId, actualCost, 1 + followerCount + followingCount + postCount);
+    await finalizeReservation(env, reservationId, actualCost, 1 + followerCount + followingCount + postCount + mentionCount);
     reservationFinalized = true;
 
     let followEvidence = null;
@@ -376,6 +410,101 @@ async function fetchPostsPage(accessToken: string, userId: string, maxResults: n
   return { data, nextToken: nextToken || null };
 }
 
+async function fetchMentionsPage(accessToken: string, userId: string, maxResults: number) {
+  const params = new URLSearchParams({
+    max_results: String(Math.max(5, Math.min(100, maxResults))),
+    expansions: 'author_id',
+    'tweet.fields': 'created_at,author_id',
+    'user.fields': 'description,profile_image_url,public_metrics,verified',
+  });
+  const url = `https://api.x.com/2/users/${encodeURIComponent(userId)}/mentions?${params.toString()}`;
+  const response = await fetchWithTimeout(url, { headers: { authorization: `Bearer ${accessToken}` } }, 30_000, 'X API');
+  if (response.status === 403 || response.status === 404) {
+    return {
+      data: [] as XMention[],
+      nextToken: null as string | null,
+      unavailable: true,
+      unavailableReason: 'Official X mentions timeline is not available on this API product/app with existing tweet.read/users.read scopes. No write scopes were added and mentions were skipped rather than scraped.',
+    };
+  }
+  if (!response.ok) throw new Error(`X API returned ${response.status}`);
+  const body = await response.json().catch(() => null) as unknown;
+  if (!isRecord(body)) throw new Error('X API returned an empty or invalid JSON response');
+  const payload = body as MentionsResponse;
+  const tweets = payload.data || [];
+  const users = payload.includes?.users || [];
+  if (payload.data != null && (!Array.isArray(payload.data)
+    || payload.data.length > maxResults
+    || !payload.data.every(validRawXPost)
+    || !uniqueRawXPosts(payload.data))) {
+    throw new Error('X mentions endpoint returned malformed tweet data');
+  }
+  if (payload.includes?.users != null && (!Array.isArray(payload.includes.users)
+    || payload.includes.users.length > maxResults
+    || !payload.includes.users.every(validRawXUser)
+    || !uniqueRawXUsers(payload.includes.users))) {
+    throw new Error('X mentions endpoint returned malformed author data');
+  }
+  if (!validListMeta(payload.meta, tweets.length, maxResults)) {
+    throw new Error('X mentions endpoint returned incoherent pagination metadata');
+  }
+  const nextToken = payload.meta?.next_token;
+  if (nextToken != null && safeCursor(nextToken) === null) throw new Error('X mentions endpoint returned an invalid pagination token');
+
+  const authors = new Map(users.map((user) => [user.id, user]));
+  const latestByAuthor = new Map<string, XMention>();
+  for (const tweet of tweets) {
+    const authorId = tweet.author_id || '';
+    if (authorId === userId) continue;
+    const author = authors.get(authorId);
+    if (!author) continue;
+    const engagementUrl = canonicalXStatusUrl(author.username, tweet.id);
+    if (!engagementUrl) continue;
+    const createdAt = tweet.created_at || null;
+    const current = latestByAuthor.get(authorId);
+    const incomingMs = createdAt ? new Date(createdAt).getTime() : Number.NEGATIVE_INFINITY;
+    const currentMs = current?.createdAt ? new Date(current.createdAt).getTime() : Number.NEGATIVE_INFINITY;
+    if (current && Number.isFinite(currentMs) && incomingMs <= currentMs) continue;
+    latestByAuthor.set(authorId, {
+      id: tweet.id,
+      text: tweet.text,
+      authorId,
+      authorUsername: author.username,
+      authorName: author.name,
+      authorDescription: author.description || '',
+      authorVerified: Boolean(author.verified),
+      createdAt,
+      engagementUrl,
+    });
+  }
+  const data = [...latestByAuthor.values()]
+    .sort((left, right) => {
+      const leftMs = left.createdAt ? new Date(left.createdAt).getTime() : 0;
+      const rightMs = right.createdAt ? new Date(right.createdAt).getTime() : 0;
+      return rightMs - leftMs;
+    })
+    .slice(0, maxResults);
+  if (!data.every(validOwnedMention) || !uniqueIds(data)) {
+    throw new Error('X mentions endpoint produced an invalid canonical mention set');
+  }
+  return { data, nextToken: nextToken || null };
+}
+
+function emptyMentions() {
+  return Promise.resolve({
+    data: [] as XMention[],
+    nextToken: null as string | null,
+    unavailable: false as boolean | undefined,
+    unavailableReason: undefined as string | undefined,
+  });
+}
+
+function canonicalXStatusUrl(username: string, postId: string) {
+  const handle = username.trim().replace(/^@/, '');
+  if (X_RESERVED_PATHS.has(handle.toLowerCase()) || !/^[A-Za-z0-9_]{1,15}$/.test(handle) || !/^\d{1,30}$/.test(postId)) return '';
+  return `https://x.com/${handle}/status/${postId}`;
+}
+
 async function xFetch<T>(url: string, accessToken: string): Promise<T> {
   const response = await fetchWithTimeout(url, { headers: { authorization: `Bearer ${accessToken}` } }, 30_000, 'X API');
   if (!response.ok) throw new Error(`X API returned ${response.status}`);
@@ -405,12 +534,16 @@ function emptyList<T>() {
   return Promise.resolve({ data: [] as T[], nextToken: null as string | null });
 }
 
-function allocateResources(total: number, followers: number, following: number, posts: number) {
-  if (total <= 0) return { followers: 0, following: 0, posts: 0 };
+function allocateResources(total: number, followers: number, following: number, posts: number, mentions: number) {
+  if (total <= 0) return { followers: 0, following: 0, posts: 0, mentions: 0 };
   let remaining = total;
   const postTarget = posts >= 5 && remaining >= 5 ? Math.min(posts, Math.max(5, Math.floor(total * 0.15))) : 0;
   const allocatedPosts = Math.min(postTarget, remaining);
   remaining -= allocatedPosts;
+
+  const mentionTarget = mentions >= 5 && remaining >= 5 ? Math.min(mentions, Math.max(5, Math.min(20, Math.floor(total * 0.12) || 5))) : 0;
+  const allocatedMentions = Math.min(mentionTarget, remaining);
+  remaining -= allocatedMentions;
 
   let allocatedFollowers = Math.min(followers, Math.ceil(remaining / 2));
   let allocatedFollowing = Math.min(following, remaining - allocatedFollowers);
@@ -424,7 +557,7 @@ function allocateResources(total: number, followers: number, following: number, 
   if (leftover > 0) {
     allocatedFollowing += Math.min(leftover, Math.max(0, following - allocatedFollowing));
   }
-  return { followers: allocatedFollowers, following: allocatedFollowing, posts: allocatedPosts };
+  return { followers: allocatedFollowers, following: allocatedFollowing, posts: allocatedPosts, mentions: allocatedMentions };
 }
 
 function advancePaging(paging: PagingState, allocation: { followers: number; following: number }, followersNext: string | null, followingNext: string | null): PagingState {
@@ -652,7 +785,8 @@ function validRawXPost(value: unknown): value is XPost {
     || !/^\d{1,30}$/.test(value.id)
     || typeof value.text !== 'string'
     || value.text.length > 30_000
-    || (value.created_at != null && (typeof value.created_at !== 'string' || !validPastishIso(value.created_at)))) return false;
+    || (value.created_at != null && (typeof value.created_at !== 'string' || !validPastishIso(value.created_at)))
+    || (value.author_id != null && (typeof value.author_id !== 'string' || !/^\d{1,30}$/.test(value.author_id)))) return false;
   if (value.public_metrics == null) return true;
   return isRecord(value.public_metrics)
     && optionalNonNegativeFinite(value.public_metrics.like_count)
@@ -732,6 +866,14 @@ function validOwnedSnapshot(value: unknown) {
     || value.posts.length > 50
     || !value.posts.every(validOwnedPost)
     || !uniqueIds(value.posts)
+    || (value.mentions != null && (!Array.isArray(value.mentions)
+      || value.mentions.length > 20
+      || !value.mentions.every(validOwnedMention)
+      || !uniqueIds(value.mentions)
+      || !uniqueMentionAuthors(value.mentions)))
+    || (value.mentionsUnavailable != null && typeof value.mentionsUnavailable !== 'boolean')
+    || (value.mentionsUnavailableReason != null && (typeof value.mentionsUnavailableReason !== 'string' || value.mentionsUnavailableReason.length > 600))
+    || (value.mentionsUnavailable === true && Array.isArray(value.mentions) && value.mentions.length > 0)
     || !validCoverage(value.coverage)
     || !validRequested(value.requested)
     || !validPagingState(value.resumePaging)
@@ -744,6 +886,10 @@ function validOwnedSnapshot(value: unknown) {
   const followingCoverage = coverage.following as Record<string, unknown>;
   const postsCoverage = coverage.posts as Record<string, unknown>;
   const requested = value.requested as Record<string, unknown>;
+  const mentionsCoverage = coverage.mentions == null ? null : coverage.mentions as Record<string, unknown>;
+  const mentions = Array.isArray(value.mentions) ? value.mentions : [];
+  if (mentionsCoverage && mentionsCoverage.fetched !== mentions.length) return false;
+  if (typeof requested.mentions === 'number' && (requested.mentions as number) < mentions.length) return false;
   return followersCoverage.fetched === value.followers.length
     && followingCoverage.fetched === value.following.length
     && postsCoverage.fetched === value.posts.length
@@ -787,7 +933,13 @@ function validCoverage(value: unknown) {
     && validCoverageSlice(value.following, 500)
     && isRecord(value.posts)
     && boundedNonNegativeInteger(value.posts.fetched, 50)
-    && typeof value.posts.complete === 'boolean';
+    && typeof value.posts.complete === 'boolean'
+    && (value.mentions == null || (
+      isRecord(value.mentions)
+      && boundedNonNegativeInteger(value.mentions.fetched, 20)
+      && typeof value.mentions.complete === 'boolean'
+      && (value.mentions.unavailable == null || typeof value.mentions.unavailable === 'boolean')
+    ));
 }
 
 function validCoverageSlice(value: unknown, maxFetched: number) {
@@ -802,7 +954,34 @@ function validRequested(value: unknown) {
   return isRecord(value)
     && boundedNonNegativeInteger(value.followers, 500)
     && boundedNonNegativeInteger(value.following, 500)
-    && boundedNonNegativeInteger(value.posts, 50);
+    && boundedNonNegativeInteger(value.posts, 50)
+    && (value.mentions == null || boundedNonNegativeInteger(value.mentions, 20));
+}
+
+function validOwnedMention(value: unknown): value is XMention {
+  return isRecord(value)
+    && typeof value.id === 'string'
+    && /^\d{1,30}$/.test(value.id)
+    && typeof value.text === 'string'
+    && value.text.length <= 30_000
+    && typeof value.authorId === 'string'
+    && /^\d{1,30}$/.test(value.authorId)
+    && typeof value.authorUsername === 'string'
+    && /^[A-Za-z0-9_]{1,15}$/.test(value.authorUsername)
+    && !X_RESERVED_PATHS.has(value.authorUsername.toLowerCase())
+    && typeof value.authorName === 'string'
+    && value.authorName.length <= 300
+    && typeof value.authorDescription === 'string'
+    && value.authorDescription.length <= 5000
+    && typeof value.authorVerified === 'boolean'
+    && (value.createdAt == null || (typeof value.createdAt === 'string' && validPastishIso(value.createdAt)))
+    && typeof value.engagementUrl === 'string'
+    && value.engagementUrl === canonicalXStatusUrl(value.authorUsername, value.id);
+}
+
+function uniqueMentionAuthors(mentions: unknown[]) {
+  const authors = mentions.map((item) => isRecord(item) && typeof item.authorId === 'string' ? item.authorId : '');
+  return authors.every(Boolean) && new Set(authors).size === authors.length;
 }
 
 function validPagingState(value: unknown): value is PagingState {

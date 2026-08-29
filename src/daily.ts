@@ -1,3 +1,4 @@
+import { daysSinceTimestamp, engagementSurfaceLabel } from './social';
 import type { AppState, Candidate, RecommendedAction } from './types';
 
 export type DailyQueueKind = 'relationship' | 'self';
@@ -10,6 +11,9 @@ export interface DailyQueueItem {
   title: string;
   reason: string;
   priority: number;
+  draft?: string;
+  staleDays?: number | null;
+  engagementLabel?: string;
 }
 
 const actionWeight: Record<RecommendedAction, number> = {
@@ -70,7 +74,13 @@ function candidateToQueueItem(candidate: Candidate, now: number): DailyQueueItem
   const relationshipBoost = Math.min(18, Math.round(candidate.relationshipScore * 0.2));
   const missionBoost = Math.round(candidate.match * 0.55);
   const followBackBoost = action === 'unfollow_review' && candidate.followBack === false ? 7 : 0;
-  const priority = missionBoost + relationshipBoost + actionWeight[action] + followBackBoost + freshnessBoost(candidate, action, now);
+  const staleDays = daysSinceTimestamp(candidate.lastInteractionAt, now);
+  const priority = missionBoost
+    + relationshipBoost
+    + actionWeight[action]
+    + followBackBoost
+    + freshnessBoost(candidate, action, now)
+    + staleConversationBoost(candidate, action, staleDays);
 
   return {
     id: `candidate-${candidate.id}`,
@@ -78,8 +88,11 @@ function candidateToQueueItem(candidate: Candidate, now: number): DailyQueueItem
     candidateId: candidate.id,
     action,
     title: queueTitle(candidate, action),
-    reason: candidate.strategy || candidate.reason,
+    reason: queueReason(candidate, action),
     priority,
+    draft: candidate.draft?.trim() || undefined,
+    staleDays,
+    engagementLabel: engagementSurfaceLabel(candidate.platform, candidate.engagementUrl) || undefined,
   };
 }
 
@@ -103,6 +116,17 @@ function freshnessBoost(candidate: Candidate, action: RecommendedAction, now: nu
   return 0;
 }
 
+function staleConversationBoost(candidate: Candidate, action: RecommendedAction, staleDays: number | null) {
+  if ((action !== 'reply' && action !== 'dm') || staleDays == null || staleDays < 3) return 0;
+  const relationshipBoost = candidate.stage === 'conversation' || candidate.stage === 'relationship' || candidate.stage === 'recognized'
+    ? 4
+    : 0;
+  if (staleDays < 7) return 8 + relationshipBoost;
+  if (staleDays < 14) return 14 + relationshipBoost;
+  if (staleDays < 30) return 10 + relationshipBoost;
+  return 6 + relationshipBoost;
+}
+
 function queueTitle(candidate: Candidate, action: RecommendedAction) {
   const name = candidate.displayName || `@${candidate.username}`;
   switch (action) {
@@ -113,6 +137,14 @@ function queueTitle(candidate: Candidate, action: RecommendedAction) {
     case 'unfollow_review': return `${name} のフォロー継続を確認`;
     default: return `${name} を確認する`;
   }
+}
+
+function queueReason(candidate: Candidate, action: RecommendedAction) {
+  if (action === 'reply' || action === 'dm') {
+    const draft = candidate.draft?.trim();
+    if (draft) return draft;
+  }
+  return candidate.strategy || candidate.reason;
 }
 
 function interleaveByGoal(

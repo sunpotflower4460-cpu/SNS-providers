@@ -249,6 +249,8 @@ function normalizeXAccount(account: AppState['xAccount'] | undefined): AppState[
     followerSampleCount: optionalNonNegativeInt(account.followerSampleCount),
     followingSampleCount: optionalNonNegativeInt(account.followingSampleCount),
     recentPostCount: optionalNonNegativeInt(account.recentPostCount),
+    mentionSampleCount: optionalNonNegativeInt(account.mentionSampleCount),
+    mentionsUnavailable: typeof account.mentionsUnavailable === 'boolean' ? account.mentionsUnavailable : undefined,
     followersComplete: typeof account.followersComplete === 'boolean' ? account.followersComplete : undefined,
     followingComplete: typeof account.followingComplete === 'boolean' ? account.followingComplete : undefined,
     postsComplete: typeof account.postsComplete === 'boolean' ? account.postsComplete : undefined,

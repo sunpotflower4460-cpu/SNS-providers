@@ -265,6 +265,23 @@ if (social.includes('intent/tweet') || social.includes('intent/follow')) {
 if (social.includes('window.open(candidate.profileUrl') || !social.includes('canonicalProfileUrl(candidate.platform, candidate.username)') || !social.includes('safeEngagementUrl(candidate.platform, candidate.engagementUrl)')) {
   throw new Error('Social handoff can trust stored URLs instead of canonical official-platform destinations.');
 }
+if (!social.includes('if (draft) void copyDraftText(draft)')
+  || social.includes('await copyDraftText(draft)')
+  || !social.includes('window.open(engagementUrl, \'_blank\', \'noopener,noreferrer\')')) {
+  throw new Error('Draft copy can delay/block official-app handoff or no longer happens in the same user gesture.');
+}
+
+if (!xOwned.includes('/mentions?')
+  || !xOwned.includes('response.status === 403 || response.status === 404')
+  || !xOwned.includes('skipped rather than scraped')
+  || !xOwned.includes('canonicalXStatusUrl(author.username, tweet.id)')
+  || xOwned.includes('tweet.write')
+  || !xOwnedStore.includes('function applyXMentions')
+  || !xOwnedStore.includes('canonicalXStatusUrl(mention.authorUsername, mention.id)')
+  || !xOwnedStore.includes('isFreshMentionAfterDismissal')
+  || !xOwnedStore.includes("tags: ['inbound', 'mention', 'x-owned-sync']")) {
+  throw new Error('X mentions ingest can scrape, invent engagement URLs, revive dismissed people from stale cache, or require write scopes.');
+}
 
 if (!/await clearOwnedXDerivedState\(env, userId\);\s*await persistTokenResponse\(env, userId, token\);/.test(xOAuth)
   || !xOAuth.includes("DELETE FROM x_owned_snapshots WHERE user_id = ?")

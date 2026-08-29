@@ -409,6 +409,8 @@ export function applyOwnedXSync(state: AppState, result: XOwnedSyncResponse): Ap
       followerSampleCount: result.coverage?.followers.fetched ?? followers.length,
       followingSampleCount: result.coverage?.following.fetched ?? following.length,
       recentPostCount: result.coverage?.posts.fetched ?? posts.length,
+      mentionSampleCount: result.coverage?.mentions?.fetched ?? result.mentions?.length ?? 0,
+      mentionsUnavailable: Boolean(result.mentionsUnavailable),
       followersComplete,
       followingComplete,
       postsComplete: Boolean(result.coverage?.posts.complete),

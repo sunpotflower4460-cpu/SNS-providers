@@ -1,6 +1,9 @@
 import { useMemo } from 'react';
+import { apiConfigured } from './api';
+import { getSyncToken } from './controlToken';
+import { firstQueueSteps } from './firstQueue';
 import { buildDailyQueue } from './daily';
-import { platformLabel } from './social';
+import { platformLabel, staleConversationCue } from './social';
 import type { AppState, Candidate } from './types';
 import { localDayKey, useLocalDayKey } from './useLocalDay';
 import './daily.css';
@@ -10,6 +13,7 @@ interface Props {
   onOpenCandidate: (candidate: Candidate) => void;
   onOpenMe: () => void;
   onOpenDiscover: () => void;
+  onOpenSettings: () => void;
 }
 
 const actionIcon: Record<string, string> = {
@@ -32,7 +36,7 @@ const actionLabel: Record<string, string> = {
   self_improve: '自分を改善',
 };
 
-export default function DailyQueue({ state, onOpenCandidate, onOpenMe, onOpenDiscover }: Props) {
+export default function DailyQueue({ state, onOpenCandidate, onOpenMe, onOpenDiscover, onOpenSettings }: Props) {
   const localDay = useLocalDayKey();
   const items = useMemo(() => buildDailyQueue(state), [state, localDay]);
   const candidateById = useMemo(() => new Map(state.candidates.map((candidate) => [candidate.id, candidate])), [state.candidates]);
@@ -60,12 +64,27 @@ export default function DailyQueue({ state, onOpenCandidate, onOpenMe, onOpenDis
   }
 
   if (activeCandidateCount === 0) {
+    const steps = firstQueueSteps(state, {
+      apiConfigured,
+      hasControlToken: Boolean(getSyncToken().trim()),
+    });
     return <section className="daily-queue empty onboarding-empty">
       <div className="queue-complete-icon">＋</div>
       <span className="section-kicker">最初の一歩</span>
       <h3>まず、つながる候補を見つけましょう</h3>
-      <p>Missionを基準に候補を探すと、誰に何をするかがTodayへ自動で並びます。細かい設定は後からで大丈夫です。</p>
-      <button className="primary-button empty-action" onClick={onOpenDiscover}>候補を探す</button>
+      <p>Missionを基準に候補を探すと、誰に何をするかがTodayへ自動で並びます。実在しない人は出しません。</p>
+      <ol className="first-queue-steps">
+        {steps.map((step) => (
+          <li key={step.id} className={step.done ? 'done' : undefined}>
+            <span>{step.done ? '済' : step.index}</span>
+            <strong>{step.label}</strong>
+          </li>
+        ))}
+      </ol>
+      <div className="empty-actions">
+        <button className="primary-button empty-action" onClick={onOpenDiscover}>候補を探す / 同期する</button>
+        <button className="secondary-button empty-action" onClick={onOpenSettings}>設定と接続を確認</button>
+      </div>
     </section>;
   }
 
@@ -84,8 +103,11 @@ export default function DailyQueue({ state, onOpenCandidate, onOpenMe, onOpenDis
       <div className="queue-wait-icon">○</div>
       <span className="section-kicker">今日のおすすめ</span>
       <h3>今は実行できる候補がありません</h3>
-      <p>今ある候補には、まだ具体的な投稿や十分な判断材料がありません。必要なら新しい候補を探せます。</p>
-      <button className="primary-button empty-action" onClick={onOpenDiscover}>新しい候補を探す</button>
+      <p>今ある候補には、まだ具体的な投稿や十分な判断材料がありません。設定の同期かAI再評価で、実行先まで決まった候補が増えます。</p>
+      <div className="empty-actions">
+        <button className="primary-button empty-action" onClick={onOpenDiscover}>新しい候補を探す</button>
+        <button className="secondary-button empty-action" onClick={onOpenSettings}>設定と同期を確認</button>
+      </div>
     </section>;
   }
 
@@ -93,6 +115,7 @@ export default function DailyQueue({ state, onOpenCandidate, onOpenMe, onOpenDis
   const firstCandidate = first.candidateId ? candidateById.get(first.candidateId) : undefined;
   const firstCta = nextActionCta(first.action, firstCandidate);
   const remaining = items.slice(1, 8);
+  const staleCue = staleConversationCue(first.staleDays ?? null);
 
   return <section className="daily-queue">
     <div className="daily-queue-head">
@@ -113,6 +136,8 @@ export default function DailyQueue({ state, onOpenCandidate, onOpenMe, onOpenDis
       <span className="next-action-copy">
         <small>{actionLabel[first.action] || '確認'}</small>
         <strong>{first.title}</strong>
+        {first.engagementLabel && <em className="queue-surface">{first.engagementLabel}</em>}
+        {staleCue && <em className="queue-stale">{staleCue}</em>}
         <p>{first.reason}</p>
       </span>
       <span className="next-action-cta">{firstCta} <b>›</b></span>
@@ -129,7 +154,7 @@ export default function DailyQueue({ state, onOpenCandidate, onOpenMe, onOpenDis
           <span className="queue-rank">{index + 2}</span>
           <span className="queue-action-icon">{actionIcon[item.action] || '◎'}</span>
           <span className="queue-copy">
-            <small>{actionLabel[item.action] || '確認'}</small>
+            <small>{actionLabel[item.action] || '確認'}{item.staleDays != null && item.staleDays > 0 ? ` · この人とは${item.staleDays}日空き` : ''}</small>
             <strong>{item.title}</strong>
           </span>
           <span className="queue-arrow">›</span>
@@ -143,11 +168,12 @@ export default function DailyQueue({ state, onOpenCandidate, onOpenMe, onOpenDis
 function nextActionCta(action: string, candidate?: Candidate) {
   if (action === 'self_improve') return '自分を整える';
   const platform = candidate ? platformLabel(candidate.platform) : 'SNS';
+  const hasDraft = Boolean(candidate?.draft?.trim());
   switch (action) {
-    case 'follow': return `${platform}でフォロー`;
+    case 'follow': return hasDraft ? `コピーして${platform}でフォロー` : `${platform}でフォロー`;
     case 'like': return `${platform}で対象投稿を開く`;
-    case 'reply': return `${platform}で返信先を開く`;
-    case 'dm': return `${platform}でDM先を開く`;
+    case 'reply': return hasDraft ? `コピーして${platform}で開く` : `${platform}で返信先を開く`;
+    case 'dm': return hasDraft ? `コピーして${platform}で開く` : `${platform}でDM先を開く`;
     case 'unfollow_review': return `${platform}で確認する`;
     default: return `${platform}で確認する`;
   }

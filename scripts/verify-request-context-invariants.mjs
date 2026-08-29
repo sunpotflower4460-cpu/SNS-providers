@@ -295,7 +295,10 @@ requireAll(xOwned, [
   'validPagingState(snapshot.resumePaging)',
   'validListMeta(response.meta, data.length, maxResults)',
   'X API returned an empty or invalid JSON response',
-], 'Owned-X can trust malformed/future cache state, corrupted paging/checkpoint state, incoherent raw list metadata, or invalid successful JSON.');
+  '/mentions?',
+  'response.status === 403 || response.status === 404',
+  'canonicalXStatusUrl(author.username, tweet.id)',
+], 'Owned-X can trust malformed/future cache state, corrupted paging/checkpoint state, incoherent raw list metadata, invalid successful JSON, or ingest X mentions without a canonical official tweet URL.');
 
 requireAll(instagramOwned, [
   'snapshot.syncedAt !== row.synced_at',

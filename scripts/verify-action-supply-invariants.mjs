@@ -71,6 +71,7 @@ requireAll(daily, [
   "candidate.recommendedAction === 'like' || candidate.recommendedAction === 'reply'",
   '!candidate.engagementUrl',
   'freshnessBoost(candidate, action, now)',
+  'staleConversationBoost(candidate, action, staleDays)',
   'isCoolingDown(candidate, lastHandledAt.get(candidate.id), now)',
   'signalMs > handledMs + 60_000',
   "light: relationshipItems.filter((item) => item.action === 'like')",

@@ -37,6 +37,10 @@ requireAll(daily, [
   'next-action-cta',
   'nextActionCta(first.action, firstCandidate)',
   'その次',
+  'staleConversationCue',
+  'この人とは',
+  'first-queue-steps',
+  'onOpenSettings',
 ], 'Today no longer presents one clear, action-specific next step before secondary queue items.');
 
 requireAll(daily, [
@@ -66,6 +70,8 @@ requireAll(app, [
   'const displayed = visible.slice(0, visibleLimit);',
   '次の{Math.min(12, hiddenCount)}人を見る',
   'aria-pressed={filter === item}',
+  "const [actionFilter, setActionFilter] = useState<'all' | 'follow' | 'reply' | 'like'>('all');",
+  "['follow', 'フォロー', actionCount('follow')]",
 ], 'Discover can regress to rendering the full candidate pool at once or lose accessible filter selection state.');
 
 requireAll(app, [
@@ -107,6 +113,7 @@ requireAll(social, [
   "'コピーしました'",
   "'コピーできませんでした'",
   'button.dataset.copyState = state',
+  'if (draft) void copyDraftText(draft)',
 ], 'Exact actionable handoff or visible clipboard success/failure feedback regressed.');
 
 requireAll(app, [

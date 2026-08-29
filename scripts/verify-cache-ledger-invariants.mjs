@@ -113,6 +113,9 @@ requireAll(xOwnedStore, [
   "tags: stableExisting.tags.filter((tag) => tag !== 'identity-conflict')",
   "if (candidate.tags.includes('identity-conflict')) return candidate;",
   'existingByStableId.get(follower.id) || existingByUsername.get(username)',
+  'function applyXMentions',
+  'canonicalXStatusUrl(mention.authorUsername, mention.id)',
+  'isFreshMentionAfterDismissal',
 ], 'X handle renames, recycled handles, or legacy same-ID duplicates can again split one immutable relationship, revive ambiguous follow evidence, transfer stale handle history, or let cache rewind identity.');
 
 requireAll(xOwned, [

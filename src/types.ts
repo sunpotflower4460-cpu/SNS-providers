@@ -113,6 +113,8 @@ export interface XOwnedAccountState {
   followerSampleCount?: number;
   followingSampleCount?: number;
   recentPostCount?: number;
+  mentionSampleCount?: number;
+  mentionsUnavailable?: boolean;
   followersComplete?: boolean;
   followingComplete?: boolean;
   postsComplete?: boolean;

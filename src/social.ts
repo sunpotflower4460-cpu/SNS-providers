@@ -1,9 +1,14 @@
-import type { Candidate } from './types';
+import type { Candidate, Platform } from './types';
 
 const xReservedPaths = new Set(['home', 'explore', 'notifications', 'messages', 'search', 'i', 'settings', 'compose', 'intent']);
 const instagramReservedPaths = new Set(['p', 'reel', 'reels', 'stories', 'explore', 'accounts', 'direct', 'about', 'developer']);
 
 export function openCandidate(candidate: Candidate) {
+  // Copy must start in the same user-gesture turn as window.open. Awaiting clipboard
+  // before open can lose the popup/gesture on iOS/Android PWAs.
+  const draft = candidate.draft?.trim();
+  if (draft) void copyDraftText(draft);
+
   const engagementUrl = safeEngagementUrl(candidate.platform, candidate.engagementUrl);
   if ((candidate.recommendedAction === 'reply' || candidate.recommendedAction === 'like') && engagementUrl) {
     window.open(engagementUrl, '_blank', 'noopener,noreferrer');
@@ -22,11 +27,15 @@ export async function copyDraft(text: string) {
   const button = document.activeElement instanceof HTMLButtonElement ? document.activeElement : null;
   const originalLabel = button?.textContent || 'コピー';
   try {
-    await navigator.clipboard.writeText(text);
+    await copyDraftText(text);
     showCopyFeedback(button, originalLabel, 'コピーしました', 'success');
   } catch {
     showCopyFeedback(button, originalLabel, 'コピーできませんでした', 'error');
   }
+}
+
+async function copyDraftText(text: string) {
+  await navigator.clipboard.writeText(text);
 }
 
 function showCopyFeedback(button: HTMLButtonElement | null, originalLabel: string, message: string, state: 'success' | 'error') {
@@ -49,18 +58,7 @@ export function platformLabel(platform: Candidate['platform']) {
   return platform === 'x' ? 'X' : 'Instagram';
 }
 
-function canonicalProfileUrl(platform: Candidate['platform'], rawUsername: string) {
-  const username = rawUsername.trim().replace(/^@/, '');
-  const lowered = username.toLowerCase();
-  if (platform === 'x') {
-    if (xReservedPaths.has(lowered) || !/^[A-Za-z0-9_]{1,15}$/.test(username)) return '';
-    return `https://x.com/${username}`;
-  }
-  if (instagramReservedPaths.has(lowered) || !/^[A-Za-z0-9._]{1,30}$/.test(username)) return '';
-  return `https://www.instagram.com/${username}/`;
-}
-
-function safeEngagementUrl(platform: Candidate['platform'], value?: string) {
+export function safeEngagementUrl(platform: Candidate['platform'], value?: string) {
   if (!value || value.length > 2000) return '';
   try {
     const url = new URL(value);
@@ -86,4 +84,51 @@ function safeEngagementUrl(platform: Candidate['platform'], value?: string) {
   } catch {
     return '';
   }
+}
+
+export function canonicalXStatusUrl(username: string, postId: string) {
+  const handle = username.trim().replace(/^@/, '');
+  if (xReservedPaths.has(handle.toLowerCase()) || !/^[A-Za-z0-9_]{1,15}$/.test(handle) || !/^\d{1,30}$/.test(postId)) return '';
+  return `https://x.com/${handle}/status/${postId}`;
+}
+
+export function engagementSurfaceLabel(platform: Platform, engagementUrl?: string) {
+  const url = safeEngagementUrl(platform, engagementUrl);
+  if (!url) return '';
+  try {
+    const parsed = new URL(url);
+    const parts = parsed.pathname.split('/').filter(Boolean);
+    if (platform === 'x') {
+      return `@${parts[0]} の投稿`;
+    }
+    const kind = (parts[0] || 'p').toLowerCase();
+    const kindLabel = kind === 'reel' || kind === 'reels' ? 'リール' : kind === 'tv' ? '動画' : '投稿';
+    return `Instagramの${kindLabel}`;
+  } catch {
+    return platform === 'x' ? 'Xの投稿' : 'Instagramの投稿';
+  }
+}
+
+export function daysSinceTimestamp(value: string | undefined, now = Date.now()) {
+  if (!value) return null;
+  const at = new Date(value).getTime();
+  if (!Number.isFinite(at) || at > now + 5 * 60 * 1000) return null;
+  return Math.max(0, Math.floor((now - at) / 86_400_000));
+}
+
+export function staleConversationCue(days: number | null) {
+  if (days == null) return '';
+  if (days <= 0) return 'この人とは今日接点あり';
+  return `この人とは${days}日空いている`;
+}
+
+function canonicalProfileUrl(platform: Candidate['platform'], rawUsername: string) {
+  const username = rawUsername.trim().replace(/^@/, '');
+  const lowered = username.toLowerCase();
+  if (platform === 'x') {
+    if (xReservedPaths.has(lowered) || !/^[A-Za-z0-9_]{1,15}$/.test(username)) return '';
+    return `https://x.com/${username}`;
+  }
+  if (instagramReservedPaths.has(lowered) || !/^[A-Za-z0-9._]{1,30}$/.test(username)) return '';
+  return `https://www.instagram.com/${username}/`;
 }

@@ -83,7 +83,7 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
 
   async function sync() {
     setSyncing(true);
-    setNote('プロフィール・最近の投稿・フォロー関係を確認しています…');
+        setNote('プロフィール・最近の投稿・フォロー関係・自分宛メンションを確認しています…');
     try {
       const result = await syncOwnedXData(state.budget.monthlyLimitUsd, state.candidates);
       if (!result.enabled) {
@@ -119,7 +119,12 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
         // continue from the saved cursor without re-reading the same paid page.
         setNote(result.reason || `${source}は更新しました${cost}。フォローバック確認だけ安全のため今回の判定を破棄し、次の確認周回から再開します`);
       } else {
-        setNote(`${source}から更新しました${cost}${evidence}`);
+        const mentionsNote = result.mentionsUnavailable
+          ? '。Xメンション欄はこのAPI製品では既存の読み取り権限では使えなかったため、スクレイピングせずスキップしました'
+          : result.mentions?.length
+            ? ` · メンション${result.mentions.length}件`
+            : '';
+        setNote(`${source}から更新しました${cost}${evidence}${mentionsNote}`);
       }
     } catch (error) {
       setNote(error instanceof Error ? error.message : 'Xデータを更新できませんでした');
@@ -152,7 +157,7 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
 
     <div className="x-scope-note">
       <strong>見るだけの接続です</strong>
-      <span>プロフィール・投稿・フォロー関係の読み取りだけを使います。このアプリが勝手にフォロー、解除、投稿、DM送信することはありません。</span>
+      <span>プロフィール・投稿・フォロー関係・自分宛メンションの読み取りだけを使います。このアプリが勝手にフォロー、解除、投稿、DM送信することはありません。</span>
     </div>
 
     {status.connected && <div className="x-connection-details">
@@ -166,6 +171,7 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
         <span><b>{state.xAccount.followerSampleCount || 0}</b> フォロワー確認</span>
         <span><b>{state.xAccount.followingSampleCount || 0}</b> フォロー中確認</span>
         <span><b>{state.xAccount.recentPostCount || 0}</b> 最近の投稿</span>
+        <span><b>{state.xAccount.mentionSampleCount || 0}</b> メンション</span>
       </div>
       <details className="candidate-details">
         <summary>今回の確認範囲を見る</summary>

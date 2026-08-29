@@ -1,3 +1,4 @@
+import { canonicalXStatusUrl } from './social';
 import { apiBaseUrl, apiConfigured } from './api';
 import { getSyncToken } from './controlToken';
 import { fetchWithTimeout } from './fetchWithTimeout';
@@ -63,6 +64,18 @@ export interface XFollowEvidence {
   targets: XFollowEvidenceTarget[];
 }
 
+export interface XOwnedMention {
+  id: string;
+  text: string;
+  authorId: string;
+  authorUsername: string;
+  authorName: string;
+  authorDescription: string;
+  authorVerified: boolean;
+  createdAt: string | null;
+  engagementUrl: string;
+}
+
 export interface XOwnedSyncResponse {
   enabled: boolean;
   source: 'x' | 'cache' | 'disabled';
@@ -76,13 +89,17 @@ export interface XOwnedSyncResponse {
   followers?: XOwnedUser[];
   following?: XOwnedUser[];
   posts?: XOwnedPost[];
+  mentions?: XOwnedMention[];
+  mentionsUnavailable?: boolean;
+  mentionsUnavailableReason?: string;
   coverage?: {
     followers: XCoverageSlice;
     following: XCoverageSlice;
     posts: { fetched: number; complete: boolean };
+    mentions?: { fetched: number; complete: boolean; unavailable?: boolean };
   };
   followEvidence?: XFollowEvidence | null;
-  requested?: { followers: number; following: number; posts: number };
+  requested?: { followers: number; following: number; posts: number; mentions?: number };
   resumePaging?: XPagingState;
   pacing?: {
     daysRemaining: number;
@@ -143,6 +160,7 @@ export async function syncOwnedXData(monthlyLimitUsd: number, candidates: Candid
       maxFollowers: 100,
       maxFollowing: 100,
       maxPosts: 20,
+      maxMentions: 20,
       trackedAccounts,
     }),
   }, token, 90_000);
@@ -200,7 +218,8 @@ function validOwnedSyncResponse(value: unknown): value is XOwnedSyncResponse {
       && value.profile == null
       && value.followers == null
       && value.following == null
-      && value.posts == null;
+      && value.posts == null
+      && value.mentions == null;
   }
   if (value.source === 'disabled' || !validOwnedUser(value.profile)) return false;
   if (value.source === 'cache' && value.costUsd !== 0) return false;
@@ -211,6 +230,14 @@ function validOwnedSyncResponse(value: unknown): value is XOwnedSyncResponse {
   if (!Array.isArray(value.following) || value.following.length > 500 || !value.following.every(validOwnedUser) || !uniqueUsers(value.following)) return false;
   if (!coherentUsersAcrossLists(value.followers, value.following)) return false;
   if (!Array.isArray(value.posts) || value.posts.length > 50 || !value.posts.every(validOwnedPost) || !uniqueIds(value.posts)) return false;
+  if (value.mentions != null && (!Array.isArray(value.mentions)
+    || value.mentions.length > 20
+    || !value.mentions.every(validOwnedMention)
+    || !uniqueIds(value.mentions)
+    || !uniqueMentionAuthors(value.mentions))) return false;
+  if (value.mentionsUnavailable != null && typeof value.mentionsUnavailable !== 'boolean') return false;
+  if (value.mentionsUnavailableReason != null && (typeof value.mentionsUnavailableReason !== 'string' || value.mentionsUnavailableReason.length > 600)) return false;
+  if (value.mentionsUnavailable === true && Array.isArray(value.mentions) && value.mentions.length > 0) return false;
   if (!validCoverage(value.coverage) || !validRequested(value.requested) || !validPagingState(value.resumePaging) || !validPacing(value.pacing)) return false;
   if (value.followEvidence != null && !validFollowEvidence(value.followEvidence)) return false;
   // A degraded evidence cycle must never carry seen/unseen proof. The server quarantines
@@ -221,6 +248,7 @@ function validOwnedSyncResponse(value: unknown): value is XOwnedSyncResponse {
   const followersCoverage = coverage.followers as Record<string, unknown>;
   const followingCoverage = coverage.following as Record<string, unknown>;
   const postsCoverage = coverage.posts as Record<string, unknown>;
+  const mentions = Array.isArray(value.mentions) ? value.mentions : [];
   const requested = value.requested as Record<string, unknown>;
   if (followersCoverage.fetched !== value.followers.length
     || followingCoverage.fetched !== value.following.length
@@ -228,6 +256,10 @@ function validOwnedSyncResponse(value: unknown): value is XOwnedSyncResponse {
     || (requested.followers as number) < value.followers.length
     || (requested.following as number) < value.following.length
     || (requested.posts as number) < value.posts.length) return false;
+  if (coverage.mentions != null) {
+    if (!isRecord(coverage.mentions) || coverage.mentions.fetched !== mentions.length) return false;
+  }
+  if (typeof requested.mentions === 'number' && requested.mentions < mentions.length) return false;
 
   return true;
 }
@@ -267,7 +299,13 @@ function validCoverage(value: unknown) {
     && validCoverageSlice(value.following, 500)
     && isRecord(value.posts)
     && boundedNonNegativeInteger(value.posts.fetched, 50)
-    && typeof value.posts.complete === 'boolean';
+    && typeof value.posts.complete === 'boolean'
+    && (value.mentions == null || (
+      isRecord(value.mentions)
+      && boundedNonNegativeInteger(value.mentions.fetched, 20)
+      && typeof value.mentions.complete === 'boolean'
+      && (value.mentions.unavailable == null || typeof value.mentions.unavailable === 'boolean')
+    ));
 }
 
 function validCoverageSlice(value: unknown, maxFetched: number) {
@@ -318,7 +356,33 @@ function validRequested(value: unknown) {
   return isRecord(value)
     && boundedNonNegativeInteger(value.followers, 500)
     && boundedNonNegativeInteger(value.following, 500)
-    && boundedNonNegativeInteger(value.posts, 50);
+    && boundedNonNegativeInteger(value.posts, 50)
+    && (value.mentions == null || boundedNonNegativeInteger(value.mentions, 20));
+}
+
+function validOwnedMention(value: unknown): value is XOwnedMention {
+  return isRecord(value)
+    && typeof value.id === 'string'
+    && /^\d{1,30}$/.test(value.id)
+    && typeof value.text === 'string'
+    && value.text.length <= 30_000
+    && typeof value.authorId === 'string'
+    && /^\d{1,30}$/.test(value.authorId)
+    && typeof value.authorUsername === 'string'
+    && /^[A-Za-z0-9_]{1,15}$/.test(value.authorUsername)
+    && typeof value.authorName === 'string'
+    && value.authorName.length <= 300
+    && typeof value.authorDescription === 'string'
+    && value.authorDescription.length <= 5000
+    && typeof value.authorVerified === 'boolean'
+    && nullablePastishIso(value.createdAt)
+    && typeof value.engagementUrl === 'string'
+    && value.engagementUrl === canonicalXStatusUrl(value.authorUsername, value.id);
+}
+
+function uniqueMentionAuthors(mentions: unknown[]) {
+  const authors = mentions.map((item) => isRecord(item) && typeof item.authorId === 'string' ? item.authorId : '');
+  return authors.every(Boolean) && new Set(authors).size === authors.length;
 }
 
 function validPagingState(value: unknown): value is XPagingState {
