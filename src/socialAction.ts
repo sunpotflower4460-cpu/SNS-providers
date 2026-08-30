@@ -86,6 +86,18 @@ const defaultClock: SocialActionClock = {
   id: () => `sa-${crypto.randomUUID()}`,
 };
 
+export function instagramCommentActionId(commentId: string) {
+  return `sa-ig-comment-${commentId}`;
+}
+
+export function xInboundActionId(type: 'mention' | 'reply', tweetId: string) {
+  return `sa-x-${type}-${tweetId}`;
+}
+
+export function isCanonicalInstagramCommentActionId(actionId: string) {
+  return /^sa-ig-comment-\d{1,30}$/.test(actionId);
+}
+
 export function socialActionExternalKey(action: Pick<SocialAction, 'platform' | 'source' | 'externalEventId'>) {
   const eventId = action.externalEventId?.trim() || '';
   return eventId ? `${action.platform}:${action.source}:${eventId}` : '';
@@ -292,7 +304,13 @@ export function upsertSocialActions(
     }
 
     const previous = existing[existingIndex];
-    existing[existingIndex] = mergeExistingAction(previous, normalized, nowIso, nowMs);
+    const merged = mergeExistingAction(previous, normalized, nowIso, nowMs);
+    existing[existingIndex] = merged;
+    if (merged.id !== previous.id) {
+      byId.delete(previous.id);
+      byId.set(merged.id, existingIndex);
+    }
+    continue;
   }
 
   return { ...state, socialActions: capSocialActions(existing) };
@@ -482,6 +500,7 @@ function mergeExistingAction(previous: SocialAction, incoming: SocialAction, now
   const takeContext = incomingIsSameOrNewer || !Number.isFinite(previousObserved);
   const merged: SocialAction = {
     ...previous,
+    id: isCanonicalInstagramCommentActionId(incoming.id) ? incoming.id : previous.id,
     inboundText: takeContext && incoming.inboundText ? incoming.inboundText : previous.inboundText,
     contextText: takeContext ? incoming.contextText : previous.contextText,
     targetUrl: takeContext ? incoming.targetUrl : previous.targetUrl,

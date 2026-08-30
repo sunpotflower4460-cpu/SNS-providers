@@ -104,7 +104,8 @@ CREATE TABLE IF NOT EXISTS state_snapshots (
 CREATE TABLE IF NOT EXISTS x_oauth_sessions (
   state TEXT PRIMARY KEY,
   code_verifier TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  requested_scopes_json TEXT NOT NULL DEFAULT '["tweet.read","users.read","follows.read","offline.access"]'
 );
 
 CREATE TABLE IF NOT EXISTS x_oauth_tokens (
@@ -176,6 +177,31 @@ CREATE TABLE IF NOT EXISTS social_events (
   UNIQUE(user_id, platform, event_type, external_event_id)
 );
 
+CREATE TABLE IF NOT EXISTS social_actions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  platform TEXT NOT NULL CHECK(platform IN ('x','instagram')),
+  candidate_id TEXT NOT NULL,
+  action_type TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('pending','ready','snoozed','executing','completed','dismissed','failed','expired')),
+  execution_mode TEXT NOT NULL CHECK(execution_mode IN ('in_app','handoff')),
+  source TEXT NOT NULL,
+  external_event_id TEXT,
+  conversation_id TEXT,
+  parent_content_id TEXT,
+  target_url TEXT,
+  draft_hash TEXT,
+  observed_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_at TEXT,
+  platform_user_id TEXT,
+  username TEXT,
+  identity_conflict INTEGER NOT NULL DEFAULT 0 CHECK(identity_conflict IN (0,1)),
+  retryable INTEGER NOT NULL DEFAULT 1 CHECK(retryable IN (0,1)),
+  UNIQUE(user_id, platform, source, external_event_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_candidates_user_match ON candidates(user_id, mission_match DESC);
 CREATE INDEX IF NOT EXISTS idx_candidates_stage ON candidates(user_id, stage);
 CREATE INDEX IF NOT EXISTS idx_interactions_candidate ON interactions(candidate_id, occurred_at DESC);
@@ -184,4 +210,7 @@ CREATE INDEX IF NOT EXISTS idx_budget_month ON budget_ledger(user_id, occurred_a
 CREATE INDEX IF NOT EXISTS idx_x_oauth_sessions_created ON x_oauth_sessions(created_at);
 CREATE INDEX IF NOT EXISTS idx_x_follow_cycle_targets_seen ON x_follow_cycle_targets(user_id, cycle, seen);
 CREATE INDEX IF NOT EXISTS idx_social_executions_user ON social_executions(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_social_executions_action ON social_executions(user_id, action_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_events_user ON social_events(user_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_social_actions_user ON social_actions(user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_social_actions_event ON social_actions(user_id, platform, external_event_id);

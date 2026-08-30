@@ -266,7 +266,7 @@ if (social.includes('window.open(candidate.profileUrl') || !social.includes('can
   throw new Error('Social handoff can trust stored URLs instead of canonical official-platform destinations.');
 }
 
-if (!/await clearOwnedXDerivedState\(env, userId\);\s*await persistTokenResponse\(env, userId, token\);/.test(xOAuth)
+if (!/await clearOwnedXDerivedState\(env, userId\);\s*await persistTokenResponse\(env, userId, token, undefined, undefined, requestedScopes\);/.test(xOAuth)
   || !xOAuth.includes("DELETE FROM x_owned_snapshots WHERE user_id = ?")
   || !xOAuth.includes("DELETE FROM x_owned_paging WHERE user_id = ?")
   || !xOAuth.includes("DELETE FROM x_follow_cycle_targets WHERE user_id = ?")) {
@@ -299,12 +299,17 @@ for (const scope of requiredReadScopes) {
 const writeScopes = scopes.filter((scope) => scope.includes('.write') || scope === 'dm.write');
 if (writeScopes.length) throw new Error(`Write-capable X OAuth scope detected: ${writeScopes.join(', ')}`);
 if (!xOAuth.includes("const OPTIONAL_WRITE_SCOPES = ['tweet.write', 'follows.write', 'dm.read', 'dm.write']")
-  || !xOAuth.includes('scope: READ_ONLY_SCOPES.join')
+  || !xOAuth.includes('scope: requested.join')
+  || !xOAuth.includes('requested_scopes_json')
+  || !xOAuth.includes("scopesForOAuthIntent")
+  || !xOAuth.includes("parseOAuthIntent")
   || xOAuth.includes('scope: OPTIONAL_WRITE_SCOPES.join')
-  || !xOAuth.includes('requestedScopes: readonly string[] = READ_ONLY_SCOPES')) {
+  || !xOAuth.includes("intent: XOAuthIntent = 'read'")
+  || !xOAuth.includes("X reply upgrade must not request follow or DM scopes")) {
   throw new Error('X OAuth write capabilities are no longer an explicit, opt-in scope set separate from the default read-only connection.');
 }
-if (!xOAuth.includes('validateGrantedScopes(token.scope, existingGrantedScope)')
+if (!xOAuth.includes('validateGrantedScopes(token.scope, {')
+  || !xOAuth.includes('requestedScopes')
   || !xOAuth.includes('X OAuth response is missing granted scope metadata')
   || !xOAuth.includes('X OAuth returned unexpected scope(s)')
   || !xOAuth.includes('X OAuth response is missing required scope(s)')
@@ -319,7 +324,16 @@ if (!xOAuth.includes('invalidateStoredConnectionAfterRefreshPersistenceFailure(e
   || !xOAuth.includes('Xを接続し直してから再度お試しください')) {
   throw new Error('A successfully rotated X refresh token can leave stale D1 credentials looking reusable after persistence failure.');
 }
-if (!xOAuth.includes('validateGrantedScopes(row.scope)')
+if (!xAccountControls.includes('返信権限を追加')
+  || !xAccountControls.includes("startXOAuth('read')")
+  || !xAccountControls.includes("startXOAuth('reply')")
+  || xAccountControls.includes("startXOAuth('follow')")
+  || !xAccount.includes("intent === 'read'")
+  || !xAccount.includes("intent === 'reply'")
+  || !dbSchema.includes('requested_scopes_json')) {
+  throw new Error('X reply OAuth upgrade is missing session-bound scopes, or default connect is no longer read-only.');
+}
+if (!xOAuth.includes('validateGrantedScopes(row.scope, { allowStoredOptionalWrites: true })')
   || !xOAuth.includes('await decryptToken(env, row.access_token_enc)')
   || !xOAuth.includes('parseStoredExpiry(row.expires_at)')
   || !xOAuth.includes('token.expires_in <= 0')

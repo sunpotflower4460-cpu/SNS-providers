@@ -475,8 +475,12 @@ export function dismissInboxAction(state: AppState, actionId: string): AppState 
   return dismissSocialAction(state, actionId);
 }
 
-export function completeInboxAction(state: AppState, actionId: string): AppState {
-  return refreshRelationshipAdvice(completeSocialAction(state, actionId));
+export function completeInboxAction(
+  state: AppState,
+  actionId: string,
+  options?: { executionId?: string; externalResultId?: string; note?: string },
+): AppState {
+  return refreshRelationshipAdvice(completeSocialAction(state, actionId, options));
 }
 
 export function recordInteraction(state: AppState, candidateId: string, action: Interaction['action']): AppState {

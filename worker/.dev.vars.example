@@ -46,12 +46,25 @@ INSTAGRAM_API_VERSION=
 
 # Social writes stay disabled until an explicit later milestone enables one operation.
 # Unknown write prices must remain unset so billable writes fail closed.
+# Instagram comment replies are not billed in this product's USD ledger (same as owned
+# comment sync: Meta Graph does not charge per reply). Set INSTAGRAM_COMMENT_REPLY_USD=0
+# explicitly after verifying that accounting model; leaving it blank still fail-closes.
+# Do not treat a missing price as $0.
+# X replies additionally require an explicit tweet.write OAuth upgrade and a positive
+# X_REPLY_WRITE_USD. Follow and DM writes stay disabled.
 SOCIAL_WRITE_ENABLED=false
 SOCIAL_WRITE_MODE=
+INSTAGRAM_COMMENT_REPLY_ENABLED=false
+X_REPLY_WRITE_ENABLED=false
 X_REPLY_WRITE_USD=
 X_FOLLOW_WRITE_USD=
 X_DM_WRITE_USD=
 INSTAGRAM_COMMENT_REPLY_USD=
+
+# Optional X mention/reply inbound sync. Separate from owned profile/follow reads.
+# Default connect stays read-only; this still uses tweet.read only. Live X replies stay off.
+X_INBOUND_SYNC_ENABLED=false
+X_INBOUND_READ_USD=
 
 # Personal control token.
 # It protects D1 state sync, budget status, AI ranking/self-analysis, Tavily discovery,

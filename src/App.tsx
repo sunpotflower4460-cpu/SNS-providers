@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { analyzeSelfProfile, apiConfigured, discoverSocialCandidates, enrichXProfiles, fetchBudget, rankCandidates } from './api';
+import { analyzeSelfProfile, apiConfigured, discoverSocialCandidates, enrichXProfiles, fetchBudget, fetchSocialCapabilities, rankCandidates } from './api';
 import BackupControls from './BackupControls';
 import { getSyncToken } from './controlToken';
 import { buildDailyQueue } from './daily';
@@ -12,6 +12,7 @@ import { hasSeenOnboarding, markOnboardingSeen } from './onboarding';
 import { resolveVisibleResult } from './resultResolution';
 import { addCandidateFromReference, applyRankResults, applySelfAnalysis, applyXProfiles, loadState, saveState, setFollowBackStatus, syncBudget, updateCandidateDraft, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
 import { copyDraft, openCandidate, openSocialAction, platformLabel } from './social';
+import { setLiveSocialCapabilities, SOCIAL_CAPABILITIES_CHANGED } from './socialCapabilities';
 import type { AppState, AppStateUpdater, Candidate, Platform, SocialAction } from './types';
 import { useLocalDayKey } from './useLocalDay';
 import { useModalA11y } from './useModalA11y';
@@ -67,6 +68,7 @@ function App() {
   const [persistenceError, setPersistenceError] = useState('');
   const [showOnboarding, setShowOnboarding] = useState(() => !hasSeenOnboarding());
   const [showManual, setShowManual] = useState(false);
+  const [capabilityEpoch, setCapabilityEpoch] = useState(0);
   const [autoRetryTick, setAutoRetryTick] = useState(0);
   const autoReplenishingRef = useRef(false);
   const autoReplenishAttemptKeyRef = useRef('');
@@ -92,6 +94,20 @@ function App() {
     fetchBudget()
       .then((budget) => setState((current) => syncBudget(current, budget.usedUsd, budget.limitUsd)))
       .catch((error) => setApiNote(error instanceof Error ? `予算同期: ${error.message}` : '予算同期に失敗しました'));
+    fetchSocialCapabilities()
+      .then((snapshot) => {
+        setLiveSocialCapabilities(snapshot);
+        setCapabilityEpoch((current) => current + 1);
+      })
+      .catch(() => {
+        setLiveSocialCapabilities(null);
+      });
+  }, []);
+
+  useEffect(() => {
+    const onCaps = () => setCapabilityEpoch((current) => current + 1);
+    window.addEventListener(SOCIAL_CAPABILITIES_CHANGED, onCaps);
+    return () => window.removeEventListener(SOCIAL_CAPABILITIES_CHANGED, onCaps);
   }, []);
 
   useEffect(() => {
@@ -419,7 +435,7 @@ function App() {
       </header>
 
       <main className="page">
-        {tab === 'today' && <Today state={state} onChange={setState} doneToday={doneToday} onOpen={onOpen} onTab={setTab} />}
+        {tab === 'today' && <Today state={state} onChange={setState} doneToday={doneToday} onOpen={onOpen} onTab={setTab} capabilityEpoch={capabilityEpoch} />}
         {tab === 'discover' && <Discover state={state} candidates={active} onOpen={onOpen} onChange={setState} onDiscover={discoverCandidates} onRerank={rerankCandidates} onEnrichX={enrichXCandidates} discovering={discovering} ranking={ranking} enrichingX={enrichingX} apiNote={statusNote} />}
         {tab === 'relations' && <Relations state={state} onOpen={onOpen} onChange={setState} />}
         {tab === 'me' && <Me state={state} onAnalyze={analyzeMe} analyzing={analyzingSelf} />}
@@ -451,12 +467,13 @@ function BudgetPill({ state }: { state: AppState }) {
   </div>;
 }
 
-function Today({ state, onChange, doneToday, onOpen, onTab }: {
+function Today({ state, onChange, doneToday, onOpen, onTab, capabilityEpoch }: {
   state: AppState;
   onChange: AppStateUpdater;
   doneToday: number;
   onOpen: (c: Candidate, action?: SocialAction) => void;
   onTab: (tab: Tab) => void;
+  capabilityEpoch: number;
 }) {
   const hasCandidates = state.candidates.some((candidate) => !candidate.skipped);
   const inbox = hasCandidates ? buildMissionInbox(state) : [];
@@ -488,7 +505,7 @@ function Today({ state, onChange, doneToday, onOpen, onTab }: {
       </div>
     </section>
 
-    <MissionInbox state={state} onChange={onChange} onOpenCandidate={onOpen} onOpenMe={() => onTab('me')} onOpenDiscover={() => onTab('discover')} />
+    <MissionInbox state={state} onChange={onChange} onOpenCandidate={onOpen} onOpenMe={() => onTab('me')} onOpenDiscover={() => onTab('discover')} capabilityEpoch={capabilityEpoch} />
 
     {state.insights[0] && <section className="coach-card">
       <div className="coach-icon">✦</div>

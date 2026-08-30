@@ -1,5 +1,5 @@
 import type { InstagramEngagerSyncResponse } from './instagramAccount';
-import { upsertSocialActions, remapSocialActionCandidateIds } from './socialAction';
+import { upsertSocialActions, remapSocialActionCandidateIds, instagramCommentActionId } from './socialAction';
 import type { AppState, Candidate, SocialAction } from './types';
 
 export function applyInstagramEngagers(state: AppState, result: InstagramEngagerSyncResponse): AppState {
@@ -310,6 +310,7 @@ function ingestInstagramCommentActions(
     if (candidate.skipped && !isFreshCommentAfterDismissal(candidate, engager.lastCommentAt) && !isNewerCommentSignal(candidate, engager.lastCommentAt)) continue;
 
     incoming.push({
+      id: instagramCommentActionId(engager.latestCommentId),
       platform: 'instagram',
       candidateId: candidate.id,
       type: 'comment_reply',

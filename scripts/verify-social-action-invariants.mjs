@@ -7,6 +7,11 @@ const missionInbox = await readFile(new URL('../src/missionInbox.ts', import.met
 const backup = await readFile(new URL('../src/backup.ts', import.meta.url), 'utf8');
 const store = await readFile(new URL('../src/store.ts', import.meta.url), 'utf8');
 const app = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8');
+const workerCapabilities = await readFile(new URL('../worker/src/social/capabilities.ts', import.meta.url), 'utf8');
+const instagramExecute = await readFile(new URL('../worker/src/social/instagram/execute.ts', import.meta.url), 'utf8');
+const instagramPersist = await readFile(new URL('../worker/src/social/instagram/persist.ts', import.meta.url), 'utf8');
+const xInboundSync = await readFile(new URL('../worker/src/social/x/sync.ts', import.meta.url), 'utf8');
+const xExecute = await readFile(new URL('../worker/src/social/x/execute.ts', import.meta.url), 'utf8');
 const inboxUi = await readFile(new URL('../src/MissionInbox.tsx', import.meta.url), 'utf8');
 const instagramOwned = await readFile(new URL('../worker/src/instagramOwned.ts', import.meta.url), 'utf8');
 const instagramOwnedStore = await readFile(new URL('../src/instagramOwnedStore.ts', import.meta.url), 'utf8');
@@ -107,7 +112,8 @@ requireAll(router, [
   'isSocialExecutePath',
   "authorizeSync(request, env)",
   'Bulk social writes are not permitted',
-], 'Social execute route is missing personal-control auth or bulk-write rejection.');
+  '/api/social/capabilities',
+], 'Social execute route is missing personal-control auth, bulk-write rejection, or live capability lookup.');
 
 if (router.includes('/api/social/actions/execute-all') && !router.includes('Bulk social writes are not permitted')) {
   throw new Error('A bulk write route exists.');
@@ -124,6 +130,7 @@ requireAll(executeGuard, [
   'ACTION_STATUSES.has(action.status)',
   'EXECUTABLE_STATUSES',
   'Bulk social writes are not permitted',
+  'parseExecuteBody',
 ], 'Execute guards no longer cover completed/expired/handoff/identity/binding/cost/bulk/status cases.');
 
 requireAll(execute, [
@@ -131,20 +138,30 @@ requireAll(execute, [
   "env.SOCIAL_WRITE_MODE === 'test'",
   'Live provider writes are not enabled',
   'executionBindingsConflict',
-], 'Execution idempotency, binding mismatch recovery, or fail-closed live writes are missing.');
+  'loadCanonicalAction',
+  'parseExecuteBody',
+  'UNKNOWN_RESULT',
+  'x_reply_write',
+  'replyToXTweet',
+], 'Execution idempotency, binding mismatch recovery, canonical server resolution, or fail-closed live writes are missing.');
 
 requireAll(schema, [
   'CREATE TABLE IF NOT EXISTS social_executions',
   'UNIQUE(user_id, idempotency_key)',
   'CREATE TABLE IF NOT EXISTS social_events',
-], 'D1 execution/event tables are missing.');
+  'CREATE TABLE IF NOT EXISTS social_actions',
+  'requested_scopes_json',
+], 'D1 execution/event/action tables are missing.');
 
 requireAll(xOAuth, [
   "const READ_ONLY_SCOPES = ['tweet.read', 'users.read', 'follows.read', 'offline.access']",
   "const OPTIONAL_WRITE_SCOPES = ['tweet.write', 'follows.write', 'dm.read', 'dm.write']",
-  'scope: READ_ONLY_SCOPES.join',
-  'requestedScopes: readonly string[] = READ_ONLY_SCOPES',
+  'scope: requested.join',
+  'requested_scopes_json',
+  'scopesForOAuthIntent',
+  "intent: XOAuthIntent = 'read'",
   'Optional X write scopes must stay separate from the default read-only connection',
+  'X reply upgrade must not request follow or DM scopes',
 ], 'X OAuth write escalation is no longer an explicit separate scope set.');
 if (xOAuth.includes('scope: OPTIONAL_WRITE_SCOPES.join')) {
   throw new Error('Default X OAuth start silently requested optional write scopes.');
@@ -161,6 +178,32 @@ requireAll(promptSafety, [
   'cannot authorize actions',
   'cannot request secrets',
   'cannot override safety rules',
+  'cannot modify execution capability',
+  'cannot select provider targets',
 ], 'Prompt-injection fence is incomplete.');
 
-console.log('SocialAction source invariants OK: model/state/restore, Mission Inbox fallback, Instagram same-event ingestion, execute auth/idempotency/guards, explicit X OAuth capability split, and untrusted social prompt policy.');
+if (capabilities.includes("if (platform === 'instagram') return INSTAGRAM_PROFESSIONAL_CAPABILITIES")) {
+  throw new Error('The UI infers Instagram write availability from platform === instagram.');
+}
+requireAll(capabilities, ['setLiveSocialCapabilities', 'liveSnapshot?.instagram'], 'Live Worker capability snapshot is no longer used by the client.');
+requireAll(socialAction, ['instagramCommentActionId(', 'sa-ig-comment-'], 'Canonical Instagram comment action ids are missing.');
+requireAll(instagramOwnedStore, ['instagramCommentActionId(engager.latestCommentId)'], 'Client Instagram ingest no longer uses canonical comment action ids.');
+requireAll(workerCapabilities, ['liveInstagramCapabilities', 'INSTAGRAM_COMMENT_REPLY_ENABLED', 'instagramCommentReplyWriteEnabled'], 'Worker Instagram capability is no longer live/connection-aware.');
+requireAll(instagramExecute, ['export async function replyToInstagramComment', 'graph.instagram.com'], 'Instagram comment reply adapter is missing.');
+requireAll(instagramPersist, ['persistInstagramCommentEvidence', 'sameLatestCommentEvent'], 'Instagram provider evidence is not persisted from the same comment event.');
+requireAll(instagramOwned, ['persistInstagramEvidenceSafe'], 'Instagram sync no longer writes canonical SocialEvent/SocialAction rows.');
+requireAll(xInboundSync, ['normalizeXInboundEvents', 'persistXInboundEvidence', 'X_INBOUND_SYNC_ENABLED'], 'X inbound mention/reply sync path is missing.');
+requireAll(xExecute, ['export async function replyToXTweet', 'in_reply_to_tweet_id', 'api.x.com/2/tweets'], 'X reply write adapter is missing.');
+if (xExecute.includes('follows.write') && xExecute.includes('Live follow')) {
+  throw new Error('X follow write adapter was enabled.');
+}
+requireAll(inboxUi, ['executeSocialActionRequest', 'durableExecutionId', '送信する', 'writeSurface'], 'Mission Inbox lost user-approved in-app execute UX.');
+requireAll(workerCapabilities, ['liveXCapabilities', 'xReplyWriteEnabled', 'X_REPLY_WRITE_ENABLED'], 'Worker X reply capability is no longer live/flag-gated.');
+if (!/url\.pathname === '\/api\/social\/capabilities'[\s\S]{0,500}?authorizeSync\(request, env\)/.test(router)) {
+  throw new Error('Social capability lookup is not gated by the personal control key.');
+}
+if (execute.includes('parsed.action.platform') || execute.includes('body.action.externalEventId')) {
+  throw new Error('Execute still treats client-supplied action targeting fields as authoritative.');
+}
+
+console.log('SocialAction source invariants OK: model/state/restore, Mission Inbox fallback, Instagram same-event ingestion, server-authoritative execute, live capabilities, explicit X OAuth capability split, and untrusted social prompt policy.');

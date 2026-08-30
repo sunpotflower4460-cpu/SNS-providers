@@ -32,7 +32,7 @@ Mission-driven, mobile-first PWA for growing meaningful social relationships. Th
 - clear Discover empty states for no candidates, all-snoozed candidates and filtered-empty views
 - free-first Tavily discovery for public X/Instagram profile candidates when explicitly configured in free mode
 - official X public-profile enrichment in batches of up to 100 usernames when explicitly enabled
-- read-only X OAuth 2.0 PKCE using only `tweet.read`, `users.read`, `follows.read`, `offline.access`
+- read-only X OAuth 2.0 PKCE using only `tweet.read`, `users.read`, `follows.read`, `offline.access` by default; `[返信権限を追加]` can add `tweet.write` only
 - AES-GCM encrypted X access/refresh token storage in D1 with server-side refresh
 - budget-guarded owned X sync for the user's profile, recent posts, followers and following when explicitly eligible/configured
 - 20-hour D1 cache for owned X sync to avoid needless repeated reads
@@ -43,6 +43,9 @@ Mission-driven, mobile-first PWA for growing meaningful social relationships. Th
 - optional Instagram Professional comment-engager sync using only the official API on the user's own media
 - Instagram commenters can become high-signal `engaged` candidates and retain the related post as the next conversation surface
 - Instagram comment sync preserves latestCommentId, lastCommentText, lastCommentAt, mediaId and latestMediaPermalink for the same latest event, then creates a `comment_reply` SocialAction
+- server-authoritative `POST /api/social/actions/:id/execute` resolves the write target from D1 `social_actions` + `social_events`; client JSON cannot retarget the provider
+- Instagram comment reply can be sent in-app after one explicit user approval when live capability flags and Instagram credentials are configured
+- optional X mention/reply inbound sync creates SocialEvents by tweet id and binds Candidates by immutable author id; in-app X reply stays off until `tweet.write` is granted and `X_REPLY_WRITE_ENABLED` is on; follow/DM stay off
 - 12-hour D1 cache for Instagram engager sync
 - local relationship history and relationship stages
 - configurable follow-back review window with Mission-aware keep/cleanup advice
@@ -54,7 +57,7 @@ Mission-driven, mobile-first PWA for growing meaningful social relationships. Th
 - optional token-gated D1 snapshot sync for moving state between personal devices
 - D1 downloads pass through the same AppState normalization/validation as JSON backups before becoming live application state
 - optimistic D1 concurrency protection prevents a stale/unknown device from silently overwriting a newer remote snapshot
-- personal control key protects D1 state sync, X OAuth management/owned reads, Instagram Professional engager sync, budget reads, AI ranking, Tavily discovery and optional X enrichment
+- personal control key protects D1 state sync, X OAuth management/owned reads, Instagram Professional engager sync, user-approved social execute, social capability lookup, optional X inbound sync, budget reads, AI ranking, Tavily discovery and optional X enrichment
 - configurable monthly API/LLM budget with a $3 default and always-on HARD LIMIT
 - restored state cannot disable HARD LIMIT
 - free-first AI provider routing with local fallback

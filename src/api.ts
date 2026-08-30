@@ -333,6 +333,174 @@ export async function enrichXProfiles(candidates: Candidate[], monthlyLimitUsd: 
   return { ...validated, profiles: contextualProfiles };
 }
 
+export interface SocialCapabilitySnapshot {
+  instagram: {
+    readMentions: boolean;
+    readComments: boolean;
+    readDm: boolean;
+    sendReply: boolean;
+    sendCommentReply: boolean;
+    sendDm: boolean;
+    follow: boolean;
+    unfollow: boolean;
+    like: boolean;
+    configured?: boolean;
+    tokenAvailable?: boolean;
+    accountTypeSupported?: boolean;
+    writeAdapterEnabled?: boolean;
+    productionWriteEnabled?: boolean;
+  };
+  x: {
+    readMentions: boolean;
+    readComments: boolean;
+    readDm: boolean;
+    sendReply: boolean;
+    sendCommentReply: boolean;
+    sendDm: boolean;
+    follow: boolean;
+    unfollow: boolean;
+    like: boolean;
+  };
+}
+
+export async function fetchSocialCapabilities(userId = 'local-user') {
+  const result = await apiFetch<unknown>(`/api/social/capabilities?userId=${encodeURIComponent(userId)}`, undefined, undefined, 30_000);
+  if (!isRecord(result) || !validCapabilityBlock(result.instagram) || !validCapabilityBlock(result.x)) {
+    throw new Error('Social capability API returned an invalid success response');
+  }
+  return result as unknown as SocialCapabilitySnapshot;
+}
+
+export interface SocialExecuteSuccess {
+  ok: true;
+  idempotent?: boolean;
+  executionId: string;
+  status: string;
+  certainty?: 'success' | 'failure' | 'unknown';
+  externalResultId?: string | null;
+  providerStatus?: string;
+}
+
+export interface SocialExecuteFailure {
+  ok: false;
+  code: string;
+  reason: string;
+  executionId?: string;
+  status?: string;
+  certainty?: 'success' | 'failure' | 'unknown';
+  retryable?: boolean;
+}
+
+export async function executeSocialActionRequest(
+  actionId: string,
+  payload: { executionId: string; draft: string },
+  userId = 'local-user',
+): Promise<SocialExecuteSuccess | SocialExecuteFailure> {
+  if (!apiConfigured) throw new Error('API endpoint is not configured');
+  const token = getSyncToken().trim();
+  if (!token) throw new Error('先にSettingsで個人管理キーを保存してください');
+  const response = await fetchWithTimeout(`${apiBaseUrl}/api/social/actions/${encodeURIComponent(actionId)}/execute`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ userId, executionId: payload.executionId, draft: payload.draft }),
+  }, 45_000, 'Social execute');
+  const body = await response.json().catch(() => null) as unknown;
+  if (!isRecord(body)) throw new Error('Execute API returned an empty or invalid JSON response');
+  if (body.ok === true && typeof body.executionId === 'string') {
+    return body as unknown as SocialExecuteSuccess;
+  }
+  const reason = typeof body.reason === 'string' && body.reason
+    ? body.reason
+    : typeof body.error === 'string' && body.error
+      ? body.error
+      : `Execute returned ${response.status}`;
+  return {
+    ok: false,
+    code: typeof body.code === 'string' ? body.code : 'INVALID_ACTION',
+    reason,
+    executionId: typeof body.executionId === 'string' ? body.executionId : payload.executionId,
+    status: typeof body.status === 'string' ? body.status : undefined,
+    certainty: body.certainty === 'success' || body.certainty === 'failure' || body.certainty === 'unknown' ? body.certainty : undefined,
+    retryable: body.retryable === true,
+  };
+}
+
+export interface XInboundEventResult {
+  id: string;
+  actionId: string;
+  type: 'mention' | 'reply';
+  externalEventId: string;
+  externalUserId?: string;
+  username?: string;
+  text?: string;
+  conversationId?: string;
+  permalink?: string;
+  occurredAt: string;
+}
+
+export interface XInboundSyncResponse {
+  enabled: boolean;
+  source: string;
+  costUsd: number;
+  reason?: string;
+  syncedAt?: string;
+  events: XInboundEventResult[];
+}
+
+export async function syncXInbound(userId = 'local-user', monthlyLimitUsd = 3) {
+  const result = await apiFetch<unknown>('/api/x/inbound/sync', {
+    method: 'POST',
+    body: JSON.stringify({ userId, monthlyLimitUsd, maxResults: 20 }),
+  }, undefined, 60_000);
+  if (!isRecord(result)
+    || typeof result.enabled !== 'boolean'
+    || !boundedString(result.source, 1, 80)
+    || !nonNegativeFinite(result.costUsd)
+    || !Array.isArray(result.events)
+    || result.events.length > 80
+    || !result.events.every(validXInboundEvent)
+    || !optionalString(result.reason, 2000)
+    || (result.syncedAt != null && !validIso(result.syncedAt))) {
+    throw new Error('X inbound API returned an invalid success response');
+  }
+  const validated = result as unknown as XInboundSyncResponse;
+  if (!validated.enabled && (validated.events.length !== 0 || (validated.costUsd !== 0 && !validated.reason))) {
+    throw new Error('Disabled X inbound sync returned unexpected event data');
+  }
+  return validated;
+}
+
+function validCapabilityBlock(value: unknown) {
+  return isRecord(value)
+    && typeof value.readMentions === 'boolean'
+    && typeof value.readComments === 'boolean'
+    && typeof value.readDm === 'boolean'
+    && typeof value.sendReply === 'boolean'
+    && typeof value.sendCommentReply === 'boolean'
+    && typeof value.sendDm === 'boolean'
+    && typeof value.follow === 'boolean'
+    && typeof value.unfollow === 'boolean'
+    && typeof value.like === 'boolean';
+}
+
+function validXInboundEvent(value: unknown) {
+  return isRecord(value)
+    && boundedString(value.id, 1, 180)
+    && boundedString(value.actionId, 1, 180)
+    && (value.type === 'mention' || value.type === 'reply')
+    && typeof value.externalEventId === 'string'
+    && /^\d{1,30}$/.test(value.externalEventId)
+    && (value.externalUserId == null || (typeof value.externalUserId === 'string' && /^\d{1,30}$/.test(value.externalUserId)))
+    && optionalString(value.username, 15)
+    && optionalString(value.text, 4000)
+    && optionalString(value.conversationId, 30)
+    && optionalString(value.permalink, 2000)
+    && validIso(value.occurredAt);
+}
+
 function validateRankResponse(value: unknown): RankResponse {
   if (!isRecord(value)
     || !boundedString(value.provider, 1, 80)

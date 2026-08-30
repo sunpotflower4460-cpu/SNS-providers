@@ -23,7 +23,9 @@ Personal-control Bearer token required unless otherwise noted:
 - `DELETE /api/x/oauth/disconnect?userId=local-user`
 - `POST /api/x/owned/sync`
 - `POST /api/instagram/engagers/sync`
-- `POST /api/social/actions/:id/execute` — user-approved single-action execute boundary; live writes stay disabled
+- `POST /api/social/actions/:id/execute` — user-approved single-action execute boundary. The Worker loads the canonical SocialAction and SocialEvent; the client may send only `executionId` and the approved `draft`.
+- `GET /api/social/capabilities` — live Instagram/X write capability snapshot
+- `POST /api/x/inbound/sync` — optional official X mention/reply ingest into SocialEvents / Mission Inbox
 - `GET /api/sync/state?userId=local-user`
 - `PUT /api/sync/state`
 
@@ -76,7 +78,7 @@ X OAuth uses Authorization Code with PKCE. The default connect request is fixed 
 - `follows.read`
 - `offline.access`
 
-`tweet.write`, `follows.write`, `dm.read` and `dm.write` exist as a separate optional write set. They are not requested by the default connection. CI fails if the default authorize URL starts requesting that write set, and also fails if a write-capable scope is added to `READ_ONLY_SCOPES`. Grant validation compares the token to the requested set, so extra write scopes cannot silently appear.
+`tweet.write`, `follows.write`, `dm.read` and `dm.write` exist as a separate optional write set. They are not requested by the default connection. `POST /api/x/oauth/start` with `{ "intent": "reply" }` starts an explicit upgrade that adds only `tweet.write`. The session stores `requested_scopes_json`; the callback validates the grant against that session set. CI fails if the default authorize URL starts requesting the full optional write set, and also fails if a write-capable scope is added to `READ_ONLY_SCOPES`. Grant validation compares the token to the requested set, so extra write scopes cannot silently appear. Refresh may omit unchanged scope metadata and then reuses the already-verified stored grant, including `tweet.write` after an upgrade. Follow/DM live writes stay disabled.
 
 Required Worker configuration:
 
@@ -161,9 +163,15 @@ For a larger production deployment, comment webhooks are preferable to frequent 
 
 ## User-approved social execute
 
-`POST /api/social/actions/:id/execute` is the generic write boundary. It requires the personal control key, a single action, and a durable `executionId`. Bulk paths are rejected. HANDOFF, completed, expired, identity-conflict and mis-bound actions cannot write.
+`POST /api/social/actions/:id/execute` is the generic write boundary. It requires the personal control key, a single action id in the URL, and a durable `executionId`. The JSON body is not allowed to choose the provider target: platform, candidate, external event id, target URL and action type are resolved from D1 `social_actions` + `social_events`. Bulk paths are rejected. HANDOFF, completed, expired, identity-conflict, snoozed, executing and mis-bound actions cannot write.
 
-Live provider writes stay disabled. `SOCIAL_WRITE_MODE=test` can record an idempotent fake success for invariant tests; unknown write prices fail closed. A repeated `executionId` recovers the prior `social_executions` row instead of posting twice.
+Instagram comment reply is the first live provider write. It is enabled only when `SOCIAL_WRITE_ENABLED=true`, `INSTAGRAM_COMMENT_REPLY_ENABLED=true`, Instagram credentials are configured, and `INSTAGRAM_COMMENT_REPLY_USD` is set explicitly. Meta Graph comment replies are not billed in this product's USD ledger, so `INSTAGRAM_COMMENT_REPLY_USD=0` is the documented non-billable value; a missing price still fail-closes.
+
+X tweet reply uses the same execute boundary. It is enabled only when the connected token has `tweet.write`, `SOCIAL_WRITE_ENABLED=true`, `X_REPLY_WRITE_ENABLED=true`, and a **positive** `X_REPLY_WRITE_USD` is configured. A missing or zero X reply price fail-closes. Live follow and DM adapters stay disabled.
+
+`SOCIAL_WRITE_MODE=test` can record an idempotent fake success for invariant tests. A repeated `executionId` recovers the prior `social_executions` row instead of posting twice. If the provider response is lost after the request is sent, the execution stays `unknown` and must be reconciled with the same id.
+
+X inbound mention/reply sync is optional and flag-gated (`X_INBOUND_SYNC_ENABLED`). It persists SocialEvents by tweet id and binds Candidates by immutable `author_id`. Persisted X actions become `in_app` only when live X reply capability is actually on.
 
 ## Free social discovery
 
@@ -235,7 +243,7 @@ Provider prices, Owned Read eligibility, Meta permission requirements and free-t
 The root `npm run security:check` is executed in CI and verifies important source-level boundaries:
 
 - provider/quota-bearing routes stay behind the personal-control gate
-- X OAuth default connect stays read-only; optional write scopes remain a separate unrequested set
+- X OAuth default connect stays read-only; `{ "intent": "reply" }` is the only write upgrade and adds `tweet.write` only
 - SocialAction restore, dedupe, Mission Inbox fallback, execute auth/idempotency and untrusted social prompt policy
 - optimistic D1 state-sync protection remains present
 

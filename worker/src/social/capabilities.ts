@@ -24,6 +24,87 @@ export const INSTAGRAM_PROFESSIONAL_CAPABILITIES: SocialCapabilities = {
   like: false,
 };
 
+export interface SocialCapabilityEnv {
+  INSTAGRAM_ACCESS_TOKEN?: string;
+  INSTAGRAM_USER_ID?: string;
+  INSTAGRAM_API_VERSION?: string;
+  SOCIAL_WRITE_ENABLED?: string;
+  SOCIAL_WRITE_MODE?: string;
+  INSTAGRAM_COMMENT_REPLY_ENABLED?: string;
+  X_REPLY_WRITE_ENABLED?: string;
+}
+
+export interface LiveSocialCapabilitySnapshot {
+  instagram: SocialCapabilities & {
+    configured: boolean;
+    tokenAvailable: boolean;
+    accountTypeSupported: boolean;
+    writeAdapterEnabled: boolean;
+    productionWriteEnabled: boolean;
+  };
+  x: SocialCapabilities;
+}
+
+export function instagramConfigured(env: SocialCapabilityEnv) {
+  const token = env.INSTAGRAM_ACCESS_TOKEN?.trim() || '';
+  const userId = env.INSTAGRAM_USER_ID?.trim() || '';
+  const version = env.INSTAGRAM_API_VERSION?.trim() || '';
+  return Boolean(token && /^\d{4,30}$/.test(userId) && /^v\d+\.\d+$/.test(version));
+}
+
+export function instagramCommentReplyWriteEnabled(env: SocialCapabilityEnv) {
+  if (env.SOCIAL_WRITE_MODE === 'test') return true;
+  return env.SOCIAL_WRITE_ENABLED === 'true' && env.INSTAGRAM_COMMENT_REPLY_ENABLED === 'true';
+}
+
+export function xReplyWriteEnabled(env: SocialCapabilityEnv) {
+  if (env.SOCIAL_WRITE_MODE === 'test') return true;
+  return env.SOCIAL_WRITE_ENABLED === 'true' && env.X_REPLY_WRITE_ENABLED === 'true';
+}
+
+export function liveInstagramCapabilities(env: SocialCapabilityEnv): LiveSocialCapabilitySnapshot['instagram'] {
+  const configured = instagramConfigured(env);
+  const productionWriteEnabled = env.SOCIAL_WRITE_ENABLED === 'true' && env.INSTAGRAM_COMMENT_REPLY_ENABLED === 'true';
+  const writeAdapterEnabled = true;
+  const sendCommentReply = writeAdapterEnabled && instagramCommentReplyWriteEnabled(env) && (env.SOCIAL_WRITE_MODE === 'test' || configured);
+  return {
+    ...DISABLED_SOCIAL_CAPABILITIES,
+    configured,
+    tokenAvailable: Boolean(env.INSTAGRAM_ACCESS_TOKEN?.trim()),
+    accountTypeSupported: configured,
+    writeAdapterEnabled,
+    productionWriteEnabled,
+    readComments: configured,
+    sendCommentReply,
+  };
+}
+
+export function liveSocialCapabilities(env: SocialCapabilityEnv, grantedXScopes: readonly string[] = []): LiveSocialCapabilitySnapshot {
+  return {
+    instagram: liveInstagramCapabilities(env),
+    x: liveXCapabilities(env, grantedXScopes),
+  };
+}
+
+export function liveXCapabilities(env: SocialCapabilityEnv, grantedXScopes: readonly string[] = []): SocialCapabilities {
+  const granted = new Set(grantedXScopes);
+  const replyWriteEnabled = xReplyWriteEnabled(env);
+  const sendReply = replyWriteEnabled && (env.SOCIAL_WRITE_MODE === 'test' || granted.has('tweet.write'));
+  return {
+    readMentions: granted.has('tweet.read'),
+    readComments: false,
+    readDm: granted.has('dm.read'),
+    sendReply,
+    sendCommentReply: false,
+    // Live follow/DM adapters are not enabled. Granted OAuth scopes may still be
+    // shown on the X connection card; Mission Inbox / execute stay HANDOFF.
+    sendDm: false,
+    follow: false,
+    unfollow: false,
+    like: false,
+  };
+}
+
 export function xCapabilitiesFromScopes(scopes: readonly string[]): SocialCapabilities {
   const granted = new Set(scopes);
   return {

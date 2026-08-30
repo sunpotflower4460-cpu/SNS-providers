@@ -72,7 +72,26 @@
   gap: 8px;
   margin-top: 14px;
 }
-.inbox-action-buttons .primary-button { grid-column: 1 / -1; }
+.inbox-confirm {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid rgba(114,223,189,.28);
+  border-radius: 14px;
+  background: rgba(114,223,189,.08);
+}
+.inbox-confirm strong { display: block; font-size: 13px; }
+.inbox-confirm p {
+  margin: 6px 0 0;
+  color: #8f9fb2;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.inbox-execute-status {
+  margin: 10px 0 0;
+  color: #ffc27c;
+  font-size: 12px;
+  line-height: 1.5;
+}
 @media (max-width: 480px) {
   .mission-inbox .inbox-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

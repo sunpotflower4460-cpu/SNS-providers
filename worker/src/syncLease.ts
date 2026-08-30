@@ -19,7 +19,7 @@ const MAX_LEASE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 export async function reserveSyncLease(
   db: D1Database,
   userId: string,
-  operation: 'x_owned_sync' | 'instagram_owned_sync',
+  operation: 'x_owned_sync' | 'instagram_owned_sync' | 'x_inbound_sync',
   ttlMs: number,
 ): Promise<SyncLeaseResult> {
   const normalizedTtl = Math.max(60_000, Math.min(15 * 60_000, Math.round(ttlMs)));

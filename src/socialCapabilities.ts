@@ -48,8 +48,27 @@ export function capabilitiesForPlatform(
   platform: Platform,
   xScopes: readonly string[] = [],
 ): SocialCapabilities {
-  if (platform === 'instagram') return INSTAGRAM_PROFESSIONAL_CAPABILITIES;
+  if (platform === 'instagram') {
+    return liveSnapshot?.instagram || DISABLED_SOCIAL_CAPABILITIES;
+  }
+  if (liveSnapshot?.x) return liveSnapshot.x;
   return xCapabilitiesFromScopes(xScopes);
+}
+
+export const SOCIAL_CAPABILITIES_CHANGED = 'sns-social-capabilities-changed';
+
+let liveSnapshot: {
+  instagram: SocialCapabilities;
+  x: SocialCapabilities;
+} | null = null;
+
+export function setLiveSocialCapabilities(snapshot: { instagram: SocialCapabilities; x: SocialCapabilities } | null) {
+  liveSnapshot = snapshot;
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(SOCIAL_CAPABILITIES_CHANGED));
+}
+
+export function getLiveSocialCapabilities() {
+  return liveSnapshot;
 }
 
 export function executionModeForAction(

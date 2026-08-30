@@ -2,8 +2,10 @@ import api from './index';
 import { discoverSocialProfiles } from './discovery';
 import { syncInstagramEngagers, type InstagramOwnedSyncRequest } from './instagramOwned';
 import { executeSocialAction } from './social/execute';
+import { liveSocialCapabilities } from './social/capabilities';
+import { syncXInboundMentions } from './social/x/sync';
 import { reserveSyncLease, releaseSyncLease } from './syncLease';
-import { completeXOAuth, disconnectXOAuth, startXOAuth, xOAuthStatus } from './xOAuth';
+import { completeXOAuth, disconnectXOAuth, parseOAuthIntent, startXOAuth, xOAuthStatus } from './xOAuth';
 import { syncOwnedXData, type XOwnedSyncRequest } from './xOwned';
 
 interface Env {
@@ -24,10 +26,14 @@ interface Env {
   INSTAGRAM_API_VERSION?: string;
   SOCIAL_WRITE_ENABLED?: string;
   SOCIAL_WRITE_MODE?: string;
+  INSTAGRAM_COMMENT_REPLY_ENABLED?: string;
+  X_REPLY_WRITE_ENABLED?: string;
   X_REPLY_WRITE_USD?: string;
   X_FOLLOW_WRITE_USD?: string;
   X_DM_WRITE_USD?: string;
   INSTAGRAM_COMMENT_REPLY_USD?: string;
+  X_INBOUND_SYNC_ENABLED?: string;
+  X_INBOUND_READ_USD?: string;
   DEFAULT_MONTHLY_BUDGET_USD?: string;
   ALLOWED_ORIGIN?: string;
   [key: string]: unknown;
@@ -61,6 +67,8 @@ const ROUTER_CORS_PATHS = new Set([
   '/api/x/oauth/disconnect',
   '/api/x/owned/sync',
   '/api/instagram/engagers/sync',
+  '/api/social/capabilities',
+  '/api/x/inbound/sync',
 ]);
 
 const PROVIDER_COST_PATHS = new Set([
@@ -99,11 +107,23 @@ export default {
       const authorized = await authorizeSync(request, env);
       if (!authorized.ok) return json({ error: authorized.reason }, authorized.status, request, env);
       try {
-        const authorizeUrl = await startXOAuth(env);
+        let intent: ReturnType<typeof parseOAuthIntent> = 'read';
+        const raw = await request.text();
+        if (raw.trim()) {
+          let body: { intent?: unknown };
+          try {
+            body = JSON.parse(raw) as { intent?: unknown };
+          } catch {
+            return json({ error: 'Invalid OAuth start body' }, 400, request, env);
+          }
+          intent = parseOAuthIntent(body?.intent);
+        }
+        const authorizeUrl = await startXOAuth(env, intent);
         return json({ authorizeUrl }, 200, request, env);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'X OAuth start failed';
-        return json({ error: message }, 503, request, env);
+        const status = message.startsWith('Unsupported X OAuth intent') ? 400 : 503;
+        return json({ error: message }, status, request, env);
       }
     }
 
@@ -185,6 +205,40 @@ export default {
       }
     }
 
+    if (request.method === 'GET' && url.pathname === '/api/social/capabilities') {
+      const authorized = await authorizeSync(request, env);
+      if (!authorized.ok) return json({ error: authorized.reason, code: 'UNAUTHENTICATED' }, authorized.status, request, env);
+      try {
+        const userId = sanitizeUserId(url.searchParams.get('userId') || 'local-user');
+        const status = await xOAuthStatus(env, userId);
+        return json(liveSocialCapabilities(env, status.scopes || []), 200, request, env);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Social capability lookup failed';
+        return json({ error: message }, 400, request, env);
+      }
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/x/inbound/sync') {
+      const authorized = await authorizeSync(request, env);
+      if (!authorized.ok) return json({ error: authorized.reason }, authorized.status, request, env);
+      try {
+        const body = await request.json<{ userId?: string; monthlyLimitUsd?: number; maxResults?: number }>();
+        const userId = sanitizeUserId(body?.userId || 'local-user');
+        const leaseResult = await reserveSyncLease(env.DB, userId, 'x_inbound_sync', 3 * 60 * 1000);
+        if (!leaseResult.ok) {
+          return json({ enabled: false, source: 'disabled', costUsd: 0, events: [], reason: leaseResult.reason }, 200, request, env);
+        }
+        try {
+          return json(await syncXInboundMentions(env, body || {}), 200, request, env);
+        } finally {
+          await releaseSyncLease(env.DB, leaseResult.lease);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'X inbound sync failed';
+        return json({ error: message }, 400, request, env);
+      }
+    }
+
     if (url.pathname === '/api/sync/state') {
       const authorized = await authorizeSync(request, env);
       if (!authorized.ok) return json({ error: authorized.reason }, authorized.status, request, env);
@@ -258,12 +312,10 @@ export default {
       if (!authorized.ok) return json({ error: authorized.reason, code: 'UNAUTHENTICATED' }, authorized.status, request, env);
       try {
         const body = await request.json<unknown>();
-        const actionId = decodeURIComponent(url.pathname.split('/')[4] || '');
-        if (isRecord(body) && isRecord(body.action) && typeof body.action.id === 'string' && body.action.id !== actionId) {
-          return json({ ok: false, code: 'BINDING_MISMATCH', reason: 'URL action id does not match the action body.' }, 400, request, env);
-        }
+        const actionId = decodeURIComponent(url.pathname.split('/')[4] || '').trim();
+        if (!actionId) return json({ ok: false, code: 'INVALID_ACTION', reason: 'actionId is required.' }, 400, request, env);
         const userId = sanitizeUserId((isRecord(body) && typeof body.userId === 'string' ? body.userId : 'local-user') || 'local-user');
-        const result = await executeSocialAction(env, userId, body);
+        const result = await executeSocialAction(env, userId, actionId, body);
         return json(result.body, result.status, request, env);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Social action execute failed';

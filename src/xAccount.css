@@ -65,6 +65,11 @@
   line-height: 1.5;
 }
 .x-pacing-note b { color: #aebdff; font-size: 10px; }
+.x-upgrade-note {
+  border-color: rgba(168,196,255,.16);
+  background: rgba(138,168,255,.05);
+}
+.x-upgrade-note strong { color: #c5d4ff; }
 .x-account-actions { display: grid; gap: 8px; }
 .x-account-warning { color: #78889c !important; font-size: 10px !important; line-height: 1.6; }
 @media (max-width: 380px) {
