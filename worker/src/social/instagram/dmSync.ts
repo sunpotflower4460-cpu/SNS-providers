@@ -31,6 +31,8 @@ export interface InstagramDmThreadMaps {
 
 const MAX_CONVERSATION_PAGES = 8;
 const MAX_MESSAGE_PAGES = 4;
+/** Meta returns message IDs for the thread, but details only for the 20 most recent. */
+export const INSTAGRAM_DM_MESSAGE_DETAIL_WINDOW = 20;
 
 export function instagramConversationListUrl(version: string, igUserId: string, after?: string) {
   const params = new URLSearchParams({
@@ -49,7 +51,7 @@ export function instagramConversationListUrl(version: string, igUserId: string, 
 export function instagramConversationMessagesUrl(version: string, conversationId: string, after?: string) {
   const params = new URLSearchParams({
     fields: 'id,created_time,from,message',
-    limit: '50',
+    limit: String(INSTAGRAM_DM_MESSAGE_DETAIL_WINDOW),
   });
   if (after) params.set('after', after);
   return {
@@ -129,7 +131,19 @@ export async function walkInstagramConversationMessages(input: {
 
   while (pages < maxPages) {
     const messagesReq = instagramConversationMessagesUrl(input.version, input.conversationId, messageAfter || undefined);
-    const detail = await input.getJson(messagesReq.url);
+    let detail: {
+      data?: unknown[];
+      paging?: { cursors?: { after?: string } };
+    };
+    try {
+      detail = await input.getJson(messagesReq.url);
+    } catch (error) {
+      if (isInstagramUnavailableMessageDetail(error) && events.length > 0) {
+        lastCursor = '';
+        break;
+      }
+      throw error;
+    }
     pages += 1;
     const pageEvents = normalizeInstagramDmMessages(
       input.conversationId,
@@ -382,9 +396,21 @@ async function igGet<T>(url: string, token: string): Promise<T> {
     headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
   }, 30_000, 'Instagram DM API');
   const body = await response.json().catch(() => null) as T | { error?: { message?: string } } | null;
-  if (!response.ok) throw new Error(`Instagram Graph API returned ${response.status}`);
+  if (!response.ok) {
+    const detail = body && typeof body === 'object' && 'error' in body && body.error?.message
+      ? `: ${body.error.message.slice(0, 180)}`
+      : '';
+    throw new Error(`Instagram Graph API returned ${response.status}${detail}`);
+  }
   if (!body || typeof body !== 'object') throw new Error('Instagram DM API returned invalid JSON');
   return body as T;
+}
+
+function isInstagramUnavailableMessageDetail(error: unknown) {
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  return message.includes('deleted')
+    || message.includes('does not exist')
+    || message.includes('unsupported get request');
 }
 
 function sanitize(value: string) {

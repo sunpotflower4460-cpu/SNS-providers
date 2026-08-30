@@ -391,6 +391,8 @@ if (commentsUrl.method !== 'GET' || !commentsUrl.path.endsWith('/99/comments') |
 const convoUrl = instagramConversationListUrl('v24.0', '1');
 if (!convoUrl.url.includes('/1/conversations') || !convoUrl.url.includes('participants')) fail('Instagram conversation list dropped participant metadata.');
 const msgUrl = instagramConversationMessagesUrl('v24.0', '888', 'c2');
-if (msgUrl.path !== '/888/messages' || !msgUrl.url.includes('after=c2')) fail('Instagram DM messages did not use the official messages edge.');
+if (msgUrl.path !== '/888/messages' || !msgUrl.url.includes('after=c2') || !msgUrl.url.includes('limit=20')) {
+  fail('Instagram DM messages did not use the official messages edge with the Meta 20-message detail window.');
+}
 
 console.log('Manual-only closure tests OK: cumulative like.read, official follow lookup, exact text fingerprint, DM expansions, webhook DM/comment evidence, user budget ceiling, pagination checkpoints, isolated sync, webhook/poll convergence.');

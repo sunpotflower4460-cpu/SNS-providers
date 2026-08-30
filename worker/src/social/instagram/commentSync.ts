@@ -124,7 +124,7 @@ export async function paginateInstagramMedia(input: {
   }
 
   let catchUpAfter = input.mediaAfter || '';
-  if (!catchUpAfter && !input.webhookConfigured && input.cycleComplete && newestNext) {
+  if (!catchUpAfter && newestNext && !(input.webhookConfigured && input.cycleComplete)) {
     catchUpAfter = newestNext;
   }
 

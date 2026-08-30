@@ -129,7 +129,7 @@ export async function persistExecutionFingerprintOrThrow(
     const message = error instanceof Error ? error.message : 'D1 fingerprint write failed';
     throw new Error(`Execution fingerprint could not be persisted: ${message}`);
   }
-  if ((result.meta.changes || 0) !== 1) {
+  if ((result.meta?.changes || 0) !== 1) {
     throw new Error('Execution fingerprint could not be persisted');
   }
   let stored: { fingerprint_json?: string | null } | null;

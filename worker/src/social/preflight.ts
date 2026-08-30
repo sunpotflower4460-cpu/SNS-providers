@@ -315,8 +315,8 @@ async function sourceStatuses(
         : 'Polling fallback covers bounded paginated catch-up of owned media. For reliable comments on older media, Meta webhook registration is required.')
       : 'Comment polling is blocked until comment permission is verified.', webhookReady ? 'Register comments + live_comments in Meta App Dashboard.' : 'Set webhook secrets and register the callback in Meta App Dashboard for reliable older-media comments. Settings → Instagram → 権限状態を確認.'),
     sourceCheck('instagramDm', 'Instagram DM', igDmReady ? 'READY' : 'BLOCKED', igDmReady
-      ? 'Instagram DM read is ready.'
-      : 'Instagram DM read is blocked.', 'Verify message permission, set INSTAGRAM_DM_READ_ENABLED=true and INSTAGRAM_DM_READ_USD.'),
+      ? 'Instagram DM read is ready. Official API details cover the 20 most recent messages per conversation; older message bodies are a Meta limitation. Incomplete threads from our page budget are never marked processed.'
+      : 'Instagram DM read is blocked.', 'Verify message permission, set INSTAGRAM_DM_READ_ENABLED=true and INSTAGRAM_DM_READ_USD. Register the messaging webhook for realtime DMs.'),
     sourceCheck('syncCheckpointHealth', 'Sync checkpoint query', checkpointQueryFailed ? 'BLOCKED' : 'READY', checkpointQueryFailed
       ? checkpointHealth.find((item) => !item.available)?.reason || 'Checkpoint query failed.'
       : 'Sync checkpoint table is readable for all sources.', checkpointQueryFailed ? 'Run production D1 migrations and confirm D1 is reachable.' : undefined),

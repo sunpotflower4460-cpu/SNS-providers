@@ -53,6 +53,7 @@ const files = [
   ['social/x/persist.js', '../worker/src/social/x/persist.ts'],
   ['social/x/persistDm.js', '../worker/src/social/x/persistDm.ts'],
   ['social/x/sync.js', '../worker/src/social/x/sync.ts'],
+  ['social/x/dmSync.js', '../worker/src/social/x/dmSync.ts'],
   ['social/instagram/inbound.js', '../worker/src/social/instagram/inbound.ts'],
   ['social/instagram/persist.js', '../worker/src/social/instagram/persist.ts'],
   ['social/instagram/persistDm.js', '../worker/src/social/instagram/persistDm.ts'],
@@ -201,7 +202,7 @@ function executionDb(options = {}) {
 }
 
 async function seedIgComment(db) {
-  const now = '2026-08-30T12:00:00.000Z';
+  const now = new Date().toISOString();
   db._probes.set('local-user', {
     user_id: 'local-user',
     checked_at: now,
@@ -515,6 +516,26 @@ function messagePages() {
   if (during.maps.conversationNewestMessageId['888'] && during.maps.conversationNewestMessageId['888'] !== '106') {
     fail('Backlog completion overwrote pending newest with an older page id.');
   }
+}
+
+{
+  const ceiling = await walkInstagramConversationMessages({
+    conversationId: '888',
+    updatedTime: '2026-08-30T12:06:00.000Z',
+    maps: emptyInstagramDmThreadMaps(),
+    igUserId: '1',
+    receivedAt: '2026-08-30T12:10:00.000Z',
+    version: 'v24.0',
+    maxMessagePages: 8,
+    getJson: async (url) => {
+      const after = new URL(url).searchParams.get('after') || '';
+      if (after === 'c2') throw new Error('Instagram Graph API returned 400: This message has been deleted');
+      return messagePages()[after];
+    },
+  });
+  if (!ceiling.threadComplete) fail('Meta 20-message detail ceiling did not complete the readable window.');
+  if (ceiling.continuationCursor) fail('Unavailable older DM details left a resume cursor that cannot succeed.');
+  if (!ceiling.events.some((event) => event.externalEventId === '106')) fail('Readable newest DM was dropped at the provider detail ceiling.');
 }
 
 {

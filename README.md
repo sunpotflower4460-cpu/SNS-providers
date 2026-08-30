@@ -47,6 +47,7 @@ Mission-driven, mobile-first PWA for growing meaningful social relationships. Th
 - Instagram comment reply and Instagram Professional DM reply can be sent in-app after one explicit user approval when live permission probes and write flags are configured
 - X mention/reply inbound sync, X DM inbound sync, X reply/follow/unfollow/like/DM write adapters, and Instagram webhook receiver code are in the Worker; production writes stay flag-off until a human turns them on
 - Instagram comment polling is a bounded catch-up fallback across paginated owned media. Webhook registration is required for reliable comments on older media.
+- Instagram DM polling resumes per-conversation message cursors inside our page budget. Meta only returns details for the 20 most recent messages in a conversation; older bodies are a provider limitation.
 - Instagram follow / arbitrary like stay HANDOFF because the official Professional management API does not provide those writes
 - versioned D1 migrations in `db/migrations/` with `npm run d1:migrate` and a `workflow_dispatch` production migrate Action
 - Settings 本番準備チェック plus `npm run preflight` / `npm run preflight:prod`
