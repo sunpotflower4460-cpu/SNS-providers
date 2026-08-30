@@ -13,7 +13,7 @@ Do not turn production writes on until the matching official permission, price, 
    - Instagram: `INSTAGRAM_ACCESS_TOKEN`, `INSTAGRAM_USER_ID`, `INSTAGRAM_API_VERSION`
    - Optional webhook: `INSTAGRAM_WEBHOOK_VERIFY_TOKEN`, `INSTAGRAM_APP_SECRET`
 3. Run GitHub Action **Migrate production D1** (`workflow_dispatch`) against production.
-4. Cloudflare dashboard Worker `sns-providers` → Settings → Build: set **Build command** to `npm run build` (Workers Builds ignores `wrangler.toml` `[build]`; this GitHub check already fails on `main` until that is set). Keep deploy as `npx wrangler deploy` and non-production as `npx wrangler versions upload`.
+4. Cloudflare dashboard Worker `sns-providers` → Settings → Build: set **Build command** to `npm run build` if the GitHub `Workers Builds` check is still red. The repo also builds `./dist` during Cloudflare install when `WORKERS_CI=1`. Keep deploy as `npx wrangler deploy` and non-production as `npx wrangler versions upload`.
 5. Confirm `/api/preflight` from Settings → 本番準備チェック, or `npm run preflight:prod`.
 
 ## Meta / Instagram

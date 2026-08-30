@@ -57,7 +57,7 @@ Workers Builds **does not honor** `[build]` in `wrangler.toml`. In the Cloudflar
 - Deploy command (production): `npx wrangler deploy`
 - Non-production deploy command: `npx wrangler versions upload`
 
-Until that Build command is set, the Workers Builds check fails on `main` as well as on PRs even when GitHub Actions `web` / `worker` are green. Pull-request checks also stay skipped unless the dashboard has **Builds for non-production branches** enabled (Settings → Build → Branch control).
+Until that Build command is set, `postinstall` still runs `npm run build` when Cloudflare injects `WORKERS_CI=1`, so `./dist` exists before `npx wrangler versions upload`. Pull-request checks also stay skipped unless the dashboard has **Builds for non-production branches** enabled (Settings → Build → Branch control).
 
 The API Worker is a separate project: `worker/wrangler.jsonc` keeps `name` as `social-mission-api`. Prefer GitHub Actions Option A for API deploys that also apply `db/schema.sql`. Do not rename the API Worker to `sns-providers`; that would overwrite the PWA deployment.
 
