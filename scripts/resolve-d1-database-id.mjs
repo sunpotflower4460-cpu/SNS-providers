@@ -2,9 +2,10 @@
 /**
  * Resolve (or create) the Cloudflare D1 database ID for Worker deploys.
  *
- * The repository keeps `REPLACE_WITH_D1_DATABASE_ID` in worker/wrangler.jsonc so
- * account-specific IDs are not committed. GitHub Actions / local deploy should
- * run this script with CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID set.
+ * worker/wrangler.jsonc omits database_id so Cloudflare Workers Builds can
+ * auto-provision / bind by database_name. GitHub Actions / local deploy can
+ * still run this script with CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID to
+ * patch a real UUID into wrangler.jsonc for that job only.
  *
  * Usage:
  *   node scripts/resolve-d1-database-id.mjs [--write]
@@ -28,16 +29,13 @@ const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim();
 if (!token || !accountId) {
   console.error('CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID are required to resolve the D1 database ID.');
   console.error('Create a D1 database once with: cd worker && npx wrangler d1 create social-mission');
-  console.error('Then either set those secrets for CI, or paste the returned database_id into worker/wrangler.jsonc.');
+  console.error('Then either set those secrets for CI, or rely on Wrangler auto-provisioning by database_name.');
   process.exit(1);
 }
 
 const wrangler = readFileSync(wranglerPath, 'utf8');
 const existing = wrangler.match(/"database_id"\s*:\s*"([^"]+)"/)?.[1];
 if (existing && existing !== PLACEHOLDER && /^[0-9a-f-]{36}$/i.test(existing)) {
-  if (write) {
-    // Already real — nothing to patch.
-  }
   process.stdout.write(`${existing}\n`);
   process.exit(0);
 }
@@ -61,18 +59,25 @@ if (!databaseId || !/^[0-9a-f-]{36}$/i.test(databaseId)) {
 }
 
 if (write) {
-  if (!wrangler.includes(PLACEHOLDER) && !wrangler.includes(`"database_id": "${databaseId}"`)) {
-    console.error('worker/wrangler.jsonc does not contain the expected D1 database_id field.');
-    process.exit(1);
-  }
-  const next = wrangler.includes(PLACEHOLDER)
-    ? wrangler.replaceAll(PLACEHOLDER, databaseId)
-    : wrangler.replace(/"database_id"\s*:\s*"[^"]+"/, `"database_id": "${databaseId}"`);
-  writeFileSync(wranglerPath, next);
+  writeFileSync(wranglerPath, upsertDatabaseId(wrangler, databaseId));
   console.error(`Patched worker/wrangler.jsonc with D1 database_id=${databaseId}`);
 }
 
 process.stdout.write(`${databaseId}\n`);
+
+function upsertDatabaseId(source, databaseId) {
+  if (source.includes(PLACEHOLDER)) return source.replaceAll(PLACEHOLDER, databaseId);
+  if (/"database_id"\s*:\s*"[^"]+"/.test(source)) {
+    return source.replace(/"database_id"\s*:\s*"[^"]+"/, `"database_id": "${databaseId}"`);
+  }
+  if (!source.includes(`"database_name": "${DATABASE_NAME}"`)) {
+    throw new Error('worker/wrangler.jsonc does not contain the expected D1 database_name field.');
+  }
+  return source.replace(
+    /("database_name"\s*:\s*"social-mission")/,
+    `$1,\n      "database_id": "${databaseId}"`,
+  );
+}
 
 async function cf(url, init = {}) {
   const response = await fetch(url, {
