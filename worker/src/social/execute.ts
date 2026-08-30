@@ -1,5 +1,5 @@
 import { readActiveMonthUsage, reserveActiveMonthBudget } from '../budgetIntegrity';
-import { instagramCommentReplyWriteEnabled, liveInstagramCapabilities } from './capabilities';
+import { instagramCommentReplyWriteEnabled, liveInstagramCapabilities, liveXCapabilities, xReplyWriteEnabled } from './capabilities';
 import {
   assertExecutable,
   parseExecuteBody,
@@ -8,6 +8,8 @@ import {
   type ExecuteGuardErr,
 } from './executeGuard';
 import { replyToInstagramComment } from './instagram/execute';
+import { replyToXTweet } from './x/execute';
+import { getValidXAccessToken, xOAuthStatus, type XOAuthEnv } from '../xOAuth';
 import {
   claimActionForExecution,
   finalizeActionStatus,
@@ -21,11 +23,11 @@ import type {
   ProviderWriteResult,
 } from './types';
 
-export interface SocialExecuteEnv {
-  DB: D1Database;
+export interface SocialExecuteEnv extends XOAuthEnv {
   SOCIAL_WRITE_ENABLED?: string;
   SOCIAL_WRITE_MODE?: string;
   INSTAGRAM_COMMENT_REPLY_ENABLED?: string;
+  X_REPLY_WRITE_ENABLED?: string;
   INSTAGRAM_ACCESS_TOKEN?: string;
   INSTAGRAM_USER_ID?: string;
   INSTAGRAM_API_VERSION?: string;
@@ -52,6 +54,9 @@ export interface ExecutionRecord {
 
 export interface SocialExecuteAdapters {
   replyToInstagramComment?: typeof replyToInstagramComment;
+  replyToXTweet?: typeof replyToXTweet;
+  xGrantedScopes?: readonly string[];
+  getXAccessToken?: () => Promise<string>;
 }
 
 export async function executeSocialAction(
@@ -92,14 +97,15 @@ export async function executeSocialAction(
   const existing = await loadExecution(env, userId, parsed.executionId);
   if (existing) return recoverExecution(existing, action, operation);
 
+  const xScopes = action.platform === 'x'
+    ? (adapters.xGrantedScopes || (await xOAuthStatus(env, userId)).scopes || [])
+    : [];
   const capabilities = action.platform === 'instagram'
     ? liveInstagramCapabilities(env)
-    : {
-      readMentions: false, readComments: false, readDm: false, sendReply: false,
-      sendCommentReply: false, sendDm: false, follow: false, unfollow: false, like: false,
-    };
+    : liveXCapabilities(env, xScopes);
   const writesEnabled = env.SOCIAL_WRITE_MODE === 'test'
-    || (operation === 'instagram_comment_reply' && instagramCommentReplyWriteEnabled(env));
+    || (operation === 'instagram_comment_reply' && instagramCommentReplyWriteEnabled(env))
+    || (operation === 'x_reply_write' && xReplyWriteEnabled(env));
   const writeCostKnown = env.SOCIAL_WRITE_MODE === 'test' || knownWriteCost(env, operation) != null;
   const executable = assertExecutable(context, capabilities, { writesEnabled, writeCostKnown });
   if (!executable.ok) {
@@ -343,25 +349,36 @@ async function performProviderWrite(
       providerStatus: 'test',
     };
   }
-  if (operation !== 'instagram_comment_reply') {
-    return {
-      certainty: 'failure',
-      retryable: false,
-      errorCode: 'WRITE_DISABLED',
-      reason: 'Live provider writes are not enabled for this operation yet.',
-    };
-  }
   const target = resolveWriteTarget(context.action, context.event);
   if (isExecuteGuardErr(target)) {
     return { certainty: 'failure', retryable: false, errorCode: target.code, reason: target.reason };
   }
-  const reply = adapters.replyToInstagramComment || replyToInstagramComment;
-  return reply({
-    commentId: target.externalEventId,
-    message: context.draft,
-    accessToken: env.INSTAGRAM_ACCESS_TOKEN?.trim() || '',
-    apiVersion: env.INSTAGRAM_API_VERSION?.trim() || '',
-  });
+  if (operation === 'instagram_comment_reply') {
+    const reply = adapters.replyToInstagramComment || replyToInstagramComment;
+    return reply({
+      commentId: target.externalEventId,
+      message: context.draft,
+      accessToken: env.INSTAGRAM_ACCESS_TOKEN?.trim() || '',
+      apiVersion: env.INSTAGRAM_API_VERSION?.trim() || '',
+    });
+  }
+  if (operation === 'x_reply_write') {
+    const reply = adapters.replyToXTweet || replyToXTweet;
+    const accessToken = adapters.getXAccessToken
+      ? await adapters.getXAccessToken()
+      : await getValidXAccessToken(env, context.action.userId);
+    return reply({
+      tweetId: target.externalEventId,
+      message: context.draft,
+      accessToken,
+    });
+  }
+  return {
+    certainty: 'failure',
+    retryable: false,
+    errorCode: 'WRITE_DISABLED',
+    reason: 'Live provider writes are not enabled for this operation yet.',
+  };
 }
 
 async function loadBoundEvent(db: D1Database, userId: string, action: CanonicalSocialAction) {

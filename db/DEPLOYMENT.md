@@ -70,6 +70,12 @@ The highest-risk tables to verify are:
 
 Existing databases need `CREATE TABLE IF NOT EXISTS` for the new `social_executions`, `social_events` and `social_actions` tables. Re-running the full `db/schema.sql` is safe for new tables; it will not retrofit older tables.
 
+Existing `x_oauth_sessions` tables also need an explicit column add before reply-upgrade OAuth can start:
+
+```sql
+ALTER TABLE x_oauth_sessions ADD COLUMN requested_scopes_json TEXT NOT NULL DEFAULT '["tweet.read","users.read","follows.read","offline.access"]';
+```
+
 ## 2b. Instagram comment reply accounting
 
 Meta Graph comment replies are not a USD-priced operation in this product's ledger (the owned comment *read* path is already tracked at `$0`). Production Instagram in-app reply still requires:
@@ -81,6 +87,18 @@ INSTAGRAM_COMMENT_REPLY_USD=0
 ```
 
 Leaving `INSTAGRAM_COMMENT_REPLY_USD` blank fail-closes. Do not interpret a missing price as `$0`. Confirm the Meta app/token still holds the current Instagram comment-manage permission before enabling the write flag.
+
+## 2c. X in-app reply
+
+X replies are a separate production switch from Instagram. They also require the user to complete the explicit `[返信権限を追加]` OAuth upgrade so the stored token includes `tweet.write`. Then:
+
+```text
+SOCIAL_WRITE_ENABLED=true
+X_REPLY_WRITE_ENABLED=true
+X_REPLY_WRITE_USD=<current positive X tweet write rate>
+```
+
+A missing or `0` X reply price fail-closes. Follow and DM writes stay disabled even if those scopes exist. Confirm current X tweet-write pricing before enabling; do not copy Instagram's documented `$0` accounting model onto X.
 
 ## 3. X API pricing must be confirmed at deployment time
 

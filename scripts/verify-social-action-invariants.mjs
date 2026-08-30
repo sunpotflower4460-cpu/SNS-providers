@@ -141,6 +141,8 @@ requireAll(execute, [
   'loadCanonicalAction',
   'parseExecuteBody',
   'UNKNOWN_RESULT',
+  'x_reply_write',
+  'replyToXTweet',
 ], 'Execution idempotency, binding mismatch recovery, canonical server resolution, or fail-closed live writes are missing.');
 
 requireAll(schema, [
@@ -148,14 +150,18 @@ requireAll(schema, [
   'UNIQUE(user_id, idempotency_key)',
   'CREATE TABLE IF NOT EXISTS social_events',
   'CREATE TABLE IF NOT EXISTS social_actions',
+  'requested_scopes_json',
 ], 'D1 execution/event/action tables are missing.');
 
 requireAll(xOAuth, [
   "const READ_ONLY_SCOPES = ['tweet.read', 'users.read', 'follows.read', 'offline.access']",
   "const OPTIONAL_WRITE_SCOPES = ['tweet.write', 'follows.write', 'dm.read', 'dm.write']",
-  'scope: READ_ONLY_SCOPES.join',
-  'requestedScopes: readonly string[] = READ_ONLY_SCOPES',
+  'scope: requested.join',
+  'requested_scopes_json',
+  'scopesForOAuthIntent',
+  "intent: XOAuthIntent = 'read'",
   'Optional X write scopes must stay separate from the default read-only connection',
+  'X reply upgrade must not request follow or DM scopes',
 ], 'X OAuth write escalation is no longer an explicit separate scope set.');
 if (xOAuth.includes('scope: OPTIONAL_WRITE_SCOPES.join')) {
   throw new Error('Default X OAuth start silently requested optional write scopes.');
@@ -187,8 +193,12 @@ requireAll(instagramExecute, ['export async function replyToInstagramComment', '
 requireAll(instagramPersist, ['persistInstagramCommentEvidence', 'sameLatestCommentEvent'], 'Instagram provider evidence is not persisted from the same comment event.');
 requireAll(instagramOwned, ['persistInstagramEvidenceSafe'], 'Instagram sync no longer writes canonical SocialEvent/SocialAction rows.');
 requireAll(xInboundSync, ['normalizeXInboundEvents', 'persistXInboundEvidence', 'X_INBOUND_SYNC_ENABLED'], 'X inbound mention/reply sync path is missing.');
-requireAll(xExecute, ['X reply writes are not enabled in this milestone'], 'X write adapter was enabled before the reply milestone.');
-requireAll(inboxUi, ['executeSocialActionRequest', 'durableExecutionId', '送信する'], 'Mission Inbox lost user-approved in-app execute UX.');
+requireAll(xExecute, ['export async function replyToXTweet', 'in_reply_to_tweet_id', 'api.x.com/2/tweets'], 'X reply write adapter is missing.');
+if (xExecute.includes('follows.write') && xExecute.includes('Live follow')) {
+  throw new Error('X follow write adapter was enabled.');
+}
+requireAll(inboxUi, ['executeSocialActionRequest', 'durableExecutionId', '送信する', 'writeSurface'], 'Mission Inbox lost user-approved in-app execute UX.');
+requireAll(workerCapabilities, ['liveXCapabilities', 'xReplyWriteEnabled', 'X_REPLY_WRITE_ENABLED'], 'Worker X reply capability is no longer live/flag-gated.');
 if (!/url\.pathname === '\/api\/social\/capabilities'[\s\S]{0,500}?authorizeSync\(request, env\)/.test(router)) {
   throw new Error('Social capability lookup is not gated by the personal control key.');
 }

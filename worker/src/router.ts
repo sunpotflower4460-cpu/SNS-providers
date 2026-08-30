@@ -5,7 +5,7 @@ import { executeSocialAction } from './social/execute';
 import { liveSocialCapabilities } from './social/capabilities';
 import { syncXInboundMentions } from './social/x/sync';
 import { reserveSyncLease, releaseSyncLease } from './syncLease';
-import { completeXOAuth, disconnectXOAuth, startXOAuth, xOAuthStatus } from './xOAuth';
+import { completeXOAuth, disconnectXOAuth, parseOAuthIntent, startXOAuth, xOAuthStatus } from './xOAuth';
 import { syncOwnedXData, type XOwnedSyncRequest } from './xOwned';
 
 interface Env {
@@ -27,6 +27,7 @@ interface Env {
   SOCIAL_WRITE_ENABLED?: string;
   SOCIAL_WRITE_MODE?: string;
   INSTAGRAM_COMMENT_REPLY_ENABLED?: string;
+  X_REPLY_WRITE_ENABLED?: string;
   X_REPLY_WRITE_USD?: string;
   X_FOLLOW_WRITE_USD?: string;
   X_DM_WRITE_USD?: string;
@@ -106,11 +107,23 @@ export default {
       const authorized = await authorizeSync(request, env);
       if (!authorized.ok) return json({ error: authorized.reason }, authorized.status, request, env);
       try {
-        const authorizeUrl = await startXOAuth(env);
+        let intent: ReturnType<typeof parseOAuthIntent> = 'read';
+        const raw = await request.text();
+        if (raw.trim()) {
+          let body: { intent?: unknown };
+          try {
+            body = JSON.parse(raw) as { intent?: unknown };
+          } catch {
+            return json({ error: 'Invalid OAuth start body' }, 400, request, env);
+          }
+          intent = parseOAuthIntent(body?.intent);
+        }
+        const authorizeUrl = await startXOAuth(env, intent);
         return json({ authorizeUrl }, 200, request, env);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'X OAuth start failed';
-        return json({ error: message }, 503, request, env);
+        const status = message.startsWith('Unsupported X OAuth intent') ? 400 : 503;
+        return json({ error: message }, status, request, env);
       }
     }
 

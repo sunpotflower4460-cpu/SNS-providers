@@ -158,12 +158,17 @@ function SocialActionCard({
   const age = formatAge(action.observedAt || action.createdAt);
   const liveCaps = capabilitiesForPlatform(action.platform);
   const identityConflict = candidate.tags.includes('identity-conflict');
+  const liveSnapshot = getLiveSocialCapabilities();
   const liveMode = identityConflict
     ? 'handoff'
-    : (getLiveSocialCapabilities()
+    : (liveSnapshot
       ? executionModeForAction(action.type, liveCaps)
       : action.executionMode);
-  const inAppReply = liveMode === 'in_app' && action.type === 'comment_reply' && apiConfigured && Boolean(getLiveSocialCapabilities()?.instagram.sendCommentReply);
+  const inAppReply = liveMode === 'in_app' && apiConfigured && Boolean(liveSnapshot) && (
+    (action.type === 'comment_reply' && Boolean(liveSnapshot?.instagram.sendCommentReply))
+    || ((action.type === 'reply_inbound' || action.type === 'reply_outbound') && Boolean(liveSnapshot?.x.sendReply))
+  );
+  const writeSurface = action.platform === 'x' ? 'X' : 'Instagram';
   const cta = inAppReply
     ? '返信する'
     : `${platformLabel(action.platform)}で開く`;
@@ -185,7 +190,7 @@ function SocialActionCard({
       return;
     }
     setExecuting(true);
-    setNote('Instagramへ送信しています…');
+    setNote(`${writeSurface}へ送信しています…`);
     const executionId = durableExecutionId();
     try {
       const result = await executeSocialActionRequest(action.id, { executionId, draft: draftText.trim() });
@@ -248,7 +253,7 @@ function SocialActionCard({
     <p className="inbox-reason">{action.reason}</p>
     <p className="inbox-execute-note">
       {inAppReply
-        ? '承認した1件だけ、この画面からInstagramへ返信できます。自動送信はありません。'
+        ? `承認した1件だけ、この画面から${writeSurface}へ返信できます。自動送信はありません。`
         : liveMode === 'in_app'
           ? '能力上はアプリ内実行できますが、いまの接続では公式画面で行います。'
           : '公式APIがこの操作を許可しないため、承認した1件だけ公式画面で行います。'}
@@ -262,7 +267,7 @@ function SocialActionCard({
       </div>
     </div>}
     {confirming && inAppReply && <div className="inbox-confirm" role="status">
-      <strong>この内容をInstagramに送信します。よろしいですか？</strong>
+      <strong>この内容を{writeSurface}に送信します。よろしいですか？</strong>
       <p>送信はあなたが承認したこの1件だけです。下書きの最新版を使います。</p>
     </div>}
     {note && <p className="inbox-execute-status">{note}</p>}

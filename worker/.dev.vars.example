@@ -50,9 +50,12 @@ INSTAGRAM_API_VERSION=
 # comment sync: Meta Graph does not charge per reply). Set INSTAGRAM_COMMENT_REPLY_USD=0
 # explicitly after verifying that accounting model; leaving it blank still fail-closes.
 # Do not treat a missing price as $0.
+# X replies additionally require an explicit tweet.write OAuth upgrade and a positive
+# X_REPLY_WRITE_USD. Follow and DM writes stay disabled.
 SOCIAL_WRITE_ENABLED=false
 SOCIAL_WRITE_MODE=
 INSTAGRAM_COMMENT_REPLY_ENABLED=false
+X_REPLY_WRITE_ENABLED=false
 X_REPLY_WRITE_USD=
 X_FOLLOW_WRITE_USD=
 X_DM_WRITE_USD=

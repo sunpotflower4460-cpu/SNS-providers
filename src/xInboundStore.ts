@@ -1,4 +1,5 @@
 import { upsertSocialActions, remapSocialActionCandidateIds, xInboundActionId } from './socialAction';
+import { capabilitiesForPlatform, executionModeForAction } from './socialCapabilities';
 import type { XInboundEventResult, XInboundSyncResponse } from './api';
 import type { AppState, Candidate, SocialAction } from './types';
 
@@ -38,7 +39,7 @@ export function applyXInboundEvents(state: AppState, result: XInboundSyncRespons
       type: 'reply_inbound',
       source: 'x_mention',
       status: 'ready',
-      executionMode: 'handoff',
+      executionMode: executionModeForAction('reply_inbound', capabilitiesForPlatform('x')),
       externalEventId: event.externalEventId,
       conversationId: event.conversationId,
       parentContentId: event.externalEventId,

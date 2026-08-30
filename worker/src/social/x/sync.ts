@@ -1,8 +1,9 @@
 import { readActiveMonthUsage, reserveActiveMonthBudget } from '../../budgetIntegrity';
 import { fetchWithTimeout } from '../../fetchWithTimeout';
-import { getValidXAccessToken, xOAuthConfigured, type XOAuthEnv } from '../../xOAuth';
+import { getValidXAccessToken, xOAuthConfigured, xOAuthStatus, type XOAuthEnv } from '../../xOAuth';
 import { persistXInboundEvidence } from './persist';
 import { normalizeXInboundEvents } from './inbound';
+import { executionModeForAction, liveXCapabilities } from '../capabilities';
 
 export interface XInboundEnv extends XOAuthEnv {
   X_INBOUND_SYNC_ENABLED?: string;
@@ -10,6 +11,9 @@ export interface XInboundEnv extends XOAuthEnv {
   X_OWNED_READ_USD?: string;
   X_OWNED_READ_ELIGIBLE?: string;
   DEFAULT_MONTHLY_BUDGET_USD?: string;
+  SOCIAL_WRITE_ENABLED?: string;
+  SOCIAL_WRITE_MODE?: string;
+  X_REPLY_WRITE_ENABLED?: string;
 }
 
 export interface XInboundSyncRequest {
@@ -77,7 +81,9 @@ export async function syncXInboundMentions(env: XInboundEnv, body: XInboundSyncR
     );
     const receivedAt = new Date().toISOString();
     const events = normalizeXInboundEvents(payload.data || [], payload.includes?.users || [], receivedAt);
-    await persistXInboundEvidence(env.DB, userId, events, 'handoff');
+    const oauthStatus = await xOAuthStatus(env, userId);
+    const executionMode = executionModeForAction('reply_inbound', liveXCapabilities(env, oauthStatus.scopes || []));
+    await persistXInboundEvidence(env.DB, userId, events, executionMode);
     return {
       enabled: true,
       source: 'x',

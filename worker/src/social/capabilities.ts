@@ -31,6 +31,7 @@ export interface SocialCapabilityEnv {
   SOCIAL_WRITE_ENABLED?: string;
   SOCIAL_WRITE_MODE?: string;
   INSTAGRAM_COMMENT_REPLY_ENABLED?: string;
+  X_REPLY_WRITE_ENABLED?: string;
 }
 
 export interface LiveSocialCapabilitySnapshot {
@@ -56,6 +57,11 @@ export function instagramCommentReplyWriteEnabled(env: SocialCapabilityEnv) {
   return env.SOCIAL_WRITE_ENABLED === 'true' && env.INSTAGRAM_COMMENT_REPLY_ENABLED === 'true';
 }
 
+export function xReplyWriteEnabled(env: SocialCapabilityEnv) {
+  if (env.SOCIAL_WRITE_MODE === 'test') return true;
+  return env.SOCIAL_WRITE_ENABLED === 'true' && env.X_REPLY_WRITE_ENABLED === 'true';
+}
+
 export function liveInstagramCapabilities(env: SocialCapabilityEnv): LiveSocialCapabilitySnapshot['instagram'] {
   const configured = instagramConfigured(env);
   const productionWriteEnabled = env.SOCIAL_WRITE_ENABLED === 'true' && env.INSTAGRAM_COMMENT_REPLY_ENABLED === 'true';
@@ -76,7 +82,26 @@ export function liveInstagramCapabilities(env: SocialCapabilityEnv): LiveSocialC
 export function liveSocialCapabilities(env: SocialCapabilityEnv, grantedXScopes: readonly string[] = []): LiveSocialCapabilitySnapshot {
   return {
     instagram: liveInstagramCapabilities(env),
-    x: xCapabilitiesFromScopes(grantedXScopes),
+    x: liveXCapabilities(env, grantedXScopes),
+  };
+}
+
+export function liveXCapabilities(env: SocialCapabilityEnv, grantedXScopes: readonly string[] = []): SocialCapabilities {
+  const granted = new Set(grantedXScopes);
+  const replyWriteEnabled = xReplyWriteEnabled(env);
+  const sendReply = replyWriteEnabled && (env.SOCIAL_WRITE_MODE === 'test' || granted.has('tweet.write'));
+  return {
+    readMentions: granted.has('tweet.read'),
+    readComments: false,
+    readDm: granted.has('dm.read'),
+    sendReply,
+    sendCommentReply: false,
+    // Live follow/DM adapters are not enabled. Granted OAuth scopes may still be
+    // shown on the X connection card; Mission Inbox / execute stay HANDOFF.
+    sendDm: false,
+    follow: false,
+    unfollow: false,
+    like: false,
   };
 }
 

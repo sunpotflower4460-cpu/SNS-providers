@@ -71,6 +71,7 @@ export async function upsertProviderSocialAction(db: D1Database, action: Canonic
        platform_user_id = excluded.platform_user_id,
        username = excluded.username,
        identity_conflict = excluded.identity_conflict,
+       execution_mode = excluded.execution_mode,
        updated_at = excluded.updated_at
      WHERE social_actions.status NOT IN ('completed', 'executing', 'dismissed', 'expired')`
   ).bind(

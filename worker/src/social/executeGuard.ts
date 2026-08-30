@@ -15,6 +15,7 @@ const EXECUTABLE_STATUSES = new Set(['pending', 'ready', 'failed']);
 const TERMINAL = new Set(['completed', 'dismissed', 'expired']);
 const EXECUTION_ID = /^[A-Za-z0-9._-]{8,180}$/;
 const COMMENT_ID = /^\d{1,30}$/;
+const TWEET_ID = /^\d{1,30}$/;
 
 export interface ExecuteGuardOk {
   ok: true;
@@ -104,18 +105,29 @@ export function resolveWriteTarget(
     };
   }
   if (action.type === 'reply_inbound' || action.type === 'reply_outbound') {
-    if (!event || event.platform !== 'x') {
+    if (action.platform !== 'x' || (action.source !== 'x_mention' && action.source !== 'x_inbound')) {
+      return fail('BINDING_MISMATCH', 'X replies require a server-side X inbound action.');
+    }
+    if (!event || event.platform !== 'x' || (event.type !== 'reply' && event.type !== 'mention')) {
       return fail('BINDING_MISMATCH', 'X replies require a verified inbound tweet event.');
     }
+    const tweetId = event.externalEventId;
+    if (!TWEET_ID.test(tweetId)) {
+      return fail('BINDING_MISMATCH', 'Malformed or missing X tweet identity blocks execution.');
+    }
+    if (action.externalEventId && action.externalEventId !== tweetId) {
+      return fail('BINDING_MISMATCH', 'SocialAction is not bound to the verified tweet event.');
+    }
+    const permalink = typeof event.payload.permalink === 'string' ? event.payload.permalink : action.targetUrl;
     return {
       platform: 'x',
       operation: 'x_reply_write',
-      externalEventId: event.externalEventId,
-      parentContentId: action.parentContentId,
+      externalEventId: tweetId,
+      parentContentId: action.parentContentId || tweetId,
       conversationId: event.payload && typeof event.payload.conversationId === 'string'
         ? event.payload.conversationId
         : action.conversationId,
-      targetUrl: action.targetUrl,
+      targetUrl: permalink,
     };
   }
   if (needsExternalTarget(action.type) && !action.externalEventId && !action.targetUrl && !action.parentContentId) {

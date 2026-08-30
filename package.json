@@ -8,7 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "security:check": "node scripts/verify-security-invariants.mjs && node scripts/verify-request-context-invariants.mjs && node scripts/verify-budget-boundary-invariants.mjs && node scripts/verify-action-supply-invariants.mjs && node scripts/verify-cache-ledger-invariants.mjs && node scripts/verify-restore-identity-invariants.mjs && node scripts/verify-social-action-invariants.mjs && node scripts/verify-social-action-runtime.mjs && node scripts/verify-server-execute-runtime.mjs",
+    "security:check": "node scripts/verify-security-invariants.mjs && node scripts/verify-request-context-invariants.mjs && node scripts/verify-budget-boundary-invariants.mjs && node scripts/verify-action-supply-invariants.mjs && node scripts/verify-cache-ledger-invariants.mjs && node scripts/verify-restore-identity-invariants.mjs && node scripts/verify-social-action-invariants.mjs && node scripts/verify-social-action-runtime.mjs && node scripts/verify-server-execute-runtime.mjs && node scripts/verify-x-oauth-runtime.mjs",
     "ux:check": "node scripts/verify-ux-invariants.mjs",
     "pwa:check": "node scripts/verify-pwa-assets.mjs",
     "dist:check": "node scripts/verify-built-pwa.mjs",

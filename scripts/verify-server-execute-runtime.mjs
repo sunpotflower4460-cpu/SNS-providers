@@ -36,13 +36,17 @@ await emit('social/instagram/execute.js', new URL('../worker/src/social/instagra
 await emit('social/instagram/persist.js', new URL('../worker/src/social/instagram/persist.ts', import.meta.url));
 await emit('social/x/inbound.js', new URL('../worker/src/social/x/inbound.ts', import.meta.url));
 await emit('social/x/persist.js', new URL('../worker/src/social/x/persist.ts', import.meta.url));
+await emit('social/x/execute.js', new URL('../worker/src/social/x/execute.ts', import.meta.url));
+await emit('syncLease.js', new URL('../worker/src/syncLease.ts', import.meta.url));
+await emit('xOAuth.js', new URL('../worker/src/xOAuth.ts', import.meta.url));
 
 const { executeSocialAction, executionBindingsConflict, knownWriteCost } = await import(pathToFileURL(`${outDir}/social/execute.js`).href);
 const { assertExecutable, parseExecuteBody } = await import(pathToFileURL(`${outDir}/social/executeGuard.js`).href);
 const { persistInstagramCommentEvidence } = await import(pathToFileURL(`${outDir}/social/instagram/persist.js`).href);
 const { persistXInboundEvidence } = await import(pathToFileURL(`${outDir}/social/x/persist.js`).href);
 const { normalizeXInboundEvents } = await import(pathToFileURL(`${outDir}/social/x/inbound.js`).href);
-const { liveInstagramCapabilities, INSTAGRAM_PROFESSIONAL_CAPABILITIES, DISABLED_SOCIAL_CAPABILITIES } = await import(pathToFileURL(`${outDir}/social/capabilities.js`).href);
+const { liveInstagramCapabilities, liveXCapabilities, INSTAGRAM_PROFESSIONAL_CAPABILITIES, DISABLED_SOCIAL_CAPABILITIES } = await import(pathToFileURL(`${outDir}/social/capabilities.js`).href);
+const { replyToXTweet } = await import(pathToFileURL(`${outDir}/social/x/execute.js`).href);
 const { instagramCommentEvent } = await import(pathToFileURL(`${outDir}/social/instagram/inbound.js`).href);
 
 function fail(message) {
@@ -78,6 +82,9 @@ function createMemoryD1() {
               }
               if (normalized.includes('FROM social_executions WHERE user_id = ? AND idempotency_key = ?')) {
                 return executions.get(execKey(params[0], params[1])) || null;
+              }
+              if (normalized.includes('FROM current_usage') && normalized.includes('timestamp_integrity')) {
+                return { used: 0, invalid_count: 0, unassignable_count: 0 };
               }
               return null;
             },
@@ -117,8 +124,11 @@ function createMemoryD1() {
                 });
                 return { meta: { changes: 1 } };
               }
-              if (normalized.startsWith('INSERT INTO budget_ledger')) {
-                ledger.push({ id: params[0], user_id: params[1], provider: params[2], operation: params[3], cost_usd: params[4] });
+              if (normalized.includes('INSERT INTO budget_ledger')) {
+                const reservation = normalized.startsWith('WITH');
+                ledger.push(reservation
+                  ? { id: params[3], user_id: params[4], provider: params[5], operation: params[6], cost_usd: params[7] }
+                  : { id: params[0], user_id: params[1], provider: params[2], operation: params[3], cost_usd: params[4] });
                 return { meta: { changes: 1 } };
               }
               if (normalized.includes("SET status = 'executing'")) {
@@ -291,6 +301,20 @@ const capsOn = liveInstagramCapabilities({
   INSTAGRAM_COMMENT_REPLY_ENABLED: 'true',
 });
 if (!capsOn.sendCommentReply) fail('Enabled Instagram comment reply capability was not live.');
+
+const xCapsOff = liveXCapabilities({ SOCIAL_WRITE_ENABLED: 'true' }, ['tweet.read', 'users.read', 'follows.read', 'offline.access', 'tweet.write']);
+if (xCapsOff.sendReply) fail('X sendReply was inferred from tweet.write without X_REPLY_WRITE_ENABLED.');
+const xCapsOn = liveXCapabilities({
+  SOCIAL_WRITE_ENABLED: 'true',
+  X_REPLY_WRITE_ENABLED: 'true',
+}, ['tweet.read', 'users.read', 'follows.read', 'offline.access', 'tweet.write']);
+if (!xCapsOn.sendReply) fail('Enabled X reply capability was not live.');
+if (xCapsOn.follow || xCapsOn.sendDm || xCapsOn.unfollow) fail('Live X follow/DM writes were enabled.');
+const xCapsNoScope = liveXCapabilities({
+  SOCIAL_WRITE_ENABLED: 'true',
+  X_REPLY_WRITE_ENABLED: 'true',
+}, ['tweet.read', 'users.read', 'follows.read', 'offline.access']);
+if (xCapsNoScope.sendReply) fail('X sendReply was enabled without tweet.write.');
 
 async function seedInstagram(db) {
   await persistInstagramCommentEvidence(db, 'local-user', [{
@@ -489,10 +513,116 @@ const envBase = () => ({
   if (JSON.parse(first.payload_json).username !== 'bob') fail('X inbound did not bind the author username from the immutable user object.');
 }
 
+const xWriteScopes = ['tweet.read', 'users.read', 'follows.read', 'offline.access', 'tweet.write'];
+
+async function seedX(db, executionMode = 'in_app') {
+  const events = normalizeXInboundEvents([
+    { id: '555', text: 'hello', author_id: '9', created_at: now },
+  ], [{ id: '9', username: 'bob' }], now);
+  await persistXInboundEvidence(db, 'local-user', events, executionMode);
+}
+
+{
+  const badTarget = await replyToXTweet({ tweetId: 'not-a-tweet', message: 'hi', accessToken: 'token' });
+  if (badTarget.errorCode !== 'BINDING_MISMATCH') fail('Malformed X tweet id was executable.');
+  const missingText = await replyToXTweet({ tweetId: '555', message: '   ', accessToken: 'token' });
+  if (missingText.errorCode !== 'INVALID_ACTION') fail('Empty X reply text was executable.');
+}
+
+{
+  const env = envBase();
+  env.SOCIAL_WRITE_MODE = '';
+  env.SOCIAL_WRITE_ENABLED = 'true';
+  env.X_REPLY_WRITE_ENABLED = 'true';
+  env.X_REPLY_WRITE_USD = '0.01';
+  env.DEFAULT_MONTHLY_BUDGET_USD = '3';
+  await seedX(env.DB);
+  const xCalls = [];
+  const fakeX = async (input) => {
+    xCalls.push(input);
+    return { certainty: 'success', externalResultId: '888', providerStatus: '201' };
+  };
+  const result = await executeSocialAction(env, 'local-user', 'sa-x-mention-555', {
+    executionId: 'exec-x-01',
+    draft: 'ありがとう',
+    action: { platform: 'instagram', candidateId: 'evil', externalEventId: '111', type: 'follow' },
+  }, {
+    replyToXTweet: fakeX,
+    xGrantedScopes: xWriteScopes,
+    getXAccessToken: async () => 'x-user-token',
+  });
+  if (result.status !== 200 || result.body.certainty !== 'success') fail(`Live X execute failed: ${JSON.stringify(result.body)}`);
+  if (xCalls.length !== 1 || xCalls[0].tweetId !== '555') fail('X write did not target the canonical tweet id.');
+  if (xCalls[0].message !== 'ありがとう' || xCalls[0].accessToken !== 'x-user-token') fail('X write did not use the user-approved draft or connected token.');
+  const retry = await executeSocialAction(env, 'local-user', 'sa-x-mention-555', {
+    executionId: 'exec-x-01',
+    draft: '別の文',
+  }, {
+    replyToXTweet: fakeX,
+    xGrantedScopes: xWriteScopes,
+    getXAccessToken: async () => 'x-user-token',
+  });
+  if (xCalls.length !== 1) fail('X network retry duplicated the provider write.');
+  if (!retry.body.idempotent) fail('X retry with the same executionId was not recovered.');
+}
+
+{
+  const env = envBase();
+  env.SOCIAL_WRITE_MODE = '';
+  env.SOCIAL_WRITE_ENABLED = 'true';
+  env.X_REPLY_WRITE_USD = '0.01';
+  env.DEFAULT_MONTHLY_BUDGET_USD = '3';
+  await seedX(env.DB);
+  const xCalls = [];
+  const denied = await executeSocialAction(env, 'local-user', 'sa-x-mention-555', { executionId: 'exec-x-cap-01', draft: 'x' }, {
+    replyToXTweet: async (input) => { xCalls.push(input); return { certainty: 'success', externalResultId: 'nope' }; },
+    xGrantedScopes: xWriteScopes,
+    getXAccessToken: async () => 'x-user-token',
+  });
+  if (denied.body.code !== 'CAPABILITY_DENIED' && denied.body.code !== 'WRITE_DISABLED') fail('X write without X_REPLY_WRITE_ENABLED still wrote.');
+  if (xCalls.length !== 0) fail('Disabled X reply reached the provider.');
+}
+
+{
+  const env = envBase();
+  env.SOCIAL_WRITE_MODE = '';
+  env.SOCIAL_WRITE_ENABLED = 'true';
+  env.X_REPLY_WRITE_ENABLED = 'true';
+  env.X_REPLY_WRITE_USD = '0.01';
+  env.DEFAULT_MONTHLY_BUDGET_USD = '3';
+  await seedX(env.DB);
+  const xCalls = [];
+  const noScope = await executeSocialAction(env, 'local-user', 'sa-x-mention-555', { executionId: 'exec-x-scope-01', draft: 'x' }, {
+    replyToXTweet: async (input) => { xCalls.push(input); return { certainty: 'success', externalResultId: 'nope' }; },
+    xGrantedScopes: ['tweet.read', 'users.read', 'follows.read', 'offline.access'],
+    getXAccessToken: async () => 'x-user-token',
+  });
+  if (noScope.body.code !== 'CAPABILITY_DENIED') fail('X write without tweet.write still wrote.');
+  if (xCalls.length !== 0) fail('Read-only X connection reached the reply adapter.');
+}
+
+{
+  const env = envBase();
+  env.SOCIAL_WRITE_MODE = '';
+  env.SOCIAL_WRITE_ENABLED = 'true';
+  env.X_REPLY_WRITE_ENABLED = 'true';
+  delete env.X_REPLY_WRITE_USD;
+  env.DEFAULT_MONTHLY_BUDGET_USD = '3';
+  await seedX(env.DB);
+  const xCalls = [];
+  const unknownCost = await executeSocialAction(env, 'local-user', 'sa-x-mention-555', { executionId: 'exec-x-cost-01', draft: 'x' }, {
+    replyToXTweet: async (input) => { xCalls.push(input); return { certainty: 'success', externalResultId: 'nope' }; },
+    xGrantedScopes: xWriteScopes,
+    getXAccessToken: async () => 'x-user-token',
+  });
+  if (unknownCost.body.code !== 'WRITE_COST_UNKNOWN') fail('Unknown X reply price did not fail closed.');
+  if (xCalls.length !== 0) fail('Unknown X reply price reached the provider.');
+}
+
 if (!executionBindingsConflict(
   { actionId: 'sa-ig-comment-111', platform: 'instagram', operation: 'instagram_comment_reply' },
   canonicalAction({ id: 'sa-other' }),
   'instagram_comment_reply',
 )) fail('Reused executionId across different actions was treated as idempotent success.');
 
-console.log('Server-authoritative execute runtime OK: ignored client targeting, unknown/foreign actionId, idempotent recovery, concurrent single provider op, Instagram exact comment, capability/budget fail-closed, unknown result no blind retry, X inbound tweet-id dedupe.');
+console.log('Server-authoritative execute runtime OK: ignored client targeting, unknown/foreign actionId, idempotent recovery, concurrent single provider op, Instagram exact comment, capability/budget fail-closed, unknown result no blind retry, X inbound tweet-id dedupe, flag-gated X reply targeting canonical tweet id.');

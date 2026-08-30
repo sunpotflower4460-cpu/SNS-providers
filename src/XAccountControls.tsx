@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { apiConfigured, syncXInbound } from './api';
+import { apiConfigured, fetchSocialCapabilities, syncXInbound } from './api';
 import { applyXInboundEvents } from './xInboundStore';
 import { CONTROL_TOKEN_CHANGED_EVENT } from './controlToken';
 import { applyOwnedXSyncWithDiscovery } from './xOwnedStore';
 import { disconnectXOAuth, fetchXOAuthStatus, startXOAuth, syncOwnedXData, type XOAuthStatus } from './xAccount';
+import { setLiveSocialCapabilities } from './socialCapabilities';
 import type { AppState, AppStateUpdater } from './types';
 import './xAccount.css';
 
@@ -51,7 +52,12 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
         .then((next) => {
           if (cancelled || generation !== requestGeneration) return;
           setStatus(next);
-          setNote(next.connected ? '読み取り専用で接続済みです' : next.configured ? '接続できます' : 'X接続のサーバー設定がまだ完了していません');
+          setNote(next.connected
+            ? (next.capabilities?.reply ? '読み取りと返信権限で接続済みです' : '読み取り専用で接続済みです')
+            : next.configured ? '接続できます' : 'X接続のサーバー設定がまだ完了していません');
+          if (next.connected) {
+            fetchSocialCapabilities().then(setLiveSocialCapabilities).catch(() => setLiveSocialCapabilities(null));
+          }
         })
         .catch((error) => {
           if (cancelled || generation !== requestGeneration) return;
@@ -76,9 +82,20 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
     setLoading(true);
     try {
       setNote('Xの接続確認画面を開いています…');
-      await startXOAuth();
+      await startXOAuth('read');
     } catch (error) {
       setNote(error instanceof Error ? error.message : 'Xへの接続を開始できませんでした');
+      setLoading(false);
+    }
+  }
+
+  async function upgradeReply() {
+    setLoading(true);
+    try {
+      setNote('Xの確認画面で返信権限だけを追加します…');
+      await startXOAuth('reply');
+    } catch (error) {
+      setNote(error instanceof Error ? error.message : 'X返信権限の追加を開始できませんでした');
       setLoading(false);
     }
   }
@@ -172,18 +189,23 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
 
     <div className="x-scope-note">
       <strong>既定は読み取り接続です</strong>
-      <span>プロフィール・投稿・フォロー関係の読み取りだけを使います。返信・フォロー・DMの書き込み権限は、明示的に追加しない限り要求しません。勝手にフォロー、解除、投稿、DM送信することはありません。</span>
+      <span>プロフィール・投稿・フォロー関係の読み取りだけを使います。返信権限は [返信権限を追加] を押したときだけ要求します。フォロー・DMの書き込み権限は要求しません。勝手にフォロー、解除、投稿、DM送信することはありません。</span>
     </div>
 
     {status.connected && <div className="x-capability-list" aria-label="Xの接続権限">
-      <span>{status.capabilities?.read !== false ? '✓' : '−'} 読み取り接続</span>
-      <span>{status.capabilities?.reply ? '✓' : '−'} 返信</span>
-      <span>{status.capabilities?.follow ? '✓' : '−'} フォロー</span>
-      <span>{status.capabilities?.dm ? '✓' : '−'} DM</span>
+      <span>{status.capabilities?.read !== false ? '✓ 読み取り 許可' : '− 読み取り 未許可'}</span>
+      <span>{status.capabilities?.reply ? '✓ 返信 許可' : '− 返信 未許可'}</span>
+      <span>{status.capabilities?.follow ? '✓ フォロー 許可' : '− フォロー 未許可'}</span>
+      <span>{status.capabilities?.dm ? '✓ DM 許可' : '− DM 未許可'}</span>
+    </div>}
+
+    {status.connected && !status.capabilities?.reply && <div className="x-scope-note x-upgrade-note">
+      <strong>アプリ内返信には返信権限が必要です</strong>
+      <span>追加で要求するのは tweet.write だけです。フォローやDMの権限は追加しません。Xの確認画面で同意したあと、サーバー側の書き込み設定が有効なときだけ Mission Inbox から1件送信できます。</span>
     </div>}
 
     {status.connected && <div className="x-connection-details">
-      <span><b>状態</b> 読み取り専用で接続済み{status.refreshable ? ' · 接続を自動維持' : ''}</span>
+      <span><b>状態</b> {status.capabilities?.reply ? '読み取りと返信権限で接続済み' : '読み取り専用で接続済み'}{status.refreshable ? ' · 接続を自動維持' : ''}</span>
       {state.xAccount.username && <span><b>接続中</b> @{state.xAccount.username}</span>}
       {state.xAccount.lastSyncedAt && <span><b>最終更新</b> {new Date(state.xAccount.lastSyncedAt).toLocaleString('ja-JP')}</span>}
     </div>}
@@ -207,7 +229,7 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
 
     <details className="candidate-details">
       <summary>読み取り権限の詳細</summary>
-      <div className="candidate-details-body strategy-note"><p>既定の接続は tweet.read / users.read / follows.read / offline.access のみです。tweet.write / follows.write / dm.read / dm.write は別の権限セットで、明示的な再接続なしでは追加しません。</p></div>
+      <div className="candidate-details-body strategy-note"><p>既定の接続は tweet.read / users.read / follows.read / offline.access のみです。返信権限の追加は tweet.write だけを足します。tweet.write / follows.write / dm.read / dm.write を既定接続でまとめて要求することはありません。</p></div>
     </details>
 
     <div className="x-account-actions">
@@ -216,6 +238,7 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
         : <>
           <button className="primary-button" disabled={syncing || loading || inboundSyncing} onClick={sync}>{syncing ? '更新中…' : 'Xの情報を更新'}</button>
           <button className="secondary-button" disabled={syncing || loading || inboundSyncing} onClick={syncInbound}>{inboundSyncing ? '受信を確認中…' : 'メンション/返信を取り込む'}</button>
+          {!status.capabilities?.reply && <button className="secondary-button" disabled={loading || syncing || inboundSyncing} onClick={() => void upgradeReply()}>{loading ? '処理中…' : '返信権限を追加'}</button>}
           <button className="secondary-button" disabled={loading || syncing || inboundSyncing} onClick={disconnect}>{loading ? '処理中…' : 'Xとの接続を解除'}</button>
         </>}
     </div>

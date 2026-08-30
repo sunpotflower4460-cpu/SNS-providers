@@ -105,12 +105,22 @@ export async function fetchXOAuthStatus(userId = 'local-user') {
   return result;
 }
 
-export async function startXOAuth() {
+export async function startXOAuth(intent: 'read' | 'reply' = 'read') {
   if (!apiConfigured) throw new Error('Worker URLが設定されていません');
   const token = requiredControlToken();
-  const result = await request<unknown>('/api/x/oauth/start', { method: 'POST' }, token, 30_000);
+  const result = await request<unknown>('/api/x/oauth/start', {
+    method: 'POST',
+    body: JSON.stringify({ intent }),
+  }, token, 30_000);
   if (!isRecord(result) || typeof result.authorizeUrl !== 'string' || !validAuthorizeUrl(result.authorizeUrl)) {
     throw new Error('X認可URLを取得できませんでした');
+  }
+  const scope = new URL(result.authorizeUrl).searchParams.get('scope') || '';
+  if (intent === 'read' && (/\btweet\.write\b/.test(scope) || /\bfollows\.write\b/.test(scope) || /\bdm\.write\b/.test(scope))) {
+    throw new Error('既定のX接続が書き込み権限を要求しています');
+  }
+  if (intent === 'reply' && (!/\btweet\.write\b/.test(scope) || /\bfollows\.write\b/.test(scope) || /\bdm\.write\b/.test(scope))) {
+    throw new Error('X返信権限の追加要求が不正です');
   }
   window.location.assign(result.authorizeUrl);
 }

@@ -109,7 +109,7 @@ The OAuth scopes requested by the default connect flow are fixed to:
 - `follows.read`
 - `offline.access`
 
-`tweet.write`, `follows.write`, `dm.read` and `dm.write` exist as a separate optional write set. They are not requested by the default connection. Grant validation compares the token to the requested set, so extra write scopes cannot silently appear. The PWA shows which capabilities are connected. Token encryption, refresh handling, identity leasing and derived-state cleanup stay unchanged.
+`tweet.write`, `follows.write`, `dm.read` and `dm.write` exist as a separate optional write set. They are not requested by the default connection. An explicit Settings action `[返信権限を追加]` starts a second OAuth session that adds only `tweet.write`. The callback validates the grant against the session-stored `requested_scopes_json`, not an assumed default. Refresh reuses the already-verified granted set when X omits unchanged scope metadata, and cannot add follow/DM scopes. Grant validation compares the token to the requested set, so extra write scopes cannot silently appear. The PWA shows which capabilities are connected. Token encryption, refresh handling, identity leasing and derived-state cleanup stay unchanged.
 
 A CI security invariant parses the default read-only list and fails when a write-capable X scope is added there, and also fails if the default authorize URL starts requesting the optional write set.
 
@@ -278,7 +278,7 @@ Mission Inbox ranks SocialActions with deterministic application math:
 
 plus bounded inbound boosts. Relationship value and urgency are derived from CRM/timestamps; the model may supply other component scores but not the sort order itself.
 
-Execution mode comes from a **live** capability matrix returned by the Worker, not from `platform === instagram` in the UI. Instagram follow stays HANDOFF. Instagram comment reply becomes in-app only when Instagram is configured, the write adapter is present, and `SOCIAL_WRITE_ENABLED` plus `INSTAGRAM_COMMENT_REPLY_ENABLED` are on. The execute route loads canonical rows from `social_actions` and provider evidence from `social_events`. Client JSON cannot retarget the write.
+Execution mode comes from a **live** capability matrix returned by the Worker, not from `platform === instagram` in the UI. Instagram follow stays HANDOFF. Instagram comment reply becomes in-app only when Instagram is configured, the write adapter is present, and `SOCIAL_WRITE_ENABLED` plus `INSTAGRAM_COMMENT_REPLY_ENABLED` are on. X reply becomes in-app only when the connected token has `tweet.write`, the write adapter is present, and `SOCIAL_WRITE_ENABLED` plus `X_REPLY_WRITE_ENABLED` are on. Live follow/DM stay off even if those OAuth scopes were somehow granted. The execute route loads canonical rows from `social_actions` and provider evidence from `social_events`. Client JSON cannot retarget the write.
 
 That execute route requires personal-control auth, server-side action/candidate/event resolution, HANDOFF rejection, identity-conflict rejection, expiry/completion/snooze/executing rejection, single-action bodies only, execution idempotency via `social_executions`, and fail-closed write costing. There is no bulk write route. A lost provider response is `unknown`, not a guessed success, and retries must reuse the same `executionId`.
 
@@ -289,7 +289,7 @@ That execute route requires personal-control auth, server-side action/candidate/
 - No collection of social-account passwords.
 - No automatic bulk follow/unfollow behavior.
 - No follower-churn recommendation logic.
-- No write scope in the default X OAuth connection used for account analysis; optional write scopes require an explicit reconnect.
+- No write scope in the default X OAuth connection used for account analysis; optional write scopes require an explicit reconnect. The reply upgrade requests `tweet.write` only.
 - Instagram integration reads only explicitly configured, permitted first-party Professional-account surfaces.
 - No social write without an explicit single-action user approval. HANDOFF actions cannot call a provider write. Completed, expired, identity-conflict, or mis-bound actions cannot write.
 - Discovery/ranking may optimize relevance and relationship value, not evasion of platform enforcement.

@@ -104,7 +104,8 @@ CREATE TABLE IF NOT EXISTS state_snapshots (
 CREATE TABLE IF NOT EXISTS x_oauth_sessions (
   state TEXT PRIMARY KEY,
   code_verifier TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  requested_scopes_json TEXT NOT NULL DEFAULT '["tweet.read","users.read","follows.read","offline.access"]'
 );
 
 CREATE TABLE IF NOT EXISTS x_oauth_tokens (
