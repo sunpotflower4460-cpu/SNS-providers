@@ -114,8 +114,9 @@ export function inboxSummary(items: MissionInboxItem[]) {
 export function categoryForAction(type: SocialActionType): InboxCategory {
   if (isInboundType(type)) return 'reply';
   if (type === 'follow') return 'connect';
-  if (type === 'unfollow_review') return 'cleanup';
-  if (type === 'relationship_review' || type === 'reconnect' || type === 'dm_outbound') return 'nurture';
+  if (type === 'like') return 'nurture';
+  if (type === 'unfollow_review' || type === 'relationship_review') return 'cleanup';
+  if (type === 'reconnect' || type === 'dm_outbound') return 'nurture';
   return 'outreach';
 }
 

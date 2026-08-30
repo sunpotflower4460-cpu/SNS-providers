@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { apiConfigured, executeSocialActionRequest } from './api';
+import { apiConfigured, dismissSocialActionRequest, executeSocialActionRequest, prepareSocialActionRequest, reconcileSocialExecutionRequest, snoozeSocialActionRequest } from './api';
 import DailyQueue from './DailyQueue';
 import { buildMissionInbox, inboxSummary, type MissionInboxItem } from './missionInbox';
 import { copyDraft, platformLabel } from './social';
 import { capabilitiesForPlatform, executionModeForAction, getLiveSocialCapabilities } from './socialCapabilities';
 import { completeInboxAction, dismissInboxAction, snoozeInboxAction, updateSocialActionDraft } from './store';
-import { failSocialAction } from './socialAction';
+import { failSocialAction, markUnknownSocialAction, whyThisActionToday } from './socialAction';
 import type { AppState, AppStateUpdater, Candidate, SocialAction } from './types';
 import { useLocalDayKey } from './useLocalDay';
 import './daily.css';
@@ -66,6 +66,7 @@ export default function MissionInbox({ state, onChange, onOpenCandidate, onOpenM
       <span><b>{summary.reply}</b>返す</span>
       <span><b>{summary.outreach}</b>会いに行く</span>
       <span><b>{summary.connect}</b>つながる</span>
+      <span><b>{summary.nurture}</b>育てる</span>
       <span><b>{summary.cleanup}</b>整える</span>
     </div>
     {first.action && first.candidate && (
@@ -74,8 +75,28 @@ export default function MissionInbox({ state, onChange, onOpenCandidate, onOpenM
         action={first.action}
         candidate={first.candidate}
         onOpen={onOpenCandidate}
-        onSnooze={(actionId) => onChange((current) => snoozeInboxAction(current, actionId))}
-        onDismiss={(actionId) => onChange((current) => dismissInboxAction(current, actionId))}
+        onSnooze={async (actionId) => {
+          if (apiConfigured) {
+            try {
+              const result = await snoozeSocialActionRequest(actionId);
+              if (result.ok === false && result.code !== 'NOT_FOUND') return;
+            } catch {
+              return;
+            }
+          }
+          onChange((current) => snoozeInboxAction(current, actionId));
+        }}
+        onDismiss={async (actionId) => {
+          if (apiConfigured) {
+            try {
+              const result = await dismissSocialActionRequest(actionId);
+              if (result.ok === false && result.code !== 'NOT_FOUND') return;
+            } catch {
+              return;
+            }
+          }
+          onChange((current) => dismissInboxAction(current, actionId));
+        }}
         onEditDraft={(actionId, draft) => onChange((current) => updateSocialActionDraft(current, actionId, draft))}
         onChange={onChange}
       />
@@ -139,8 +160,8 @@ function SocialActionCard({
   candidate: Candidate;
   featured?: boolean;
   onOpen: (candidate: Candidate, action?: SocialAction) => void;
-  onSnooze: (actionId: string) => void;
-  onDismiss: (actionId: string) => void;
+  onSnooze: (actionId: string) => void | Promise<void>;
+  onDismiss: (actionId: string) => void | Promise<void>;
   onEditDraft: (actionId: string, draft: string) => void;
   onChange: AppStateUpdater;
 }) {
@@ -164,14 +185,124 @@ function SocialActionCard({
     : (liveSnapshot
       ? executionModeForAction(action.type, liveCaps)
       : action.executionMode);
-  const inAppReply = liveMode === 'in_app' && apiConfigured && Boolean(liveSnapshot) && (
+  const inAppWrite = liveMode === 'in_app' && apiConfigured && Boolean(liveSnapshot) && (
     (action.type === 'comment_reply' && Boolean(liveSnapshot?.instagram.sendCommentReply))
     || ((action.type === 'reply_inbound' || action.type === 'reply_outbound') && Boolean(liveSnapshot?.x.sendReply))
+    || ((action.type === 'dm_reply' || action.type === 'dm_outbound') && (
+      action.platform === 'x' ? Boolean(liveSnapshot?.x.sendDm) : Boolean(liveSnapshot?.instagram.sendDm)
+    ))
+    || (action.type === 'follow' && action.platform === 'x' && Boolean(liveSnapshot?.x.follow))
+    || (action.type === 'like' && action.platform === 'x' && Boolean(liveSnapshot?.x.like))
+    || (action.type === 'unfollow_review' && action.platform === 'x' && Boolean(liveSnapshot?.x.unfollow))
   );
   const writeSurface = action.platform === 'x' ? 'X' : 'Instagram';
-  const cta = inAppReply
-    ? '返信する'
-    : `${platformLabel(action.platform)}で開く`;
+  const unknown = action.unknownExecution || action.status === 'executing';
+  const cta = unknown
+    ? '結果を再確認'
+    : inAppWrite
+      ? (action.type === 'follow' ? 'フォローする'
+        : action.type === 'like' ? 'いいねする'
+          : action.type === 'unfollow_review' ? 'フォローを外す'
+            : action.type === 'dm_reply' || action.type === 'dm_outbound' ? 'DMする'
+              : '返信する')
+      : `${platformLabel(action.platform)}で開く`;
+
+  async function sendApprovedWrite() {
+    if (executing) return;
+    persistDraft();
+    if (showDraft && !draftText.trim()) {
+      setNote('返信文を入力してください');
+      return;
+    }
+    setExecuting(true);
+    setNote(`${writeSurface}へ送信しています…`);
+    let actionId = action.id;
+    try {
+      if (action.platform === 'x' && (action.type === 'follow' || action.type === 'like' || action.type === 'unfollow_review') && !/^sa-x-(?:follow|unfollow|like)-/.test(action.id)) {
+        const prepared = await prepareSocialActionRequest({
+          candidateId: action.candidateId,
+          type: action.type,
+          username: candidate.username,
+          platformUserId: candidate.platformUserId,
+          engagementUrl: candidate.engagementUrl || action.targetUrl,
+        });
+        if (!prepared.ok || !prepared.action?.id) {
+          setNote(prepared.reason || '公式IDを確認できないため、公式アプリで行います。');
+          setExecuting(false);
+          onOpen(candidate, action);
+          return;
+        }
+        if (prepared.executionMode === 'handoff') {
+          setNote(prepared.reason || '公式アプリで行います。');
+          setExecuting(false);
+          onOpen(candidate, action);
+          return;
+        }
+        actionId = prepared.action.id;
+      }
+      const executionId = durableExecutionId();
+      const result = await executeSocialActionRequest(actionId, { executionId, draft: draftText.trim() });
+      if (result.ok && (result.status === 'succeeded' || result.certainty === 'success')) {
+        onChange((current) => completeInboxAction(current, action.id, {
+          executionId,
+          externalResultId: result.externalResultId || undefined,
+          pendingFollow: result.pendingFollow === true || result.metadata?.pendingFollow === true,
+        }));
+        setConfirming(false);
+        setNote('');
+        return;
+      }
+      if ((!result.ok && (result.code === 'UNKNOWN_RESULT' || result.certainty === 'unknown' || result.status === 'unknown' || result.status === 'executing'))
+        || (result.ok && result.certainty === 'unknown')) {
+        onChange((current) => markUnknownSocialAction(current, action.id, executionId));
+        setNote('送信結果を確認しています');
+        return;
+      }
+      if (result.ok && result.idempotent && result.status === 'succeeded') {
+        onChange((current) => completeInboxAction(current, action.id, {
+          executionId,
+          externalResultId: result.externalResultId || undefined,
+          pendingFollow: result.pendingFollow === true || result.metadata?.pendingFollow === true,
+        }));
+        setConfirming(false);
+        setNote('');
+        return;
+      }
+      delete executionIds.current[action.id];
+      const reason = 'ok' in result && result.ok === false ? result.reason : '送信できませんでした';
+      onChange((current) => failSocialAction(current, action.id, reason));
+      setNote(reason);
+    } catch {
+      setNote('送信結果を確認しています');
+      onChange((current) => markUnknownSocialAction(current, action.id, durableExecutionId()));
+    } finally {
+      setExecuting(false);
+    }
+  }
+
+  async function reconcileUnknown() {
+    const executionId = action.executionId || durableExecutionId();
+    setExecuting(true);
+    setNote('送信結果を確認しています');
+    try {
+      const result = await reconcileSocialExecutionRequest(executionId);
+      if (result.status === 'succeeded' || result.certainty === 'success') {
+        onChange((current) => completeInboxAction(current, action.id, { executionId }));
+        setNote('');
+        return;
+      }
+      if (result.status === 'failed' || result.certainty === 'failure') {
+        onChange((current) => failSocialAction(current, action.id, String(result.reason || '送信できませんでした')));
+        setNote(String(result.reason || '送信できませんでした'));
+        return;
+      }
+      setNote('まだ結果を確定できません。新しい送信はしません。');
+    } catch (error) {
+      setNote(error instanceof Error ? error.message : '結果を確認できませんでした');
+    } finally {
+      setExecuting(false);
+    }
+  }
 
   function persistDraft() {
     onEditDraft(action.id, draftText);
@@ -182,53 +313,12 @@ function SocialActionCard({
     return executionIds.current[action.id];
   }
 
-  async function sendApprovedReply() {
-    if (executing) return;
-    persistDraft();
-    if (!draftText.trim()) {
-      setNote('返信文を入力してください');
+  function onPrimary() {
+    if (unknown) {
+      void reconcileUnknown();
       return;
     }
-    setExecuting(true);
-    setNote(`${writeSurface}へ送信しています…`);
-    const executionId = durableExecutionId();
-    try {
-      const result = await executeSocialActionRequest(action.id, { executionId, draft: draftText.trim() });
-      if (result.ok && (result.status === 'succeeded' || result.certainty === 'success')) {
-        onChange((current) => completeInboxAction(current, action.id, {
-          executionId,
-          externalResultId: result.externalResultId || undefined,
-        }));
-        setConfirming(false);
-        setNote('');
-        return;
-      }
-      if (!result.ok && (result.code === 'UNKNOWN_RESULT' || result.certainty === 'unknown' || result.status === 'unknown' || result.status === 'executing')) {
-        setNote('送信結果を確認できません。同じ実行IDで再確認します。新しい送信はしません。');
-        return;
-      }
-      if (result.ok && result.idempotent && result.status === 'succeeded') {
-        onChange((current) => completeInboxAction(current, action.id, {
-          executionId,
-          externalResultId: result.externalResultId || undefined,
-        }));
-        setConfirming(false);
-        setNote('');
-        return;
-      }
-      delete executionIds.current[action.id];
-      const reason = 'ok' in result && result.ok === false ? result.reason : '送信できませんでした';
-      onChange((current) => failSocialAction(current, action.id, reason));
-      setNote(reason);
-    } catch (error) {
-      setNote('通信結果が不明です。同じ実行IDで再試行します。');
-    } finally {
-      setExecuting(false);
-    }
-  }
-
-  function onPrimary() {
-    if (inAppReply) {
+    if (inAppWrite) {
       persistDraft();
       setConfirming(true);
       setNote('');
@@ -245,20 +335,23 @@ function SocialActionCard({
         <strong>{candidate.displayName || `@${candidate.username}`}</strong>
         <span>@{candidate.username}</span>
       </div>
-      <em className={inAppReply ? 'exec-mode in-app' : 'exec-mode handoff'}>
-        {inAppReply ? 'IN_APP' : 'HANDOFF'}
+      <em className={inAppWrite ? 'exec-mode in-app' : 'exec-mode handoff'}>
+        {inAppWrite ? 'IN_APP' : 'HANDOFF'}
       </em>
     </div>
     {action.inboundText && <p className="inbox-inbound">「{action.inboundText}」</p>}
+    <p className="inbox-why"><span>今日やる理由</span>{whyThisActionToday(action)}</p>
     <p className="inbox-reason">{action.reason}</p>
     <p className="inbox-execute-note">
-      {inAppReply
-        ? `承認した1件だけ、この画面から${writeSurface}へ返信できます。自動送信はありません。`
-        : liveMode === 'in_app'
-          ? '能力上はアプリ内実行できますが、いまの接続では公式画面で行います。'
-          : '公式APIがこの操作を許可しないため、承認した1件だけ公式画面で行います。'}
+      {unknown
+        ? '送信結果を確認しています。同じ実行の結果だけを再確認します。もう一度送る操作はありません。'
+        : inAppWrite
+          ? `承認した1件だけ、この画面から${writeSurface}へ実行できます。自動送信はありません。`
+          : liveMode === 'in_app'
+            ? '能力上はアプリ内実行できますが、いまの接続では公式画面で行います。'
+            : '公式APIがこの操作を許可しないため、承認した1件だけ公式画面で行います。'}
     </p>
-    {showDraft && (action.draft !== undefined || action.aiDraft !== undefined || inAppReply) && <div className="draft-box">
+    {showDraft && (action.draft !== undefined || action.aiDraft !== undefined || inAppWrite) && <div className="draft-box">
       <span>返信案 · 編集できます</span>
       <textarea value={draftText} onChange={(event) => setDraftText(event.target.value)} onBlur={() => onEditDraft(action.id, draftText)} rows={3} />
       <div className="draft-box-actions">
@@ -266,17 +359,21 @@ function SocialActionCard({
         <button disabled={!draftText} onClick={() => copyDraft(draftText)}>コピー</button>
       </div>
     </div>}
-    {confirming && inAppReply && <div className="inbox-confirm" role="status">
-      <strong>この内容を{writeSurface}に送信します。よろしいですか？</strong>
-      <p>送信はあなたが承認したこの1件だけです。下書きの最新版を使います。</p>
+    {confirming && inAppWrite && <div className="inbox-confirm" role="status">
+      <strong>{action.type === 'unfollow_review' ? 'このアカウントのフォローを外します。よろしいですか？' : `この内容を${writeSurface}に送信します。よろしいですか？`}</strong>
+      <p>{action.type === 'unfollow_review' ? 'フォロー解除は1件ずつ、あなたが承認したときだけです。一括解除はありません。' : '送信はあなたが承認したこの1件だけです。'}</p>
     </div>}
     {note && <p className="inbox-execute-status">{note}</p>}
     <div className="inbox-action-buttons">
       <button className="secondary-button" disabled={executing} onClick={() => onSnooze(action.id)}>明日へ</button>
       <button className="ghost-button" disabled={executing} onClick={() => onDismiss(action.id)}>今回は返さない</button>
-      {confirming && inAppReply ? <>
+      {unknown ? (
+        <button className="primary-button" disabled={executing} onClick={() => void reconcileUnknown()}>
+          {executing ? '確認中…' : '結果を再確認'}
+        </button>
+      ) : confirming && inAppWrite ? <>
         <button className="ghost-button" disabled={executing} onClick={() => { if (!executing) setConfirming(false); }}>キャンセル</button>
-        <button className="primary-button" disabled={executing || !draftText.trim()} onClick={() => void sendApprovedReply()}>
+        <button className="primary-button" disabled={executing || (showDraft && !draftText.trim())} onClick={() => void sendApprovedWrite()}>
           {executing ? '送信中…' : '送信する'}
         </button>
       </> : <button className="primary-button" disabled={executing} onClick={onPrimary}>{cta}</button>}

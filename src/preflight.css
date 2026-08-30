@@ -1,0 +1,33 @@
+.preflight-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+.preflight-item {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.03);
+}
+.preflight-item strong {
+  font-size: 12px;
+}
+.preflight-item span {
+  color: #92a2b5;
+  font-size: 11px;
+  line-height: 1.55;
+}
+.preflight-item.ok {
+  border-color: rgba(121,231,197,.22);
+}
+.preflight-item.ok strong { color: #79e7c5; }
+.preflight-item.warn {
+  border-color: rgba(255,194,124,.28);
+}
+.preflight-item.warn strong { color: #ffc27c; }
+.preflight-item.block {
+  border-color: rgba(255,138,138,.32);
+}
+.preflight-item.block strong { color: #ff9a9a; }

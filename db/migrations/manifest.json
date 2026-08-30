@@ -1,0 +1,8 @@
+{
+  "expectedVersion": 3,
+  "migrations": [
+    { "version": 1, "file": "0001_baseline.sql" },
+    { "version": 2, "file": "0002_social_action_lifecycle.sql" },
+    { "version": 3, "file": "0003_instagram_permission_probe.sql" }
+  ]
+}

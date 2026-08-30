@@ -2,6 +2,19 @@
 
 This file is the production boundary checklist for the optional Cloudflare Worker + D1 deployment.
 
+## Versioned D1 migrations
+
+Do **not** treat re-running `CREATE TABLE IF NOT EXISTS` as a migration. Production uses ordered files in `db/migrations/` plus a `schema_migrations` ledger.
+
+```bash
+npm run d1:migrate:check   # no credentials
+npm run d1:migrate         # applies when CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID exist
+```
+
+GitHub Action **Migrate production D1** (`workflow_dispatch`) runs the same apply path. Secret-less CI still validates file order and checksums.
+
+`db/schema.sql` remains the desired full schema for a fresh database. Existing databases must go through the versioned files so new columns such as `social_actions.snoozed_until` and `x_oauth_sessions.requested_scopes_json` are actually added.
+
 ## 1. Prefer a fresh D1 database for the first production deployment
 
 `db/schema.sql` is authoritative for a fresh database. `worker/wrangler.jsonc` binds D1 by `database_name` and omits `database_id`. GitHub Actions can patch a real UUID into `wrangler.jsonc` for that job only via `scripts/resolve-d1-database-id.mjs --write`. Do not deploy paid/provider routes until a real D1 database exists and the Worker is reachable.

@@ -58,8 +58,31 @@ if (scopesForOAuthIntent('read').some((scope) => scope.includes('.write') || sco
   fail('Default OAuth intent requested a write-capable scope.');
 }
 if (scopesForOAuthIntent('reply').join(' ') !== REPLY.join(' ')) fail('Reply upgrade did not request tweet.write plus the read set.');
-if (scopesForOAuthIntent('reply').includes('follows.write') || scopesForOAuthIntent('reply').includes('dm.write')) {
-  fail('Reply upgrade requested follow or DM scopes.');
+if (scopesForOAuthIntent('reply').includes('follows.write') || scopesForOAuthIntent('reply').includes('dm.write') || scopesForOAuthIntent('reply').includes('like.write')) {
+  fail('Reply upgrade requested follow, like, or DM scopes.');
+}
+
+if (parseOAuthIntent('relationship') !== 'relationship' || parseOAuthIntent('engagement') !== 'engagement' || parseOAuthIntent('dm') !== 'dm') {
+  fail('Explicit relationship/engagement/DM OAuth intents were rejected.');
+}
+const RELATIONSHIP = [...READ, 'follows.write'];
+const ENGAGEMENT = [...READ, 'like.write'];
+const DM = [...READ, 'dm.read', 'dm.write'];
+if (scopesForOAuthIntent('relationship').join(' ') !== RELATIONSHIP.join(' ')) fail('Relationship upgrade did not request follows.write only.');
+if (scopesForOAuthIntent('engagement').join(' ') !== ENGAGEMENT.join(' ')) fail('Engagement upgrade did not request like.write only.');
+if (scopesForOAuthIntent('dm').join(' ') !== DM.join(' ')) fail('DM upgrade did not request dm.read+dm.write only.');
+if (scopesForOAuthIntent('relationship').includes('tweet.write') || scopesForOAuthIntent('relationship').includes('like.write')) {
+  fail('Relationship upgrade requested extra write scopes.');
+}
+
+try {
+  parseRequestedScopesJson(JSON.stringify([...READ, 'tweet.write', 'follows.write']));
+  fail('Session JSON accepted a mixed reply+follow upgrade set.');
+} catch (error) {
+  if (!(error instanceof Error) || !error.message.includes('unsupported scope set')) fail(error);
+}
+if (parseRequestedScopesJson(JSON.stringify(RELATIONSHIP)).join(' ') !== RELATIONSHIP.join(' ')) {
+  fail('Session JSON rejected the relationship upgrade set.');
 }
 
 try {
@@ -121,8 +144,8 @@ if (parseRequestedScopesJson(serializeRequestedScopesJson(REPLY)).join(' ') !== 
   fail('Session requested-scope JSON did not round-trip the reply upgrade set.');
 }
 try {
-  parseRequestedScopesJson(JSON.stringify([...READ, 'follows.write']));
-  fail('Session JSON accepted a follow-upgrade scope set.');
+  parseRequestedScopesJson(JSON.stringify([...READ, 'tweet.write', 'follows.write']));
+  fail('Session JSON accepted a mixed reply+follow upgrade set.');
 } catch (error) {
   if (!(error instanceof Error) || !error.message.includes('unsupported scope set')) fail(error);
 }
@@ -218,4 +241,22 @@ function oauthEnv() {
   if ((defaulted.searchParams.get('scope') || '') !== READ.join(' ')) fail('startXOAuth() without intent did not stay read-only.');
 }
 
-console.log('X OAuth runtime OK: default connect stays read-only, reply upgrade requests tweet.write only, session JSON binds requested scopes, callback/refresh grant validation fail-closes extras, and refresh can preserve tweet.write.');
+{
+  const env = oauthEnv();
+  const url = new URL(await startXOAuth(env, 'relationship'));
+  const scope = url.searchParams.get('scope') || '';
+  if (!scope.includes('follows.write') || scope.includes('tweet.write') || scope.includes('like.write') || scope.includes('dm.write')) {
+    fail(`Relationship authorize URL requested ${scope}`);
+  }
+}
+
+{
+  const env = oauthEnv();
+  const url = new URL(await startXOAuth(env, 'engagement'));
+  const scope = url.searchParams.get('scope') || '';
+  if (!scope.includes('like.write') || scope.includes('tweet.write') || scope.includes('follows.write') || scope.includes('dm.write')) {
+    fail(`Engagement authorize URL requested ${scope}`);
+  }
+}
+
+console.log('X OAuth runtime OK: default connect stays read-only, reply/relationship/engagement/DM upgrades request only their minimum scopes, session JSON binds requested scopes, callback/refresh grant validation fail-closes extras, and refresh can preserve tweet.write.');

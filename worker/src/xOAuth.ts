@@ -27,8 +27,11 @@ interface StoredTokenRow {
 }
 
 export const READ_ONLY_SCOPES = ['tweet.read', 'users.read', 'follows.read', 'offline.access'] as const;
-export const OPTIONAL_WRITE_SCOPES = ['tweet.write', 'follows.write', 'dm.read', 'dm.write'] as const;
+export const OPTIONAL_WRITE_SCOPES = ['tweet.write', 'follows.write', 'like.write', 'dm.read', 'dm.write'] as const;
 export const REPLY_UPGRADE_SCOPES = [...READ_ONLY_SCOPES, 'tweet.write'] as const;
+export const RELATIONSHIP_UPGRADE_SCOPES = [...READ_ONLY_SCOPES, 'follows.write'] as const;
+export const ENGAGEMENT_UPGRADE_SCOPES = [...READ_ONLY_SCOPES, 'like.write'] as const;
+export const DM_UPGRADE_SCOPES = [...READ_ONLY_SCOPES, 'dm.read', 'dm.write'] as const;
 const READ_ONLY_SCOPE_SET = new Set<string>(READ_ONLY_SCOPES);
 const OPTIONAL_WRITE_SCOPE_SET = new Set<string>(OPTIONAL_WRITE_SCOPES);
 const KNOWN_SCOPE_SET = new Set<string>([...READ_ONLY_SCOPES, ...OPTIONAL_WRITE_SCOPES]);
@@ -36,7 +39,7 @@ const SESSION_TTL_MS = 10 * 60 * 1000;
 const REFRESH_EARLY_MS = 60 * 1000;
 const X_IDENTITY_LEASE_MS = 3 * 60 * 1000;
 
-export type XOAuthIntent = 'read' | 'reply';
+export type XOAuthIntent = 'read' | 'reply' | 'relationship' | 'engagement' | 'dm';
 
 export function xOAuthConfigured(env: XOAuthEnv) {
   return Boolean(
@@ -50,15 +53,19 @@ export function xOAuthConfigured(env: XOAuthEnv) {
 
 export function parseOAuthIntent(value: unknown): XOAuthIntent {
   if (value == null || value === '' || value === 'read') return 'read';
-  if (value === 'reply') return 'reply';
-  throw new Error('Unsupported X OAuth intent. Follow and DM upgrades are not enabled.');
+  if (value === 'reply' || value === 'relationship' || value === 'engagement' || value === 'dm') return value;
+  throw new Error('Unsupported X OAuth intent. Use read, reply, relationship, engagement, or dm.');
 }
 
 export function scopesForOAuthIntent(intent: XOAuthIntent): readonly string[] {
   if (OPTIONAL_WRITE_SCOPES.some((scope) => READ_ONLY_SCOPE_SET.has(scope))) {
     throw new Error('Optional X write scopes must stay separate from the default read-only connection.');
   }
-  return intent === 'reply' ? REPLY_UPGRADE_SCOPES : READ_ONLY_SCOPES;
+  if (intent === 'reply') return REPLY_UPGRADE_SCOPES;
+  if (intent === 'relationship') return RELATIONSHIP_UPGRADE_SCOPES;
+  if (intent === 'engagement') return ENGAGEMENT_UPGRADE_SCOPES;
+  if (intent === 'dm') return DM_UPGRADE_SCOPES;
+  return READ_ONLY_SCOPES;
 }
 
 export function serializeRequestedScopesJson(scopes: readonly string[]) {
@@ -71,8 +78,17 @@ export async function startXOAuth(env: XOAuthEnv, intent: XOAuthIntent = 'read')
   if (intent === 'read' && requested.some((scope) => OPTIONAL_WRITE_SCOPE_SET.has(scope))) {
     throw new Error('Default X OAuth connect must not request write scopes.');
   }
-  if (intent === 'reply' && (requested.includes('follows.write') || requested.includes('dm.write') || requested.includes('dm.read'))) {
+  if (intent === 'reply' && (requested.includes('follows.write') || requested.includes('like.write') || requested.includes('dm.write') || requested.includes('dm.read'))) {
     throw new Error('X reply upgrade must not request follow or DM scopes.');
+  }
+  if (intent === 'relationship' && requested.some((scope) => scope === 'tweet.write' || scope === 'like.write' || scope === 'dm.write' || scope === 'dm.read')) {
+    throw new Error('X relationship upgrade must request follows.write only.');
+  }
+  if (intent === 'engagement' && requested.some((scope) => scope === 'tweet.write' || scope === 'follows.write' || scope === 'dm.write' || scope === 'dm.read')) {
+    throw new Error('X engagement upgrade must request like.write only.');
+  }
+  if (intent === 'dm' && requested.some((scope) => scope === 'tweet.write' || scope === 'follows.write' || scope === 'like.write')) {
+    throw new Error('X DM upgrade must not request reply, follow, or like scopes.');
   }
   await pruneOAuthSessions(env);
 
@@ -287,7 +303,7 @@ async function persistTokenResponse(
     requestedScopes,
     verifiedFallbackScope: existingGrantedScope,
     allowRefreshOmission: Boolean(existingGrantedScope),
-    allowStoredOptionalWrites: Boolean(existingGrantedScope) || Boolean(requestedScopes?.includes('tweet.write')),
+    allowStoredOptionalWrites: Boolean(existingGrantedScope) || Boolean(requestedScopes?.some((scope) => OPTIONAL_WRITE_SCOPE_SET.has(scope))),
   });
   const accessTokenEnc = await encryptToken(env, token.access_token);
   const refreshTokenEnc = token.refresh_token
@@ -320,11 +336,16 @@ export function parseRequestedScopesJson(raw: string | null | undefined) {
     throw new Error('OAuth session requested scopes are malformed');
   }
   const scopes = [...new Set(parsed.map((scope) => String(scope).trim()))];
-  const readSet = scopesForOAuthIntent('read');
-  const replySet = scopesForOAuthIntent('reply');
-  if (sameScopeSet(scopes, readSet)) return [...readSet];
-  if (sameScopeSet(scopes, replySet)) return [...replySet];
-  throw new Error('OAuth session requested an unsupported scope set.');
+  const allowed = [
+    scopesForOAuthIntent('read'),
+    scopesForOAuthIntent('reply'),
+    scopesForOAuthIntent('relationship'),
+    scopesForOAuthIntent('engagement'),
+    scopesForOAuthIntent('dm'),
+  ];
+  const match = allowed.find((set) => sameScopeSet(scopes, set));
+  if (!match) throw new Error('OAuth session requested an unsupported scope set.');
+  return [...match];
 }
 
 export function validateGrantedScopes(scopeValue?: string, options: {
@@ -378,6 +399,7 @@ function xWriteCapabilities(scopes: readonly string[]) {
     read: READ_ONLY_SCOPES.every((scope) => granted.has(scope)),
     reply: granted.has('tweet.write'),
     follow: granted.has('follows.write'),
+    like: granted.has('like.write'),
     dm: granted.has('dm.read') && granted.has('dm.write'),
   };
 }

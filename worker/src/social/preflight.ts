@@ -1,0 +1,230 @@
+import { utcMonthWindow } from '../budgetIntegrity';
+import { liveSocialCapabilities, operationWriteEnabled } from './capabilities';
+import { probeInstagramPermissions } from './instagram/probe';
+import { readSchemaVersion, EXPECTED_SCHEMA_VERSION } from './schemaVersion';
+import { xOAuthConfigured, xOAuthStatus, type XOAuthEnv } from '../xOAuth';
+
+export interface PreflightEnv extends XOAuthEnv {
+  SOCIAL_WRITE_ENABLED?: string;
+  SOCIAL_WRITE_MODE?: string;
+  INSTAGRAM_ACCESS_TOKEN?: string;
+  INSTAGRAM_USER_ID?: string;
+  INSTAGRAM_API_VERSION?: string;
+  INSTAGRAM_COMMENT_REPLY_ENABLED?: string;
+  INSTAGRAM_DM_WRITE_ENABLED?: string;
+  INSTAGRAM_DM_READ_ENABLED?: string;
+  INSTAGRAM_WEBHOOK_VERIFY_TOKEN?: string;
+  INSTAGRAM_APP_SECRET?: string;
+  X_REPLY_WRITE_ENABLED?: string;
+  X_FOLLOW_WRITE_ENABLED?: string;
+  X_UNFOLLOW_WRITE_ENABLED?: string;
+  X_LIKE_WRITE_ENABLED?: string;
+  X_DM_WRITE_ENABLED?: string;
+  X_DM_READ_ENABLED?: string;
+  X_INBOUND_SYNC_ENABLED?: string;
+  X_REPLY_WRITE_USD?: string;
+  X_FOLLOW_WRITE_USD?: string;
+  X_UNFOLLOW_WRITE_USD?: string;
+  X_LIKE_WRITE_USD?: string;
+  X_DM_WRITE_USD?: string;
+  X_DM_READ_USD?: string;
+  X_INBOUND_READ_USD?: string;
+  INSTAGRAM_COMMENT_REPLY_USD?: string;
+  INSTAGRAM_DM_WRITE_USD?: string;
+  INSTAGRAM_DM_READ_USD?: string;
+  SOCIAL_RECONCILE_READ_USD?: string;
+  DEFAULT_MONTHLY_BUDGET_USD?: string;
+}
+
+interface Check {
+  ok: boolean;
+  severity: 'ok' | 'warn' | 'block';
+  label: string;
+  reason?: string;
+  nextStep?: string;
+}
+
+export async function buildProductionPreflight(env: PreflightEnv, userId: string) {
+  const schema = await readSchemaVersion(env.DB);
+  const oauth = await xOAuthStatus(env, userId);
+  const probe = await probeInstagramPermissions(env, userId);
+  const capabilities = liveSocialCapabilities(env, oauth.scopes || [], probe, oauth.connected);
+  const usage = await monthUsage(env.DB, userId);
+  const prices = collectPrices(env);
+  const unknownPrices = prices.filter((item) => item.amount == null).map((item) => item.key);
+
+  const socialActionsReady = await tableExists(env.DB, 'social_actions');
+  const executionsReady = await tableExists(env.DB, 'social_executions');
+  const checks: Check[] = [];
+  checks.push(schema.connected && schema.partial.length === 0 && schema.currentVersion === EXPECTED_SCHEMA_VERSION
+    ? ok('database', 'D1 schema matches the expected migration version.')
+    : block('database', schema.reason || `D1 is at version ${schema.currentVersion ?? 'unknown'}; expected ${EXPECTED_SCHEMA_VERSION}.`, 'Run the GitHub Action “Migrate production D1” (workflow_dispatch).'));
+  checks.push(socialActionsReady
+    ? ok('socialActionSchemaReady', 'social_actions table is ready.')
+    : block('socialActionSchemaReady', 'social_actions table is missing.', 'Run production D1 migrations.'));
+  checks.push(executionsReady
+    ? ok('executionSchemaReady', 'social_executions table is ready.')
+    : block('executionSchemaReady', 'social_executions table is missing.', 'Run production D1 migrations.'));
+
+  const scopes = oauth.scopes || [];
+  checks.push(xOAuthConfigured(env)
+    ? (oauth.connected ? ok('xConfigured', 'X OAuth is configured and connected.') : warn('xConfigured', 'X OAuth is configured but not connected.', 'Settings → X → 接続'))
+    : block('xConfigured', 'X OAuth app credentials are incomplete.', 'Set X_CLIENT_ID, X_CLIENT_SECRET, callback URL, PWA return URL, and OAUTH_TOKEN_ENCRYPTION_KEY_B64.'));
+  checks.push(flagCheck('X reply write', capabilities.x.sendReply, scopes.includes('tweet.write'), env.X_REPLY_WRITE_ENABLED === 'true', 'tweet.write', 'Settings → X → 返信権限を追加'));
+  checks.push(flagCheck('X follow write', capabilities.x.follow, scopes.includes('follows.write'), env.X_FOLLOW_WRITE_ENABLED === 'true', 'follows.write', 'Settings → X → フォロー権限を追加'));
+  checks.push(flagCheck('X like write', capabilities.x.like, scopes.includes('like.write'), env.X_LIKE_WRITE_ENABLED === 'true', 'like.write', 'Settings → X → いいね権限を追加'));
+  checks.push(flagCheck('X DM read', capabilities.x.readDm, scopes.includes('dm.read'), env.X_DM_READ_ENABLED === 'true' || env.X_DM_WRITE_ENABLED === 'true', 'dm.read', 'Settings → X → DM権限を追加'));
+  checks.push(flagCheck('X DM write', capabilities.x.sendDm, scopes.includes('dm.write'), env.X_DM_WRITE_ENABLED === 'true', 'dm.write', 'Settings → X → DM権限を追加'));
+
+  checks.push(probe.configured
+    ? (probe.tokenValid ? ok('instagramConfigured', 'Instagram credentials are present.') : block('instagramConfigured', probe.reason || 'Instagram token is invalid.', 'Replace INSTAGRAM_ACCESS_TOKEN in Worker secrets.'))
+    : warn('instagramConfigured', 'Instagram Professional credentials are not configured.', 'Set INSTAGRAM_ACCESS_TOKEN, INSTAGRAM_USER_ID, and INSTAGRAM_API_VERSION.'));
+  checks.push(probe.professionalAccount
+    ? ok('instagramProfessional', 'Professional account confirmed.')
+    : warn('instagramProfessional', probe.reason || 'Professional account was not verified.', 'Use an Instagram Business or Creator account.'));
+  checks.push(probe.readComments
+    ? ok('instagramComments', 'Comment permissions were verified.')
+    : warn('instagramComments', 'Comment permission is not verified.', 'Grant instagram_business_manage_comments in Meta App Review, then Settings → Instagram → 権限状態を確認.'));
+  checks.push(probe.readDm
+    ? ok('instagramMessages', 'Message permissions were verified.')
+    : warn('instagramMessages', 'Message permission is not verified.', 'Grant instagram_business_manage_messages, then Settings → Instagram → 権限状態を確認.'));
+  checks.push(capabilities.instagram.sendCommentReply
+    ? ok('instagramCommentReplyReady', 'In-app Instagram comment reply is ready.')
+    : warn('instagramCommentReplyReady', 'Instagram comment reply is blocked.', 'Verify comment permission, set INSTAGRAM_COMMENT_REPLY_ENABLED=true and INSTAGRAM_COMMENT_REPLY_USD=0 after confirming Meta does not bill this call, then SOCIAL_WRITE_ENABLED=true.'));
+  checks.push(capabilities.instagram.sendDm
+    ? ok('instagramDmWriteReady', 'In-app Instagram DM reply is ready.')
+    : warn('instagramDmWriteReady', 'Instagram DM write is blocked.', 'Verify message permission, set INSTAGRAM_DM_WRITE_ENABLED=true and an explicit INSTAGRAM_DM_WRITE_USD, then SOCIAL_WRITE_ENABLED=true.'));
+
+  for (const price of prices) {
+    if (price.amount == null) {
+      checks.push(warn(price.key, `${price.key} is unset, so this operation fail-closes.`, `Set ${price.key} from the current official price. Use 0 only after confirming the operation is free.`));
+    } else {
+      checks.push(ok(price.key, `${price.key}=${price.amount}`));
+    }
+  }
+
+  const webhookReady = Boolean(env.INSTAGRAM_WEBHOOK_VERIFY_TOKEN?.trim() && env.INSTAGRAM_APP_SECRET?.trim());
+  checks.push(webhookReady
+    ? ok('instagramReceiverReady', 'Instagram webhook receiver secrets are present. Dashboard subscription is still manual.')
+    : warn('instagramReceiverReady', 'Webhook receiver code is present but verify token / app secret are unset.', 'Set INSTAGRAM_WEBHOOK_VERIFY_TOKEN and INSTAGRAM_APP_SECRET, then register the callback in Meta App Dashboard.'));
+
+  const blocked = checks.filter((item) => item.severity === 'block');
+  const warned = checks.filter((item) => item.severity === 'warn');
+  return {
+    ok: blocked.length === 0,
+    database: {
+      connected: schema.connected,
+      migrationVersion: schema.currentVersion,
+      expectedMigrationVersion: EXPECTED_SCHEMA_VERSION,
+      pending: schema.pending,
+      partial: schema.partial,
+      reason: schema.reason,
+    },
+    x: {
+      configured: xOAuthConfigured(env),
+      tokenValid: oauth.connected,
+      scopes,
+      replyReady: capabilities.x.sendReply,
+      followReady: capabilities.x.follow,
+      likeReady: capabilities.x.like,
+      dmReadReady: capabilities.x.readDm,
+      dmWriteReady: capabilities.x.sendDm,
+    },
+    instagram: {
+      configured: probe.configured,
+      tokenValid: probe.tokenValid,
+      professionalAccount: probe.professionalAccount,
+      commentsPermission: probe.readComments,
+      messagesPermission: probe.readDm,
+      commentReplyReady: capabilities.instagram.sendCommentReply,
+      dmReadReady: capabilities.instagram.readDm,
+      dmWriteReady: capabilities.instagram.sendDm,
+      permissionsVerified: probe.permissionsVerified,
+      reason: probe.reason,
+    },
+    budget: {
+      hardLimit: true,
+      currentUsage: usage.usedUsd,
+      ledgerAvailable: usage.available,
+      configuredOperationPrices: Object.fromEntries(prices.filter((item) => item.amount != null).map((item) => [item.key, item.amount])),
+      unknownPrices,
+    },
+    webhooks: {
+      instagramReceiverReady: webhookReady,
+      registrationDetectedIfPossible: false,
+    },
+    app: {
+      socialActionSchemaReady: socialActionsReady,
+      executionSchemaReady: executionsReady,
+      socialWriteEnabled: env.SOCIAL_WRITE_ENABLED === 'true' || env.SOCIAL_WRITE_MODE === 'test',
+    },
+    checks,
+    summary: {
+      block: blocked.length,
+      warn: warned.length,
+      ok: checks.filter((item) => item.severity === 'ok').length,
+    },
+  };
+}
+
+function flagCheck(label: string, ready: boolean, hasScope: boolean, flagOn: boolean, scope: string, nextStep: string): Check {
+  if (ready) return ok(label, `${label} is ready.`);
+  if (!hasScope) return warn(label, `${scope} has not been granted.`, nextStep);
+  if (!flagOn) return warn(label, `${label} permission is granted but the production write flag is off.`, `Set the matching *_ENABLED secret to true only after go-live review. Default stays false.`);
+  return warn(label, `${label} is not ready.`, nextStep);
+}
+
+function collectPrices(env: PreflightEnv) {
+  return [
+    price('X_REPLY_WRITE_USD', env.X_REPLY_WRITE_USD),
+    price('X_FOLLOW_WRITE_USD', env.X_FOLLOW_WRITE_USD),
+    price('X_UNFOLLOW_WRITE_USD', env.X_UNFOLLOW_WRITE_USD),
+    price('X_LIKE_WRITE_USD', env.X_LIKE_WRITE_USD),
+    price('X_DM_WRITE_USD', env.X_DM_WRITE_USD),
+    price('X_DM_READ_USD', env.X_DM_READ_USD),
+    price('INSTAGRAM_COMMENT_REPLY_USD', env.INSTAGRAM_COMMENT_REPLY_USD),
+    price('INSTAGRAM_DM_WRITE_USD', env.INSTAGRAM_DM_WRITE_USD),
+    price('INSTAGRAM_DM_READ_USD', env.INSTAGRAM_DM_READ_USD),
+    price('SOCIAL_RECONCILE_READ_USD', env.SOCIAL_RECONCILE_READ_USD),
+  ];
+}
+
+function price(key: string, raw: string | undefined) {
+  if (raw == null || String(raw).trim() === '') return { key, amount: null as number | null };
+  const amount = Number(raw);
+  if (!Number.isFinite(amount) || amount < 0) return { key, amount: null as number | null };
+  return { key, amount };
+}
+
+async function monthUsage(db: D1Database, userId: string) {
+  try {
+    const { start, end } = utcMonthWindow();
+    const row = await db.prepare(
+      'SELECT COALESCE(SUM(cost_usd), 0) AS used FROM budget_ledger WHERE user_id = ? AND julianday(occurred_at) >= julianday(?) AND julianday(occurred_at) < julianday(?)',
+    ).bind(userId, start, end).first<{ used: number }>();
+    return { usedUsd: Number(row?.used || 0), available: true };
+  } catch {
+    return { usedUsd: 0, available: false };
+  }
+}
+
+async function tableExists(db: D1Database, name: string) {
+  try {
+    const row = await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").bind(name).first<{ name: string }>();
+    return Boolean(row?.name);
+  } catch {
+    return false;
+  }
+}
+
+function ok(label: string, reason: string): Check {
+  return { ok: true, severity: 'ok', label, reason };
+}
+function warn(label: string, reason: string, nextStep?: string): Check {
+  return { ok: true, severity: 'warn', label, reason, nextStep };
+}
+function block(label: string, reason: string, nextStep?: string): Check {
+  return { ok: false, severity: 'block', label, reason, nextStep };
+}
+
+export { operationWriteEnabled };

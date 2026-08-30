@@ -44,8 +44,11 @@ Mission-driven, mobile-first PWA for growing meaningful social relationships. Th
 - Instagram commenters can become high-signal `engaged` candidates and retain the related post as the next conversation surface
 - Instagram comment sync preserves latestCommentId, lastCommentText, lastCommentAt, mediaId and latestMediaPermalink for the same latest event, then creates a `comment_reply` SocialAction
 - server-authoritative `POST /api/social/actions/:id/execute` resolves the write target from D1 `social_actions` + `social_events`; client JSON cannot retarget the provider
-- Instagram comment reply can be sent in-app after one explicit user approval when live capability flags and Instagram credentials are configured
-- optional X mention/reply inbound sync creates SocialEvents by tweet id and binds Candidates by immutable author id; in-app X reply stays off until `tweet.write` is granted and `X_REPLY_WRITE_ENABLED` is on; follow/DM stay off
+- Instagram comment reply and Instagram Professional DM reply can be sent in-app after one explicit user approval when live permission probes and write flags are configured
+- X mention/reply inbound sync, X DM inbound sync, X reply/follow/unfollow/like/DM write adapters, and Instagram webhook receiver code are in the Worker; production writes stay flag-off until a human turns them on
+- Instagram follow / arbitrary like stay HANDOFF because the official Professional management API does not provide those writes
+- versioned D1 migrations in `db/migrations/` with `npm run d1:migrate` and a `workflow_dispatch` production migrate Action
+- Settings 本番準備チェック plus `npm run preflight` / `npm run preflight:prod`
 - 12-hour D1 cache for Instagram engager sync
 - local relationship history and relationship stages
 - configurable follow-back review window with Mission-aware keep/cleanup advice
@@ -126,8 +129,8 @@ Paid usage is fail-closed. If D1 budget accounting is unavailable, paid provider
 12. Run `AIで候補を再評価`. A zero-cost local filter chooses the strongest subset first; the AI then receives relationship context and produces Mission Match, strategy and only context-justified drafts.
 13. Today builds a Mission Inbox from SocialActions when they exist, and still builds a Daily Queue from Mission Match, relationship state, recommended action, workload caps, self-improvement items and cleanup reviews as fallback. Its progress target and summary are based on that actual queue.
 14. Use `明日へ` when an item is relevant but not worth handling now; the relationship record stays intact and the item returns after the snooze window.
-15. Approve one action at a time. If the official API permits it, SNS-providers may later execute that approved action; until a write adapter is enabled, the PWA uses HANDOFF to the official surface.
-16. Return to the PWA and record the result. Genuine interactions conservatively strengthen the CRM relationship stage/score; cleanup keep decisions are tracked without pretending they were social engagement. Completed SocialActions also update Interaction history.
+15. Approve one action at a time from Mission Inbox. Official-API writes execute in-app after that one approval; Instagram follow/arbitrary like remain HANDOFF.
+16. If a write result is unknown, use `結果を再確認`. Do not send again with a new execution id.
 17. In Relations, review mutual/no-follow-back/unknown state. Cleanup advice never auto-unfollows, and the return sheet explicitly distinguishes `フォローを継続する` from `フォロー解除した`.
 18. In Me, run AI analysis on the synced or manually pasted profile/recent posts to get Mission-based account improvement guidance. Before the first analysis, Mission Score remains unmeasured rather than displaying a fake value.
 19. When moving state between devices, use JSON backup or D1 sync. Both restore paths normalize the complete AppState before it becomes active.
@@ -186,10 +189,27 @@ The browser-first v0.1 remains local-first so the PWA is useful before backend s
 - `scripts/verify-security-invariants.mjs` — CI guard for provider-route authentication, budget reservations, full restored-state validation, conservative CRM behavior and read-only X OAuth scopes
 - `scripts/verify-pwa-assets.mjs` — CI guard for icon dimensions, manifest/HTML references, Service Worker precache and production Pages output
 
+## Capability matrix
+
+| Action | Read | In-app write | Permission / flag | Execution |
+| --- | --- | --- | --- | --- |
+| X reply | yes | yes | `tweet.write` + `X_REPLY_WRITE_ENABLED` | Mission Inbox, one approval |
+| X follow | yes | yes | `follows.write` + `X_FOLLOW_WRITE_ENABLED`; immutable user ID | Mission Inbox, one approval |
+| X unfollow | yes | yes | `follows.write` + `X_UNFOLLOW_WRITE_ENABLED` | Mission Inbox, extra confirm |
+| X like | yes | yes | `like.write` + `X_LIKE_WRITE_ENABLED`; canonical tweet ID | Mission Inbox, one approval |
+| X DM | yes | yes | `dm.read`/`dm.write` + matching flags; existing conversation | inbound → approved reply |
+| Instagram comments | yes | yes | runtime permission probe + `INSTAGRAM_COMMENT_REPLY_ENABLED` | Mission Inbox, one approval |
+| Instagram DM | yes | yes | runtime message permission + 24h window + DM flags | inbound → approved reply |
+| Instagram follow | limited | HANDOFF | official management API does not provide general follow write | open official app |
+| Instagram arbitrary like | no | HANDOFF | official management API does not provide general like write | open official app |
+
+Default X OAuth stays read-only. Write scopes are requested only by the matching Settings button. Missing prices fail closed. Repository write flags default to `false`.
+
+See `docs/MANUAL_GO_LIVE_CHECKLIST.md` for the remaining human-only console, billing, and real-account work.
+
 ## Next implementation milestones
 
 - optional automatic/field-level merge sync beyond the current conflict-safe manual D1 push/pull
-- Instagram webhook ingestion for new comments plus other explicitly permitted first-party signals such as mentions where useful
-- optional push notifications / scheduled delivery around locally generated Daily Queue changes
+- optional push notifications around locally generated Daily Queue changes
 - optional local embedding/WebGPU stage beyond the current zero-cost lexical prefilter
-- accessibility, install-flow and richer real-device QA polish
+- richer real-device QA polish after the manual go-live checklist

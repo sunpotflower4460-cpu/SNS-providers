@@ -130,6 +130,17 @@ export async function reserveActiveMonthBudget(
   }
 }
 
+export function voidBudgetReservation(
+  db: D1Database,
+  args: { id: string; userId: string },
+) {
+  return db.prepare('DELETE FROM budget_ledger WHERE id = ? AND user_id = ?')
+    .bind(args.id, args.userId)
+    .run()
+    .then((result) => (result.meta.changes || 0) === 1)
+    .catch(() => false);
+}
+
 export function utcMonthWindow() {
   const now = new Date();
   const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));

@@ -1,6 +1,6 @@
 .mission-inbox .inbox-summary {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 6px;
   margin-top: 12px;
 }
@@ -54,6 +54,23 @@
   overflow-wrap: anywhere;
   word-break: break-word;
 }
+.inbox-reason,
+.inbox-why {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.inbox-why {
+  margin: 8px 0 0;
+  color: #c5d4e4;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.inbox-why span {
+  display: block;
+  color: #72dfbd;
+  font-size: 10px;
+  font-weight: 800;
+}
 .inbox-reason {
   margin: 0;
   color: #8f9fb2;
@@ -91,6 +108,15 @@
   color: #ffc27c;
   font-size: 12px;
   line-height: 1.5;
+}
+.inbox-inbound {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.inbox-action-meta strong,
+.inbox-action-meta span {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 @media (max-width: 480px) {
   .mission-inbox .inbox-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }

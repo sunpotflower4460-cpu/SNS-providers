@@ -6,6 +6,7 @@ on:
     paths:
       - 'worker/**'
       - 'db/schema.sql'
+      - 'db/migrations/**'
       - '.github/workflows/deploy-worker.yml'
   workflow_dispatch:
 
@@ -28,6 +29,12 @@ jobs:
       - name: Resolve D1 database ID
         working-directory: .
         run: node scripts/resolve-d1-database-id.mjs --write
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Apply versioned D1 migrations
+        working-directory: .
+        run: node scripts/d1-migrate.mjs
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

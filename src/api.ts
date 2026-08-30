@@ -345,10 +345,14 @@ export interface SocialCapabilitySnapshot {
     unfollow: boolean;
     like: boolean;
     configured?: boolean;
+    tokenValid?: boolean;
     tokenAvailable?: boolean;
+    professionalAccount?: boolean;
+    permissionsVerified?: boolean;
     accountTypeSupported?: boolean;
     writeAdapterEnabled?: boolean;
     productionWriteEnabled?: boolean;
+    reason?: string;
   };
   x: {
     readMentions: boolean;
@@ -360,6 +364,9 @@ export interface SocialCapabilitySnapshot {
     follow: boolean;
     unfollow: boolean;
     like: boolean;
+    connected?: boolean;
+    scopes?: string[];
+    reason?: string;
   };
 }
 
@@ -379,6 +386,8 @@ export interface SocialExecuteSuccess {
   certainty?: 'success' | 'failure' | 'unknown';
   externalResultId?: string | null;
   providerStatus?: string;
+  metadata?: Record<string, unknown>;
+  pendingFollow?: boolean;
 }
 
 export interface SocialExecuteFailure {
@@ -389,6 +398,108 @@ export interface SocialExecuteFailure {
   status?: string;
   certainty?: 'success' | 'failure' | 'unknown';
   retryable?: boolean;
+}
+
+export async function snoozeSocialActionRequest(actionId: string, userId = 'local-user') {
+  return lifecycleMutation(`/api/social/actions/${encodeURIComponent(actionId)}/snooze`, { userId });
+}
+
+export async function dismissSocialActionRequest(actionId: string, userId = 'local-user') {
+  return lifecycleMutation(`/api/social/actions/${encodeURIComponent(actionId)}/dismiss`, { userId });
+}
+
+async function lifecycleMutation(path: string, body: { userId: string }) {
+  if (!apiConfigured) throw new Error('API endpoint is not configured');
+  const token = getSyncToken().trim();
+  if (!token) throw new Error('先にSettingsで個人管理キーを保存してください');
+  const response = await fetchWithTimeout(`${apiBaseUrl}${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
+  }, 20_000, 'Social action lifecycle');
+  const payload = await response.json().catch(() => null) as { ok?: boolean; action?: unknown; code?: string; reason?: string; error?: string } | null;
+  if (!payload) throw new Error('Lifecycle API returned an empty response');
+  if (payload.code === 'NOT_FOUND') return { ok: false as const, code: 'NOT_FOUND' as const, reason: payload.reason };
+  if (!response.ok || payload.ok === false) {
+    throw new Error(payload.reason || payload.error || `API returned ${response.status}`);
+  }
+  return payload;
+}
+
+export async function prepareSocialActionRequest(intent: {
+  candidateId: string;
+  type: 'follow' | 'like' | 'unfollow_review';
+  username?: string;
+  platformUserId?: string;
+  engagementUrl?: string;
+}, userId = 'local-user') {
+  return apiFetch<{ ok: boolean; executionMode?: string; action?: { id: string; status?: string; platformUserId?: string; externalEventId?: string }; reason?: string; code?: string }>(
+    '/api/social/actions/prepare',
+    { method: 'POST', body: JSON.stringify({ userId, ...intent }) },
+    undefined,
+    30_000,
+  );
+}
+
+export async function fetchCanonicalSocialActions(userId = 'local-user') {
+  const result = await apiFetch<{ ok?: boolean; actions?: Array<{
+    id: string;
+    status: string;
+    snoozedUntil?: string;
+    completedAt?: string;
+    executionMode?: string;
+    type?: string;
+    platform?: string;
+    source?: string;
+    candidateId?: string;
+    externalEventId?: string;
+    conversationId?: string;
+  }> }>(
+    `/api/social/actions?userId=${encodeURIComponent(userId)}`,
+    undefined,
+    undefined,
+    20_000,
+  );
+  return Array.isArray(result.actions) ? result.actions : [];
+}
+
+export async function reconcileSocialExecutionRequest(executionId: string, userId = 'local-user') {
+  if (!apiConfigured) throw new Error('API endpoint is not configured');
+  const token = getSyncToken().trim();
+  if (!token) throw new Error('先にSettingsで個人管理キーを保存してください');
+  const response = await fetchWithTimeout(`${apiBaseUrl}/api/social/executions/${encodeURIComponent(executionId)}/reconcile`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ userId }),
+  }, 45_000, 'Social reconcile');
+  const body = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (!body) throw new Error('Reconcile API returned an empty response');
+  return body;
+}
+
+export async function fetchProductionPreflight(userId = 'local-user') {
+  return apiFetch<Record<string, unknown>>(`/api/preflight?userId=${encodeURIComponent(userId)}`, undefined, undefined, 30_000);
+}
+
+export async function syncSocialInbox(userId = 'local-user', monthlyLimitUsd = 3) {
+  return apiFetch<Record<string, unknown>>('/api/social/inbox/sync', {
+    method: 'POST',
+    body: JSON.stringify({ userId, monthlyLimitUsd }),
+  }, undefined, 90_000);
+}
+
+export async function syncXDirectMessages(userId = 'local-user', monthlyLimitUsd = 3) {
+  return apiFetch<{ enabled: boolean; events?: unknown[]; reason?: string; costUsd?: number }>('/api/x/dm/sync', {
+    method: 'POST',
+    body: JSON.stringify({ userId, monthlyLimitUsd }),
+  }, undefined, 60_000);
+}
+
+export async function syncInstagramDirectMessages(userId = 'local-user', monthlyLimitUsd = 3) {
+  return apiFetch<{ enabled: boolean; events?: unknown[]; reason?: string; costUsd?: number }>('/api/instagram/dm/sync', {
+    method: 'POST',
+    body: JSON.stringify({ userId, monthlyLimitUsd }),
+  }, undefined, 60_000);
 }
 
 export async function executeSocialActionRequest(

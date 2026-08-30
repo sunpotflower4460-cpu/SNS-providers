@@ -50,16 +50,33 @@ INSTAGRAM_API_VERSION=
 # comment sync: Meta Graph does not charge per reply). Set INSTAGRAM_COMMENT_REPLY_USD=0
 # explicitly after verifying that accounting model; leaving it blank still fail-closes.
 # Do not treat a missing price as $0.
-# X replies additionally require an explicit tweet.write OAuth upgrade and a positive
-# X_REPLY_WRITE_USD. Follow and DM writes stay disabled.
+# X writes additionally require an explicit OAuth upgrade and a positive USD price.
+# Follow, like, and DM writes stay disabled until their dedicated flags and scopes exist.
 SOCIAL_WRITE_ENABLED=false
 SOCIAL_WRITE_MODE=
 INSTAGRAM_COMMENT_REPLY_ENABLED=false
+INSTAGRAM_DM_WRITE_ENABLED=false
+INSTAGRAM_DM_READ_ENABLED=false
+INSTAGRAM_WEBHOOK_VERIFY_TOKEN=
+INSTAGRAM_APP_SECRET=
 X_REPLY_WRITE_ENABLED=false
+X_FOLLOW_WRITE_ENABLED=false
+X_UNFOLLOW_WRITE_ENABLED=false
+X_LIKE_WRITE_ENABLED=false
+X_DM_WRITE_ENABLED=false
+X_DM_READ_ENABLED=false
+SOCIAL_SCHEDULED_READ_ENABLED=false
 X_REPLY_WRITE_USD=
 X_FOLLOW_WRITE_USD=
+X_UNFOLLOW_WRITE_USD=
+X_LIKE_WRITE_USD=
 X_DM_WRITE_USD=
+X_DM_READ_USD=
+X_LOOKUP_READ_USD=
 INSTAGRAM_COMMENT_REPLY_USD=
+INSTAGRAM_DM_WRITE_USD=
+INSTAGRAM_DM_READ_USD=
+SOCIAL_RECONCILE_READ_USD=
 
 # Optional X mention/reply inbound sync. Separate from owned profile/follow reads.
 # Default connect stays read-only; this still uses tweet.read only. Live X replies stay off.

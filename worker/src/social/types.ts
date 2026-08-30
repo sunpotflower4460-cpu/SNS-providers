@@ -51,10 +51,12 @@ export interface CanonicalSocialAction {
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
+  snoozedUntil?: string;
   platformUserId?: string;
   username?: string;
   identityConflict: boolean;
   retryable: boolean;
+  resultMetadata?: Record<string, unknown>;
 }
 
 export interface CanonicalSocialEvent {
@@ -122,4 +124,5 @@ export interface ProviderWriteResult {
   retryable?: boolean;
   errorCode?: string;
   reason?: string;
+  metadata?: Record<string, unknown>;
 }

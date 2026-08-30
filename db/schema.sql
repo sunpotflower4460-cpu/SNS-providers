@@ -149,6 +149,14 @@ CREATE TABLE IF NOT EXISTS instagram_engager_snapshots (
   synced_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  version INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  checksum TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('applying','applied')),
+  applied_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS social_executions (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
@@ -161,6 +169,8 @@ CREATE TABLE IF NOT EXISTS social_executions (
   error_code TEXT,
   created_at TEXT NOT NULL,
   completed_at TEXT,
+  reservation_id TEXT,
+  result_metadata_json TEXT NOT NULL DEFAULT '{}',
   UNIQUE(user_id, idempotency_key)
 );
 
@@ -199,7 +209,16 @@ CREATE TABLE IF NOT EXISTS social_actions (
   username TEXT,
   identity_conflict INTEGER NOT NULL DEFAULT 0 CHECK(identity_conflict IN (0,1)),
   retryable INTEGER NOT NULL DEFAULT 1 CHECK(retryable IN (0,1)),
+  snoozed_until TEXT,
+  result_metadata_json TEXT NOT NULL DEFAULT '{}',
   UNIQUE(user_id, platform, source, external_event_id)
+);
+
+CREATE TABLE IF NOT EXISTS instagram_permission_probes (
+  user_id TEXT PRIMARY KEY,
+  checked_at TEXT NOT NULL,
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  permissions_verified INTEGER NOT NULL DEFAULT 0 CHECK(permissions_verified IN (0,1))
 );
 
 CREATE INDEX IF NOT EXISTS idx_candidates_user_match ON candidates(user_id, mission_match DESC);
@@ -214,3 +233,5 @@ CREATE INDEX IF NOT EXISTS idx_social_executions_action ON social_executions(use
 CREATE INDEX IF NOT EXISTS idx_social_events_user ON social_events(user_id, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_actions_user ON social_actions(user_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_actions_event ON social_actions(user_id, platform, external_event_id);
+CREATE INDEX IF NOT EXISTS idx_social_actions_status ON social_actions(user_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_social_executions_reservation ON social_executions(user_id, reservation_id);

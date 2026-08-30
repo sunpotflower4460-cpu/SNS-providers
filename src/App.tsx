@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { analyzeSelfProfile, apiConfigured, discoverSocialCandidates, enrichXProfiles, fetchBudget, fetchSocialCapabilities, rankCandidates } from './api';
+import { analyzeSelfProfile, apiConfigured, discoverSocialCandidates, enrichXProfiles, fetchBudget, fetchCanonicalSocialActions, fetchSocialCapabilities, rankCandidates, syncSocialInbox } from './api';
 import BackupControls from './BackupControls';
 import { getSyncToken } from './controlToken';
 import { buildDailyQueue } from './daily';
@@ -12,7 +12,10 @@ import { hasSeenOnboarding, markOnboardingSeen } from './onboarding';
 import { resolveVisibleResult } from './resultResolution';
 import { addCandidateFromReference, applyRankResults, applySelfAnalysis, applyXProfiles, loadState, saveState, setFollowBackStatus, syncBudget, updateCandidateDraft, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
 import { copyDraft, openCandidate, openSocialAction, platformLabel } from './social';
+import { applyCanonicalServerActions } from './socialAction';
 import { setLiveSocialCapabilities, SOCIAL_CAPABILITIES_CHANGED } from './socialCapabilities';
+import { applyInstagramDmEvents, applyXDmEvents } from './dmInboundStore';
+import { applyXInboundEvents } from './xInboundStore';
 import type { AppState, AppStateUpdater, Candidate, Platform, SocialAction } from './types';
 import { useLocalDayKey } from './useLocalDay';
 import { useModalA11y } from './useModalA11y';
@@ -73,6 +76,8 @@ function App() {
   const autoReplenishingRef = useRef(false);
   const autoReplenishAttemptKeyRef = useRef('');
   const autoReplenishRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastInboxSyncRef = useRef(0);
+  const inboxSyncingRef = useRef(false);
   const localDay = useLocalDayKey();
   const statusNote = persistenceError || apiNote;
 
@@ -108,6 +113,60 @@ function App() {
     const onCaps = () => setCapabilityEpoch((current) => current + 1);
     window.addEventListener(SOCIAL_CAPABILITIES_CHANGED, onCaps);
     return () => window.removeEventListener(SOCIAL_CAPABILITIES_CHANGED, onCaps);
+  }, []);
+
+  useEffect(() => {
+    if (!apiConfigured) return;
+    const refreshInbox = async (forceReadSync: boolean) => {
+      if (!getSyncToken().trim() || inboxSyncingRef.current) return;
+      inboxSyncingRef.current = true;
+      try {
+        try {
+          const canonical = await fetchCanonicalSocialActions();
+          setState((current) => applyCanonicalServerActions(current, canonical as Parameters<typeof applyCanonicalServerActions>[1]));
+        } catch {
+          // Canonical list is best-effort; local Mission Inbox remains usable.
+        }
+        const now = Date.now();
+        if (!forceReadSync && now - lastInboxSyncRef.current < 15 * 60 * 1000) return;
+        lastInboxSyncRef.current = now;
+        const inbox = await syncSocialInbox();
+        setState((current) => {
+          let next = current;
+          const mentions = inbox.xMentions && typeof inbox.xMentions === 'object'
+            ? inbox.xMentions as { enabled?: boolean; events?: unknown[]; syncedAt?: string; source?: string; costUsd?: number }
+            : null;
+          if (mentions?.enabled && Array.isArray(mentions.events) && mentions.events.length) {
+            next = applyXInboundEvents(next, {
+              enabled: true,
+              source: typeof mentions.source === 'string' ? mentions.source : 'x',
+              costUsd: typeof mentions.costUsd === 'number' ? mentions.costUsd : 0,
+              syncedAt: mentions.syncedAt,
+              events: mentions.events as never,
+            });
+          }
+          const xDm = inbox.xDm && typeof inbox.xDm === 'object'
+            ? inbox.xDm as { enabled?: boolean; events?: Array<{ externalEventId: string; externalUserId?: string; conversationId?: string; text?: string; occurredAt: string; actionId?: string }>; syncedAt?: string }
+            : null;
+          if (xDm?.enabled && Array.isArray(xDm.events)) next = applyXDmEvents(next, xDm.events, xDm.syncedAt);
+          const igDm = inbox.instagramDm && typeof inbox.instagramDm === 'object'
+            ? inbox.instagramDm as { enabled?: boolean; events?: Array<{ externalEventId: string; externalUserId?: string; conversationId?: string; text?: string; occurredAt: string; actionId?: string }>; syncedAt?: string }
+            : null;
+          if (igDm?.enabled && Array.isArray(igDm.events)) next = applyInstagramDmEvents(next, igDm.events, igDm.syncedAt);
+          return next;
+        });
+      } catch {
+        // Read sync fail-closes on the Worker; the local inbox stays visible.
+      } finally {
+        inboxSyncingRef.current = false;
+      }
+    };
+    void refreshInbox(true);
+    const onVis = () => {
+      if (document.visibilityState === 'visible') void refreshInbox(false);
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
   }, []);
 
   useEffect(() => {

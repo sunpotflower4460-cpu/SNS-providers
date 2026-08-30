@@ -5,12 +5,23 @@ export async function loadCanonicalAction(db: D1Database, userId: string, action
     const row = await db.prepare(
       `SELECT id, user_id, platform, candidate_id, action_type, status, execution_mode, source,
               external_event_id, conversation_id, parent_content_id, target_url, observed_at,
-              created_at, updated_at, completed_at, platform_user_id, username, identity_conflict, retryable
+              created_at, updated_at, completed_at, platform_user_id, username, identity_conflict,
+              retryable, snoozed_until, result_metadata_json
        FROM social_actions WHERE user_id = ? AND id = ?`
     ).bind(userId, actionId).first<Record<string, string | number | null>>();
     return row ? mapAction(row) : null;
   } catch {
-    return null;
+    try {
+      const legacy = await db.prepare(
+        `SELECT id, user_id, platform, candidate_id, action_type, status, execution_mode, source,
+                external_event_id, conversation_id, parent_content_id, target_url, observed_at,
+                created_at, updated_at, completed_at, platform_user_id, username, identity_conflict, retryable
+         FROM social_actions WHERE user_id = ? AND id = ?`
+      ).bind(userId, actionId).first<Record<string, string | number | null>>();
+      return legacy ? mapAction(legacy) : null;
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -60,8 +71,9 @@ export async function upsertProviderSocialAction(db: D1Database, action: Canonic
     `INSERT INTO social_actions
       (id, user_id, platform, candidate_id, action_type, status, execution_mode, source,
        external_event_id, conversation_id, parent_content_id, target_url, observed_at,
-       created_at, updated_at, completed_at, platform_user_id, username, identity_conflict, retryable)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       created_at, updated_at, completed_at, platform_user_id, username, identity_conflict, retryable,
+       snoozed_until, result_metadata_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        candidate_id = excluded.candidate_id,
        parent_content_id = excluded.parent_content_id,
@@ -95,6 +107,8 @@ export async function upsertProviderSocialAction(db: D1Database, action: Canonic
     action.username || null,
     action.identityConflict ? 1 : 0,
     action.retryable ? 1 : 0,
+    action.snoozedUntil || null,
+    JSON.stringify(action.resultMetadata || {}),
   ).run();
 }
 
@@ -164,7 +178,38 @@ function mapAction(row: Record<string, string | number | null>): CanonicalSocial
     username: row.username ? String(row.username) : undefined,
     identityConflict: Number(row.identity_conflict) === 1,
     retryable: Number(row.retryable) !== 0,
+    snoozedUntil: row.snoozed_until ? String(row.snoozed_until) : undefined,
+    resultMetadata: parseMetadata(row.result_metadata_json),
   };
+}
+
+function parseMetadata(raw: string | number | null | undefined) {
+  if (typeof raw !== 'string' || !raw.trim()) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+export async function recoverStaleExecutingAction(
+  db: D1Database,
+  userId: string,
+  actionId: string,
+  nowIso: string,
+) {
+  try {
+    const result = await db.prepare(
+      `UPDATE social_actions
+       SET status = 'failed', retryable = 0, updated_at = ?
+       WHERE id = ? AND user_id = ? AND status = 'executing'`,
+    ).bind(nowIso, actionId, userId).run();
+    return (result.meta.changes || 0) === 1;
+  } catch {
+    return false;
+  }
 }
 
 function mapEvent(row: Record<string, string | null>): CanonicalSocialEvent {

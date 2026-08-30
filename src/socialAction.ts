@@ -38,6 +38,9 @@ export const SOCIAL_ACTION_SOURCES: readonly SocialActionSource[] = [
   'x_dm',
   'x_discovery',
   'x_relationship',
+  'x_follow',
+  'x_unfollow',
+  'x_like',
   'instagram_comment',
   'instagram_dm',
   'instagram_discovery',
@@ -70,7 +73,7 @@ const ACTION_TYPES = new Set<string>(SOCIAL_ACTION_TYPES);
 const ACTION_STATUSES = new Set<string>(SOCIAL_ACTION_STATUSES);
 const ACTION_SOURCES = new Set<string>(SOCIAL_ACTION_SOURCES);
 const TERMINAL_STATUSES = new Set<SocialActionStatus>(['completed', 'dismissed', 'expired']);
-const ACTIVE_STATUSES = new Set<SocialActionStatus>(['pending', 'ready', 'failed']);
+const ACTIVE_STATUSES = new Set<SocialActionStatus>(['pending', 'ready', 'failed', 'executing']);
 const MAX_ACTIONS = 500;
 const MAX_SNOOZE_FUTURE_MS = 7 * 86_400_000;
 const INBOUND_EXPIRE_MS = 14 * 86_400_000;
@@ -146,6 +149,7 @@ export function normalizeSocialAction(raw: unknown, nowMs = Date.now()): SocialA
   if (status === 'snoozed' && (!snoozedUntil || new Date(snoozedUntil).getTime() <= nowMs)) {
     status = 'ready';
   }
+  const wasUnknown = raw.unknownExecution === true || status === 'executing';
   if (status === 'executing') {
     const executingStarted = new Date(updatedAt).getTime();
     if (!Number.isFinite(executingStarted) || nowMs - executingStarted > EXECUTING_STALE_MS) {
@@ -153,7 +157,7 @@ export function normalizeSocialAction(raw: unknown, nowMs = Date.now()): SocialA
     }
   }
   const observedAt = validPastishIso(raw.observedAt, nowMs);
-  if ((status === 'pending' || status === 'ready' || status === 'failed') && isInboundType(type) && observedAt) {
+  if (!wasUnknown && (status === 'pending' || status === 'ready' || status === 'failed') && isInboundType(type) && observedAt) {
     const observedMs = new Date(observedAt).getTime();
     if (Number.isFinite(observedMs) && nowMs - observedMs > INBOUND_EXPIRE_MS) status = 'expired';
   }
@@ -205,8 +209,29 @@ export function normalizeSocialAction(raw: unknown, nowMs = Date.now()): SocialA
     completedAt: status === 'completed' ? (validPastishIso(raw.completedAt, nowMs) || updatedAt) : undefined,
     executionId: safeText(raw.executionId, 180) || undefined,
     failureReason: status === 'failed' ? (safeText(raw.failureReason, 500) || undefined) : undefined,
+    unknownExecution: wasUnknown && status !== 'completed' && status !== 'dismissed',
   };
+  if (action.unknownExecution && action.status === 'failed') {
+    action.failureReason = action.failureReason || '送信結果を確認しています';
+  }
   return action;
+}
+
+export function whyThisActionToday(action: Pick<SocialAction, 'type' | 'missionRelevance' | 'relationshipValue' | 'urgency' | 'reason' | 'inboundText'>): string {
+  const bits: string[] = [];
+  if (action.missionRelevance >= 70) bits.push('Missionとの一致が高い');
+  else if (action.missionRelevance >= 40) bits.push('Missionに関連する');
+  if (action.relationshipValue >= 60) bits.push('関係の蓄積がある');
+  else if (action.relationshipValue >= 30) bits.push('関係を育てる余地がある');
+  if (action.urgency >= 70) bits.push('直近の動きがある');
+  else if (action.urgency >= 40) bits.push('鮮度が残っている');
+  if (action.type === 'dm_reply') bits.push('届いているDMへの返信');
+  else if (action.type === 'comment_reply' || action.type === 'reply_inbound') bits.push('公開の返信待ち');
+  else if (action.type === 'follow') bits.push('つながるとMissionに合う');
+  else if (action.type === 'like') bits.push('反応を残すと関係が続く');
+  else if (action.type === 'unfollow_review') bits.push('フォロー整理の確認');
+  if (!bits.length) return action.reason || '今日この1件に向き合う価値があります。';
+  return `${bits.join(' · ')}。`;
 }
 
 export function normalizeSocialActions(raw: unknown, nowMs = Date.now()): SocialAction[] {
@@ -316,6 +341,55 @@ export function upsertSocialActions(
   return { ...state, socialActions: capSocialActions(existing) };
 }
 
+export function markUnknownSocialAction(state: AppState, actionId: string, executionId: string, clock: SocialActionClock = defaultClock): AppState {
+  return updateAction(state, actionId, (action) => {
+    if (TERMINAL_STATUSES.has(action.status)) return action;
+    return {
+      ...action,
+      status: 'executing',
+      executionId,
+      unknownExecution: true,
+      failureReason: '送信結果を確認しています',
+      updatedAt: clock.now().toISOString(),
+    };
+  });
+}
+
+export function applyCanonicalServerActions(state: AppState, serverActions: Array<{
+  id: string;
+  status: SocialAction['status'];
+  snoozedUntil?: string;
+  completedAt?: string;
+  executionMode?: SocialAction['executionMode'];
+}>): AppState {
+  if (!serverActions.length) return state;
+  const byId = new Map(serverActions.map((action) => [action.id, action]));
+  const socialActions: SocialAction[] = (state.socialActions || []).map((action): SocialAction => {
+    const remote = byId.get(action.id);
+    if (!remote) return action;
+    if (remote.status === 'completed' && action.status !== 'completed') {
+      return { ...action, status: 'completed', completedAt: remote.completedAt || action.completedAt, unknownExecution: false };
+    }
+    if (remote.status === 'executing' && action.status !== 'completed' && action.status !== 'dismissed') {
+      return { ...action, status: 'executing', unknownExecution: true };
+    }
+    if (remote.status === 'dismissed' && action.status !== 'dismissed' && action.status !== 'completed') {
+      return { ...action, status: 'dismissed', snoozedUntil: undefined };
+    }
+    if (remote.status === 'snoozed' && action.status !== 'completed' && action.status !== 'dismissed') {
+      return { ...action, status: 'snoozed', snoozedUntil: remote.snoozedUntil || action.snoozedUntil };
+    }
+    if (remote.status === 'failed' && action.status === 'ready') {
+      return { ...action, status: 'failed' };
+    }
+    if (remote.executionMode && remote.executionMode !== action.executionMode) {
+      return { ...action, executionMode: remote.executionMode };
+    }
+    return action;
+  });
+  return { ...state, socialActions };
+}
+
 export function snoozeSocialAction(state: AppState, actionId: string, until?: string, clock: SocialActionClock = defaultClock): AppState {
   const now = clock.now();
   const snoozedUntil = until || nextLocalMidnight(now).toISOString();
@@ -359,7 +433,7 @@ export function failSocialAction(state: AppState, actionId: string, failureReaso
 export function completeSocialAction(
   state: AppState,
   actionId: string,
-  options: { executionId?: string; externalResultId?: string; note?: string } = {},
+  options: { executionId?: string; externalResultId?: string; note?: string; pendingFollow?: boolean } = {},
   clock: SocialActionClock = defaultClock,
 ): AppState {
   const action = (state.socialActions || []).find((item) => item.id === actionId);
@@ -373,6 +447,7 @@ export function completeSocialAction(
         completedAt: nowIso,
         updatedAt: nowIso,
         snoozedUntil: undefined,
+        unknownExecution: false,
         executionId: options.executionId || item.executionId,
         failureReason: undefined,
       }
@@ -388,14 +463,14 @@ export function completeSocialAction(
     candidateId: candidate.id,
     action: recordedAction,
     at: nowIso,
-    note: options.note,
+    note: options.pendingFollow ? 'pending follow request' : options.note,
     socialActionId: action.id,
     externalResultId: options.externalResultId,
   };
 
   const candidates = state.candidates.map((item) => {
     if (item.id !== candidate.id) return item;
-    return applyCompletedActionToCandidate(item, action, recordedAction, priorEngagements, nowIso);
+    return applyCompletedActionToCandidate(item, action, recordedAction, priorEngagements, nowIso, options.pendingFollow === true);
   });
 
   return {
@@ -570,16 +645,21 @@ function applyCompletedActionToCandidate(
   recordedAction: Interaction['action'],
   priorEngagements: number,
   nowIso: string,
+  pendingFollow = false,
 ): Candidate {
   const type = action.type;
   if (recordedAction === 'followed') {
     const stage = candidate.stage === 'discovered' || candidate.stage === 'interested' ? 'following' as const : candidate.stage;
+    const tags = pendingFollow
+      ? [...new Set([...(candidate.tags || []), 'pending-follow'])].slice(0, 30)
+      : (candidate.tags || []).filter((tag) => tag !== 'pending-follow');
     return {
       ...candidate,
       stage,
       followedAt: candidate.followedAt ?? nowIso,
-      followBack: candidate.followBack ?? null,
-      relationshipScore: addRelationshipScore(candidate.relationshipScore, 6),
+      followBack: pendingFollow ? null : (candidate.followBack ?? null),
+      tags,
+      relationshipScore: addRelationshipScore(candidate.relationshipScore, pendingFollow ? 2 : 6),
       lastInteractionAt: nowIso,
     };
   }
