@@ -1,9 +1,12 @@
-import { readActiveMonthUsage, reserveActiveMonthBudget } from '../../budgetIntegrity';
+import { readActiveMonthUsage, reserveActiveMonthBudget, voidBudgetReservation } from '../../budgetIntegrity';
 import { fetchWithTimeout } from '../../fetchWithTimeout';
 import { getValidXAccessToken, xOAuthConfigured, xOAuthStatus, type XOAuthEnv } from '../../xOAuth';
+import { resolveEffectiveBudgetLimit } from '../budgetCeiling';
 import { persistXInboundEvidence } from './persist';
 import { normalizeXInboundEvents } from './inbound';
 import { executionModeForAction, liveXCapabilities } from '../capabilities';
+import { queryRecord } from '../query';
+import { commitSyncCheckpoint, loadSyncCheckpoint, saveSyncContinuation } from '../syncCheckpoints';
 
 export interface XInboundEnv extends XOAuthEnv {
   X_INBOUND_SYNC_ENABLED?: string;
@@ -25,7 +28,75 @@ export interface XInboundSyncRequest {
 interface MentionsResponse {
   data?: unknown[];
   includes?: { users?: unknown[] };
-  meta?: { result_count?: number; next_token?: string };
+  meta?: { result_count?: number; next_token?: string; newest_id?: string; oldest_id?: string };
+}
+
+const MAX_PAGES = 8;
+
+export function xMentionsUrl(accountId: string, input: { maxResults: number; sinceId?: string; paginationToken?: string }) {
+  const params = new URLSearchParams({
+    max_results: String(input.maxResults),
+    'tweet.fields': 'author_id,conversation_id,created_at,in_reply_to_user_id,text',
+    expansions: 'author_id',
+    'user.fields': 'id,username,name',
+  });
+  if (input.sinceId) params.set('since_id', input.sinceId);
+  if (input.paginationToken) params.set('pagination_token', input.paginationToken);
+  return {
+    method: 'GET',
+    path: `/2/users/${accountId}/mentions`,
+    url: `https://api.x.com/2/users/${encodeURIComponent(accountId)}/mentions?${params.toString()}`,
+    query: queryRecord(params),
+  };
+}
+
+export async function paginateXMentions(input: {
+  accountId: string;
+  sinceId?: string;
+  paginationToken?: string;
+  pendingNewestId?: string;
+  maxResults: number;
+  maxPages: number;
+  receivedAt: string;
+  getJson: (url: string) => Promise<MentionsResponse>;
+}) {
+  let paginationToken = input.paginationToken;
+  const sinceId = input.sinceId;
+  let newestId = input.pendingNewestId || sinceId || '';
+  const allEvents: ReturnType<typeof normalizeXInboundEvents> = [];
+  let pages = 0;
+  let complete = false;
+  const requests: Array<{ method: string; path: string; url: string; query: Record<string, string> }> = [];
+  while (pages < input.maxPages) {
+    const request = xMentionsUrl(input.accountId, {
+      maxResults: input.maxResults,
+      sinceId: paginationToken ? undefined : sinceId,
+      paginationToken,
+    });
+    requests.push(request);
+    const payload = await input.getJson(request.url);
+    pages += 1;
+    const pageEvents = normalizeXInboundEvents(payload.data || [], payload.includes?.users || [], input.receivedAt);
+    allEvents.push(...pageEvents);
+    for (const event of pageEvents) {
+      if (!newestId || event.externalEventId > newestId) newestId = event.externalEventId;
+    }
+    const next = typeof payload.meta?.next_token === 'string' ? payload.meta.next_token : '';
+    if (!next) {
+      complete = true;
+      paginationToken = undefined;
+      break;
+    }
+    paginationToken = next;
+  }
+  return {
+    events: allEvents,
+    newestId,
+    complete,
+    continuation: complete ? null : (paginationToken || null),
+    pages,
+    requests,
+  };
 }
 
 export async function syncXInboundMentions(env: XInboundEnv, body: XInboundSyncRequest) {
@@ -44,52 +115,67 @@ export async function syncXInboundMentions(env: XInboundEnv, body: XInboundSyncR
 
   const usage = await readActiveMonthUsage(env.DB, userId);
   if (!usage.available) return disabled('X inbound reads fail closed when the budget ledger is unavailable.');
-  const requestedCeiling = Number(body.monthlyLimitUsd);
-  const serverCeiling = Number(env.DEFAULT_MONTHLY_BUDGET_USD);
-  const effectiveLimit = Math.min(
-    Number.isFinite(requestedCeiling) && requestedCeiling >= 0 ? requestedCeiling : serverCeiling,
-    Number.isFinite(serverCeiling) && serverCeiling >= 0 ? serverCeiling : 0,
-  );
+  const budget = await resolveEffectiveBudgetLimit(env, userId, body.monthlyLimitUsd);
   const reservationId = crypto.randomUUID();
-  const reserved = await reserveActiveMonthBudget(env.DB, {
+  const reserved = price === 0 ? true : await reserveActiveMonthBudget(env.DB, {
     id: reservationId,
     userId,
     provider: 'x',
     operation: 'inbound_mentions_read',
     amountUsd: price,
-    effectiveLimit,
+    effectiveLimit: budget.effectiveLimitUsd,
     occurredAt: new Date().toISOString(),
   });
   if (!reserved) return disabled('X inbound read was blocked by the monthly HARD LIMIT.');
 
+  let providerCallStarted = false;
   try {
     const accessToken = await getValidXAccessToken(env, userId);
     const me = await xFetch<{ data?: { id?: string } }>('https://api.x.com/2/users/me?user.fields=id', accessToken);
     const accountId = typeof me.data?.id === 'string' && /^\d{1,30}$/.test(me.data.id) ? me.data.id : '';
     if (!accountId) throw new Error('X /2/users/me did not return a valid user id.');
 
-    const maxResults = clampInt(body.maxResults, 20, 5, 50);
-    const params = new URLSearchParams({
-      max_results: String(maxResults),
-      'tweet.fields': 'author_id,conversation_id,created_at,in_reply_to_user_id,text',
-      expansions: 'author_id',
-      'user.fields': 'id,username,name',
-    });
-    const payload = await xFetch<MentionsResponse>(
-      `https://api.x.com/2/users/${encodeURIComponent(accountId)}/mentions?${params.toString()}`,
-      accessToken,
-    );
+    const checkpoint = await loadSyncCheckpoint(env.DB, userId, 'x_mentions');
+    const maxResults = clampInt(body.maxResults, 20, 5, 100);
+    const sinceId = checkpoint?.newestSeenId && /^\d{1,30}$/.test(checkpoint.newestSeenId)
+      ? checkpoint.newestSeenId
+      : undefined;
+    const pendingNewestId = typeof checkpoint?.extra?.pendingNewestId === 'string' ? checkpoint.extra.pendingNewestId : undefined;
     const receivedAt = new Date().toISOString();
-    const events = normalizeXInboundEvents(payload.data || [], payload.includes?.users || [], receivedAt);
+    providerCallStarted = true;
+    const paged = await paginateXMentions({
+      accountId,
+      sinceId,
+      paginationToken: checkpoint?.continuationCursor || undefined,
+      pendingNewestId,
+      maxResults,
+      maxPages: MAX_PAGES,
+      receivedAt,
+      getJson: (url) => xFetch<MentionsResponse>(url, accessToken),
+    });
+
     const oauthStatus = await xOAuthStatus(env, userId);
     const executionMode = executionModeForAction('reply_inbound', liveXCapabilities(env, oauthStatus.scopes || []));
-    await persistXInboundEvidence(env.DB, userId, events, executionMode);
+    await persistXInboundEvidence(env.DB, userId, paged.events, executionMode);
+    if (paged.complete) {
+      await commitSyncCheckpoint(env.DB, userId, 'x_mentions', paged.newestId || sinceId || null, { pages: paged.pages });
+    } else {
+      await saveSyncContinuation(env.DB, userId, 'x_mentions', paged.continuation, {
+        pages: paged.pages,
+        budgetStop: paged.pages >= MAX_PAGES,
+        pendingNewestId: paged.newestId || pendingNewestId || null,
+      });
+    }
+    const allEvents = paged.events;
+    const complete = paged.complete;
     return {
       enabled: true,
       source: 'x',
+      status: 'success' as const,
       costUsd: price,
       syncedAt: receivedAt,
-      events: events.map((event) => ({
+      checkpointComplete: complete,
+      events: allEvents.map((event) => ({
         id: event.id,
         actionId: `sa-x-${event.type}-${event.externalEventId}`,
         type: event.type,
@@ -103,14 +189,23 @@ export async function syncXInboundMentions(env: XInboundEnv, body: XInboundSyncR
       })),
     };
   } catch (error) {
+    if (!providerCallStarted) await voidBudgetReservation(env.DB, { id: reservationId, userId });
     const message = error instanceof Error ? error.message : 'X inbound sync failed';
-    return { enabled: false, source: 'disabled', costUsd: price, events: [], reason: message, reservationRetained: true };
+    return {
+      enabled: false,
+      source: 'error',
+      status: 'error' as const,
+      costUsd: providerCallStarted ? price : 0,
+      events: [],
+      reason: message,
+      reservationRetained: providerCallStarted,
+    };
   }
 }
 
 function inboundReadPrice(env: XInboundEnv) {
   const explicit = Number(env.X_INBOUND_READ_USD);
-  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  if (Number.isFinite(explicit) && explicit >= 0 && String(env.X_INBOUND_READ_USD || '').trim() !== '') return explicit;
   if (env.X_OWNED_READ_ELIGIBLE === 'true') {
     const owned = Number(env.X_OWNED_READ_USD);
     if (Number.isFinite(owned) && owned > 0) return owned;
@@ -119,7 +214,7 @@ function inboundReadPrice(env: XInboundEnv) {
 }
 
 function disabled(reason: string) {
-  return { enabled: false, source: 'disabled', costUsd: 0, events: [], reason };
+  return { enabled: false, source: 'disabled', status: 'disabled' as const, costUsd: 0, events: [], reason };
 }
 
 async function xFetch<T>(url: string, accessToken: string): Promise<T> {

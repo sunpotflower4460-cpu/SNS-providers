@@ -191,7 +191,7 @@ export function resolveWriteTarget(
   if (needsExternalTarget(action.type) && !action.externalEventId && !action.targetUrl && !action.parentContentId) {
     return fail('BINDING_MISMATCH', 'This write is missing a concrete external event or target.');
   }
-  return fail('HANDOFF_NOT_EXECUTABLE', 'Live writes are not enabled for this operation yet.');
+  return fail('HANDOFF_NOT_EXECUTABLE', 'This action type has no official in-app write path and stays HANDOFF.');
 }
 
 export function needsDraft(type: CanonicalSocialAction['type']) {

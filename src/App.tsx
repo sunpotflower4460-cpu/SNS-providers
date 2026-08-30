@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { analyzeSelfProfile, apiConfigured, discoverSocialCandidates, enrichXProfiles, fetchBudget, fetchCanonicalSocialActions, fetchSocialCapabilities, rankCandidates, syncSocialInbox } from './api';
+import { analyzeSelfProfile, apiConfigured, discoverSocialCandidates, enrichXProfiles, fetchBudget, fetchCanonicalSocialActions, fetchSocialCapabilities, putRuntimeSettings, rankCandidates, syncSocialInbox } from './api';
 import BackupControls from './BackupControls';
 import { getSyncToken } from './controlToken';
 import { buildDailyQueue } from './daily';
@@ -15,6 +15,7 @@ import { copyDraft, openCandidate, openSocialAction, platformLabel } from './soc
 import { applyCanonicalServerActions } from './socialAction';
 import { setLiveSocialCapabilities, SOCIAL_CAPABILITIES_CHANGED } from './socialCapabilities';
 import { applyInstagramDmEvents, applyXDmEvents } from './dmInboundStore';
+import { applyInstagramEngagers } from './instagramOwnedStore';
 import { applyXInboundEvents } from './xInboundStore';
 import type { AppState, AppStateUpdater, Candidate, Platform, SocialAction } from './types';
 import { useLocalDayKey } from './useLocalDay';
@@ -78,6 +79,8 @@ function App() {
   const autoReplenishRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastInboxSyncRef = useRef(0);
   const inboxSyncingRef = useRef(false);
+  const budgetLimitRef = useRef(state.budget.monthlyLimitUsd);
+  budgetLimitRef.current = state.budget.monthlyLimitUsd;
   const localDay = useLocalDayKey();
   const statusNote = persistenceError || apiNote;
 
@@ -130,13 +133,13 @@ function App() {
         const now = Date.now();
         if (!forceReadSync && now - lastInboxSyncRef.current < 15 * 60 * 1000) return;
         lastInboxSyncRef.current = now;
-        const inbox = await syncSocialInbox();
+        const inbox = await syncSocialInbox('local-user', budgetLimitRef.current);
         setState((current) => {
           let next = current;
           const mentions = inbox.xMentions && typeof inbox.xMentions === 'object'
-            ? inbox.xMentions as { enabled?: boolean; events?: unknown[]; syncedAt?: string; source?: string; costUsd?: number }
+            ? inbox.xMentions as { enabled?: boolean; status?: string; events?: unknown[]; syncedAt?: string; source?: string; costUsd?: number }
             : null;
-          if (mentions?.enabled && Array.isArray(mentions.events) && mentions.events.length) {
+          if ((mentions?.status === 'success' || mentions?.enabled) && Array.isArray(mentions.events) && mentions.events.length) {
             next = applyXInboundEvents(next, {
               enabled: true,
               source: typeof mentions.source === 'string' ? mentions.source : 'x',
@@ -146,13 +149,41 @@ function App() {
             });
           }
           const xDm = inbox.xDm && typeof inbox.xDm === 'object'
-            ? inbox.xDm as { enabled?: boolean; events?: Array<{ externalEventId: string; externalUserId?: string; conversationId?: string; text?: string; occurredAt: string; actionId?: string }>; syncedAt?: string }
+            ? inbox.xDm as { enabled?: boolean; status?: string; events?: Array<{ externalEventId: string; externalUserId?: string; conversationId?: string; text?: string; occurredAt: string; actionId?: string; username?: string; displayName?: string }>; syncedAt?: string }
             : null;
-          if (xDm?.enabled && Array.isArray(xDm.events)) next = applyXDmEvents(next, xDm.events, xDm.syncedAt);
+          if ((xDm?.status === 'success' || xDm?.enabled) && Array.isArray(xDm.events)) next = applyXDmEvents(next, xDm.events, xDm.syncedAt);
+          const igComments = inbox.instagramComments && typeof inbox.instagramComments === 'object'
+            ? inbox.instagramComments as {
+              enabled?: boolean;
+              status?: string;
+              syncedAt?: string;
+              events?: Array<{ externalEventId?: string; externalUserId?: string; username?: string; text?: string; parentContentId?: string; occurredAt?: string }>;
+            }
+            : null;
+          if ((igComments?.status === 'success' || igComments?.enabled) && Array.isArray(igComments.events) && igComments.events.length) {
+            next = applyInstagramEngagers(next, {
+              enabled: true,
+              source: 'instagram',
+              externalCostUsd: 0,
+              syncedAt: igComments.syncedAt || new Date().toISOString(),
+              engagers: igComments.events.map((event) => ({
+                id: event.externalUserId || '',
+                username: event.username || event.externalUserId || '',
+                profileUrl: event.username ? `https://www.instagram.com/${event.username}/` : '',
+                commentCount: 1,
+                mediaCount: 1,
+                lastCommentText: event.text || '',
+                lastCommentAt: event.occurredAt || null,
+                latestCommentId: event.externalEventId || null,
+                mediaId: event.parentContentId || null,
+                latestMediaPermalink: null,
+              })),
+            });
+          }
           const igDm = inbox.instagramDm && typeof inbox.instagramDm === 'object'
-            ? inbox.instagramDm as { enabled?: boolean; events?: Array<{ externalEventId: string; externalUserId?: string; conversationId?: string; text?: string; occurredAt: string; actionId?: string }>; syncedAt?: string }
+            ? inbox.instagramDm as { enabled?: boolean; status?: string; events?: Array<{ externalEventId: string; externalUserId?: string; conversationId?: string; text?: string; occurredAt: string; actionId?: string; username?: string; displayName?: string }>; syncedAt?: string }
             : null;
-          if (igDm?.enabled && Array.isArray(igDm.events)) next = applyInstagramDmEvents(next, igDm.events, igDm.syncedAt);
+          if ((igDm?.status === 'success' || igDm?.enabled) && Array.isArray(igDm.events)) next = applyInstagramDmEvents(next, igDm.events, igDm.syncedAt);
           return next;
         });
       } catch {
@@ -828,6 +859,7 @@ function Settings({ state, onChange, onOpenManual }: { state: AppState; onChange
       next = updateRelationshipPolicy(next, { ...next.relationshipPolicy, followBackReviewAfterDays: Math.max(7, Math.min(90, Math.round(followBackDays || 30))) });
       return next;
     });
+    void putRuntimeSettings(Math.max(0, budget)).catch(() => undefined);
     setSaved(true);
   }
 

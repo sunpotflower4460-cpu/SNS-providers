@@ -22,6 +22,7 @@ export async function persistXDmEvidence(
         text: event.text || '',
         conversationId: event.conversationId,
         username: event.username || '',
+        displayName: event.displayName || '',
       },
       occurredAt: event.occurredAt,
       receivedAt: event.receivedAt,

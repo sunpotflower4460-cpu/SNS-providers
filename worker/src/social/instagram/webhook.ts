@@ -1,8 +1,27 @@
+import { persistInstagramCommentEvidence } from './persist';
+
 const MAX_BODY_BYTES = 200_000;
 
 export interface InstagramWebhookEnv {
   INSTAGRAM_WEBHOOK_VERIFY_TOKEN?: string;
   INSTAGRAM_APP_SECRET?: string;
+}
+
+export interface InstagramWebhookMessage {
+  messageId: string;
+  senderIgsid?: string;
+  recipientProfessionalId?: string;
+  text?: string;
+  timestamp?: string;
+}
+
+export interface InstagramWebhookComment {
+  commentId: string;
+  commenterIgsid?: string;
+  username?: string;
+  text?: string;
+  mediaId?: string;
+  occurredAt?: string;
 }
 
 export async function handleInstagramWebhookVerification(request: Request, env: InstagramWebhookEnv) {
@@ -47,8 +66,8 @@ export async function readValidatedInstagramWebhook(request: Request, env: Insta
   return { ok: true as const, payload: payload as Record<string, unknown> };
 }
 
-export function extractInstagramWebhookMessages(payload: Record<string, unknown>) {
-  const entries: Array<{ conversationId?: string; messageId: string; fromId?: string; text?: string; timestamp?: string }> = [];
+export function extractInstagramWebhookMessages(payload: Record<string, unknown>): InstagramWebhookMessage[] {
+  const entries: InstagramWebhookMessage[] = [];
   const objectName = typeof payload.object === 'string' ? payload.object : '';
   if (objectName && objectName !== 'instagram' && objectName !== 'page') return entries;
   const body = Array.isArray(payload.entry) ? payload.entry : [];
@@ -57,22 +76,75 @@ export function extractInstagramWebhookMessages(payload: Record<string, unknown>
     const messaging = Array.isArray(entry.messaging) ? entry.messaging : [];
     for (const item of messaging) {
       if (!isRecord(item) || !isRecord(item.message)) continue;
+      if (item.message.is_echo === true || item.message.is_self === true) continue;
       const messageId = typeof item.message.mid === 'string' ? item.message.mid
         : typeof item.message.id === 'string' ? item.message.id
           : '';
       if (!messageId) continue;
-      const fromId = isRecord(item.sender) && typeof item.sender.id === 'string' ? item.sender.id : undefined;
+      const senderIgsid = isRecord(item.sender) && typeof item.sender.id === 'string' ? item.sender.id : undefined;
+      const recipientProfessionalId = isRecord(item.recipient) && typeof item.recipient.id === 'string'
+        ? item.recipient.id
+        : typeof entry.id === 'string' ? entry.id : undefined;
       const text = typeof item.message.text === 'string' ? item.message.text : undefined;
       const timestamp = typeof item.timestamp === 'number'
         ? new Date(item.timestamp).toISOString()
         : typeof item.timestamp === 'string' ? item.timestamp : undefined;
-      const conversationId = isRecord(item.recipient) && typeof item.recipient.id === 'string'
-        ? item.recipient.id
-        : typeof entry.id === 'string' ? entry.id : undefined;
-      entries.push({ conversationId, messageId, fromId, text, timestamp });
+      entries.push({ messageId, senderIgsid, recipientProfessionalId, text, timestamp });
     }
   }
   return entries;
+}
+
+export function extractInstagramWebhookComments(payload: Record<string, unknown>): InstagramWebhookComment[] {
+  const entries: InstagramWebhookComment[] = [];
+  const objectName = typeof payload.object === 'string' ? payload.object : '';
+  if (objectName && objectName !== 'instagram' && objectName !== 'page') return entries;
+  const body = Array.isArray(payload.entry) ? payload.entry : [];
+  for (const entry of body) {
+    if (!isRecord(entry)) continue;
+    const receivedAt = typeof entry.time === 'number' ? new Date(entry.time * (entry.time < 1e12 ? 1000 : 1)).toISOString() : undefined;
+    const changes = Array.isArray(entry.changes) ? entry.changes : [];
+    for (const change of changes) {
+      if (!isRecord(change)) continue;
+      const field = typeof change.field === 'string' ? change.field : '';
+      if (field !== 'comments' && field !== 'live_comments') continue;
+      const value = isRecord(change.value) ? change.value : {};
+      const commentId = typeof value.id === 'string' ? value.id
+        : typeof value.comment_id === 'string' ? value.comment_id
+          : '';
+      if (!commentId) continue;
+      const from = isRecord(value.from) ? value.from : {};
+      const media = isRecord(value.media) ? value.media : {};
+      entries.push({
+        commentId,
+        commenterIgsid: typeof from.id === 'string' ? from.id : undefined,
+        username: typeof from.username === 'string' ? from.username : undefined,
+        text: typeof value.text === 'string' ? value.text : undefined,
+        mediaId: typeof media.id === 'string' ? media.id : typeof value.media_id === 'string' ? value.media_id : undefined,
+        occurredAt: receivedAt,
+      });
+    }
+  }
+  return entries;
+}
+
+export async function persistWebhookComments(
+  db: D1Database,
+  userId: string,
+  comments: InstagramWebhookComment[],
+  receivedAt: string,
+  executionMode: 'in_app' | 'handoff',
+) {
+  const engagers = comments.filter((item) => item.commentId && item.mediaId).map((item) => ({
+    id: item.commenterIgsid || item.username || item.commentId,
+    username: item.username || item.commenterIgsid || '',
+    lastCommentText: item.text || '',
+    lastCommentAt: item.occurredAt || receivedAt,
+    latestCommentId: item.commentId,
+    mediaId: item.mediaId || null,
+    latestMediaPermalink: null,
+  }));
+  if (engagers.length) await persistInstagramCommentEvidence(db, userId, engagers, receivedAt, executionMode);
 }
 
 async function hmacSha256Hex(secret: string, payload: string) {

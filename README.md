@@ -32,7 +32,7 @@ Mission-driven, mobile-first PWA for growing meaningful social relationships. Th
 - clear Discover empty states for no candidates, all-snoozed candidates and filtered-empty views
 - free-first Tavily discovery for public X/Instagram profile candidates when explicitly configured in free mode
 - official X public-profile enrichment in batches of up to 100 usernames when explicitly enabled
-- read-only X OAuth 2.0 PKCE using only `tweet.read`, `users.read`, `follows.read`, `offline.access` by default; `[返信権限を追加]` can add `tweet.write` only
+- read-only X OAuth 2.0 PKCE using only `tweet.read`, `users.read`, `follows.read`, `offline.access` by default; Settings upgrade buttons add write scopes cumulatively on the same X account (`tweet.write`, `follows.write`, `like.read`+`like.write`, `dm.read`+`dm.write`)
 - AES-GCM encrypted X access/refresh token storage in D1 with server-side refresh
 - budget-guarded owned X sync for the user's profile, recent posts, followers and following when explicitly eligible/configured
 - 20-hour D1 cache for owned X sync to avoid needless repeated reads
@@ -61,7 +61,7 @@ Mission-driven, mobile-first PWA for growing meaningful social relationships. Th
 - D1 downloads pass through the same AppState normalization/validation as JSON backups before becoming live application state
 - optimistic D1 concurrency protection prevents a stale/unknown device from silently overwriting a newer remote snapshot
 - personal control key protects D1 state sync, X OAuth management/owned reads, Instagram Professional engager sync, user-approved social execute, social capability lookup, optional X inbound sync, budget reads, AI ranking, Tavily discovery and optional X enrichment
-- configurable monthly API/LLM budget with a $3 default and always-on HARD LIMIT
+- configurable monthly API/LLM budget with a $3 server HARD LIMIT default; Settings persist a user ceiling and the Worker uses `min(HARD LIMIT, user ceiling)` so the client cannot raise the server cap
 - restored state cannot disable HARD LIMIT
 - free-first AI provider routing with local fallback
 - fail-closed paid usage when the D1 budget ledger, provider rates, or Owned Read eligibility cannot be trusted
@@ -75,9 +75,9 @@ Mission-driven, mobile-first PWA for growing meaningful social relationships. Th
 
 ## Product rule
 
-DISCOVER → RANK → DRAFT → APPROVE → EXECUTE.
+DISCOVER → COLLECT → PRIORITIZE → DRAFT → HUMAN APPROVAL → EXECUTE → RECORD / RECONCILE.
 
-Only EXECUTE performs a social write. The app may discover, rank, draft, remember and recommend. A social write requires one explicit user approval for one action. When an official platform API permits that action, SNS-providers may execute it in-app. When it does not, the PWA uses an explicit HANDOFF. There is no auto-send, no background bulk action, and no autonomous follow/unfollow/like/reply/DM. See `docs/ARCHITECTURE.md` for the safety and cost invariants.
+Only EXECUTE performs a social write. The app may discover, collect, prioritize, draft, remember and recommend. A social write requires one explicit user approval for one action. When an official platform API permits that action, SNS-providers may execute it in-app. When it does not, the PWA uses an explicit HANDOFF. There is no auto-send, no background bulk action, and no autonomous follow/unfollow/like/reply/DM. See `docs/ARCHITECTURE.md` for the safety and cost invariants.
 
 ## Run the PWA locally
 
@@ -196,7 +196,7 @@ The browser-first v0.1 remains local-first so the PWA is useful before backend s
 | X reply | yes | yes | `tweet.write` + `X_REPLY_WRITE_ENABLED` | Mission Inbox, one approval |
 | X follow | yes | yes | `follows.write` + `X_FOLLOW_WRITE_ENABLED`; immutable user ID | Mission Inbox, one approval |
 | X unfollow | yes | yes | `follows.write` + `X_UNFOLLOW_WRITE_ENABLED` | Mission Inbox, extra confirm |
-| X like | yes | yes | `like.write` + `X_LIKE_WRITE_ENABLED`; canonical tweet ID | Mission Inbox, one approval |
+| X like | yes | yes | `like.read`+`like.write` + `X_LIKE_WRITE_ENABLED`; canonical tweet ID | Mission Inbox, one approval |
 | X DM | yes | yes | `dm.read`/`dm.write` + matching flags; existing conversation | inbound → approved reply |
 | Instagram comments | yes | yes | runtime permission probe + `INSTAGRAM_COMMENT_REPLY_ENABLED` | Mission Inbox, one approval |
 | Instagram DM | yes | yes | runtime message permission + 24h window + DM flags | inbound → approved reply |

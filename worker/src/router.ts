@@ -4,15 +4,18 @@ import { syncInstagramEngagers, type InstagramOwnedSyncRequest } from './instagr
 import { executeSocialAction } from './social/execute';
 import { executionModeForAction, liveInstagramCapabilities, liveSocialCapabilities } from './social/capabilities';
 import { probeInstagramPermissions } from './social/instagram/probe';
-import { extractInstagramWebhookMessages, handleInstagramWebhookVerification, readValidatedInstagramWebhook } from './social/instagram/webhook';
+import { extractInstagramWebhookComments, extractInstagramWebhookMessages, handleInstagramWebhookVerification, persistWebhookComments, readValidatedInstagramWebhook } from './social/instagram/webhook';
 import { persistInstagramDmEvidence } from './social/instagram/persistDm';
-import { syncInstagramDirectMessages } from './social/instagram/dmSync';
+import { lookupInstagramConversationByUser, syncInstagramDirectMessages } from './social/instagram/dmSync';
+import { syncInstagramComments } from './social/instagram/commentSync';
 import { syncXInboundMentions } from './social/x/sync';
 import { syncXDirectMessages } from './social/x/dmSync';
 import { dismissCanonicalAction, listCanonicalActions, snoozeCanonicalAction } from './social/lifecycle';
 import { prepareSocialAction } from './social/prepare';
 import { reconcileExecution } from './social/reconcile';
 import { buildProductionPreflight } from './social/preflight';
+import { loadRuntimeSettings, saveUserBudgetCeilingUsd, serverHardLimitUsd } from './social/budgetCeiling';
+import { syncSocialInboxIsolated } from './social/inboxSync';
 import { reserveSyncLease, releaseSyncLease } from './syncLease';
 import { completeXOAuth, disconnectXOAuth, parseOAuthIntent, startXOAuth, xOAuthStatus } from './xOAuth';
 import { syncOwnedXData, type XOwnedSyncRequest } from './xOwned';
@@ -100,6 +103,7 @@ const ROUTER_CORS_PATHS = new Set([
   '/api/x/dm/sync',
   '/api/x/inbound/sync',
   '/api/preflight',
+  '/api/settings/runtime',
 ]);
 
 const PROVIDER_COST_PATHS = new Set([
@@ -153,17 +157,22 @@ export default {
       if (!authorized.ok) return json({ error: authorized.reason }, authorized.status, request, env);
       try {
         let intent: ReturnType<typeof parseOAuthIntent> = 'read';
+        let userId = 'local-user';
         const raw = await request.text();
         if (raw.trim()) {
-          let body: { intent?: unknown };
+          let body: { intent?: unknown; userId?: unknown; scopes?: unknown };
           try {
-            body = JSON.parse(raw) as { intent?: unknown };
+            body = JSON.parse(raw) as { intent?: unknown; userId?: unknown; scopes?: unknown };
           } catch {
             return json({ error: 'Invalid OAuth start body' }, 400, request, env);
           }
+          if (Array.isArray(body?.scopes)) {
+            return json({ error: 'Client-supplied OAuth scope arrays are not accepted.' }, 400, request, env);
+          }
           intent = parseOAuthIntent(body?.intent);
+          if (typeof body.userId === 'string' && body.userId.trim()) userId = sanitizeUserId(body.userId);
         }
-        const authorizeUrl = await startXOAuth(env, intent);
+        const authorizeUrl = await startXOAuth(env, intent, userId);
         return json({ authorizeUrl }, 200, request, env);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'X OAuth start failed';
@@ -287,6 +296,33 @@ export default {
         }, 200, request, env);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Social capability lookup failed';
+        return json({ error: message }, 400, request, env);
+      }
+    }
+
+    if ((request.method === 'GET' || request.method === 'PUT') && url.pathname === '/api/settings/runtime') {
+      const authorized = await authorizeSync(request, env);
+      if (!authorized.ok) return json({ error: authorized.reason, code: 'UNAUTHENTICATED' }, authorized.status, request, env);
+      try {
+        if (request.method === 'GET') {
+          const userId = sanitizeUserId(url.searchParams.get('userId') || 'local-user');
+          return json(await loadRuntimeSettings(env, userId), 200, request, env);
+        }
+        const body = await request.json<{ userId?: string; monthlyBudgetCeilingUsd?: number }>();
+        const userId = sanitizeUserId(body?.userId || 'local-user');
+        const requested = Number(body?.monthlyBudgetCeilingUsd);
+        if (!Number.isFinite(requested) || requested < 0) {
+          return json({ error: 'monthlyBudgetCeilingUsd must be a non-negative number.' }, 400, request, env);
+        }
+        const hard = serverHardLimitUsd(env);
+        const stored = await saveUserBudgetCeilingUsd(env.DB, userId, requested);
+        return json({
+          ...stored,
+          serverHardLimitUsd: hard,
+          effectiveLimitUsd: Math.min(hard, requested),
+        }, 200, request, env);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Runtime settings failed';
         return json({ error: message }, 400, request, env);
       }
     }
@@ -521,20 +557,15 @@ export default {
         const leaseResult = await reserveSyncLease(env.DB, userId, 'inbox_sync', 5 * 60 * 1000);
         if (!leaseResult.ok) {
           return json({
-            xMentions: { enabled: false, source: 'disabled', costUsd: 0, events: [], reason: leaseResult.reason },
-            xDm: { enabled: false, source: 'disabled', costUsd: 0, events: [], reason: leaseResult.reason },
-            instagramDm: { enabled: false, source: 'disabled', costUsd: 0, events: [], reason: leaseResult.reason },
+            xMentions: { enabled: false, source: 'disabled', status: 'disabled', costUsd: 0, events: [], reason: leaseResult.reason },
+            xDm: { enabled: false, source: 'disabled', status: 'disabled', costUsd: 0, events: [], reason: leaseResult.reason },
+            instagramComments: { enabled: false, source: 'disabled', status: 'disabled', costUsd: 0, events: [], reason: leaseResult.reason },
+            instagramDm: { enabled: false, source: 'disabled', status: 'disabled', costUsd: 0, events: [], reason: leaseResult.reason },
           }, 200, request, env);
         }
         try {
-          const mentions = await syncXInboundMentions(env, body || {});
-          const xDm = await syncXDirectMessages(env, body || {});
-          const igDm = await syncInstagramDirectMessages(env, body || {});
-          return json({
-            xMentions: mentions,
-            xDm,
-            instagramDm: igDm,
-          }, 200, request, env);
+          const inbox = await syncSocialInboxIsolated(env, body || {});
+          return json(inbox, 200, request, env);
         } finally {
           await releaseSyncLease(env.DB, leaseResult.lease);
         }
@@ -597,9 +628,12 @@ export default {
     const lease = await reserveSyncLease(env.DB, userId, 'scheduled_inbox_sync', 5 * 60 * 1000);
     if (!lease.ok) return;
     try {
-      await syncXInboundMentions(env, { userId });
-      await syncXDirectMessages(env, { userId });
-      await syncInstagramDirectMessages(env, { userId });
+      await Promise.allSettled([
+        syncXInboundMentions(env, { userId }),
+        syncXDirectMessages(env, { userId }),
+        syncInstagramComments(env, { userId }),
+        syncInstagramDirectMessages(env, { userId }),
+      ]);
     } finally {
       await releaseSyncLease(env.DB, lease.lease);
     }
@@ -765,29 +799,52 @@ async function handleInstagramWebhookPost(request: Request, env: Env) {
     });
   }
   const messages = extractInstagramWebhookMessages(validated.payload);
+  const comments = extractInstagramWebhookComments(validated.payload);
   const receivedAt = new Date().toISOString();
   const ownId = env.INSTAGRAM_USER_ID?.trim() || '';
-  const events = messages
-    .filter((item) => item.fromId && item.fromId !== ownId && item.messageId)
-    .map((item) => ({
+  const version = env.INSTAGRAM_API_VERSION?.trim() || '';
+  const token = env.INSTAGRAM_ACCESS_TOKEN?.trim() || '';
+  const events = [];
+  for (const item of messages) {
+    if (!item.senderIgsid || item.senderIgsid === ownId || !item.messageId) continue;
+    let conversationId = '';
+    if (token && ownId && /^v\d+\.\d+$/.test(version)) {
+      try {
+        conversationId = await lookupInstagramConversationByUser({
+          igUserId: ownId,
+          senderIgsid: item.senderIgsid,
+          accessToken: token,
+          apiVersion: version,
+        });
+      } catch {
+        conversationId = '';
+      }
+    }
+    events.push({
       id: `ig-dm-${item.messageId}`,
       platform: 'instagram' as const,
       type: 'dm' as const,
       externalEventId: item.messageId,
-      externalUserId: item.fromId,
-      conversationId: item.conversationId || item.fromId || '',
+      externalUserId: item.senderIgsid,
+      conversationId: conversationId || undefined,
+      conversationUnresolved: !conversationId,
+      recipientProfessionalId: item.recipientProfessionalId,
       text: item.text,
       occurredAt: item.timestamp && Number.isFinite(new Date(item.timestamp).getTime()) ? item.timestamp : receivedAt,
       receivedAt,
       ownMessage: false,
-    }))
-    .filter((item) => item.conversationId);
+    });
+  }
+  const probe = await probeInstagramPermissions(env, 'local-user').catch(() => null);
   if (events.length) {
-    const probe = await probeInstagramPermissions(env, 'local-user').catch(() => null);
     const executionMode = executionModeForAction('dm_reply', liveInstagramCapabilities(env, probe));
     await persistInstagramDmEvidence(env.DB, 'local-user', events, executionMode);
   }
-  return new Response(JSON.stringify({ ok: true, received: messages.length }), {
+  if (comments.length) {
+    const executionMode = executionModeForAction('comment_reply', liveInstagramCapabilities(env, probe));
+    await persistWebhookComments(env.DB, 'local-user', comments, receivedAt, executionMode);
+  }
+  return new Response(JSON.stringify({ ok: true, received: messages.length + comments.length }), {
     status: 200,
     headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
   });

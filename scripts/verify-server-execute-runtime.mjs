@@ -31,6 +31,9 @@ await emit('social/httpStatus.js', new URL('../worker/src/social/httpStatus.ts',
 await emit('social/capabilities.js', new URL('../worker/src/social/capabilities.ts', import.meta.url));
 await emit('social/executeGuard.js', new URL('../worker/src/social/executeGuard.ts', import.meta.url));
 await emit('social/repository.js', new URL('../worker/src/social/repository.ts', import.meta.url));
+await emit('social/query.js', new URL('../worker/src/social/query.ts', import.meta.url));
+await emit('social/budgetCeiling.js', new URL('../worker/src/social/budgetCeiling.ts', import.meta.url));
+await emit('social/fingerprint.js', new URL('../worker/src/social/fingerprint.ts', import.meta.url));
 await emit('social/execute.js', new URL('../worker/src/social/execute.ts', import.meta.url));
 await emit('social/instagram/inbound.js', new URL('../worker/src/social/instagram/inbound.ts', import.meta.url));
 await emit('social/instagram/execute.js', new URL('../worker/src/social/instagram/execute.ts', import.meta.url));
