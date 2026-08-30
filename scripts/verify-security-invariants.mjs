@@ -266,7 +266,7 @@ if (social.includes('window.open(candidate.profileUrl') || !social.includes('can
   throw new Error('Social handoff can trust stored URLs instead of canonical official-platform destinations.');
 }
 
-if (!/await clearOwnedXDerivedState\(env, userId\);\s*await persistTokenResponse\(env, userId, token, undefined, undefined, requestedScopes\);/.test(xOAuth)
+if (!/await clearOwnedXDerivedState\(env, userId\);\s*await persistTokenResponse\(env, userId, token, undefined, undefined, requestedScopes, grantedUser\?\.id \|\| null\);/.test(xOAuth)
   || !xOAuth.includes("DELETE FROM x_owned_snapshots WHERE user_id = ?")
   || !xOAuth.includes("DELETE FROM x_owned_paging WHERE user_id = ?")
   || !xOAuth.includes("DELETE FROM x_follow_cycle_targets WHERE user_id = ?")) {
@@ -298,18 +298,18 @@ for (const scope of requiredReadScopes) {
 
 const writeScopes = scopes.filter((scope) => scope.includes('.write') || scope === 'dm.write');
 if (writeScopes.length) throw new Error(`Write-capable X OAuth scope detected: ${writeScopes.join(', ')}`);
-if (!xOAuth.includes("const OPTIONAL_WRITE_SCOPES = ['tweet.write', 'follows.write', 'like.write', 'dm.read', 'dm.write']")
+if (!xOAuth.includes("const OPTIONAL_WRITE_SCOPES = ['tweet.write', 'follows.write', 'like.read', 'like.write', 'dm.read', 'dm.write']")
   || !xOAuth.includes('scope: requested.join')
   || !xOAuth.includes('requested_scopes_json')
   || !xOAuth.includes("scopesForOAuthIntent")
+  || !xOAuth.includes('cumulativeScopesForIntent')
   || !xOAuth.includes("parseOAuthIntent")
   || xOAuth.includes('scope: OPTIONAL_WRITE_SCOPES.join')
   || !xOAuth.includes("intent: XOAuthIntent = 'read'")
-  || !xOAuth.includes("X reply upgrade must not request follow or DM scopes")
-  || !xOAuth.includes("X relationship upgrade must request follows.write only")
-  || !xOAuth.includes("X engagement upgrade must request like.write only")
-  || !xOAuth.includes("X DM upgrade must not request reply, follow, or like scopes")) {
-  throw new Error('X OAuth write capabilities are no longer an explicit, opt-in scope set separate from the default read-only connection.');
+  || !xOAuth.includes('expected_x_user_id')
+  || !xOAuth.includes("like.read")
+  || !xOAuth.includes('x_oauth=account_mismatch')) {
+  throw new Error('X OAuth write capabilities are no longer an explicit, cumulative, same-account upgrade.');
 }
 if (!xOAuth.includes('validateGrantedScopes(token.scope, {')
   || !xOAuth.includes('requestedScopes')

@@ -2,6 +2,8 @@ import { utcMonthWindow } from '../budgetIntegrity';
 import { liveSocialCapabilities, operationWriteEnabled } from './capabilities';
 import { probeInstagramPermissions } from './instagram/probe';
 import { readSchemaVersion, EXPECTED_SCHEMA_VERSION } from './schemaVersion';
+import { loadUserBudgetCeilingUsd, serverHardLimitUsd } from './budgetCeiling';
+import { loadSyncCheckpoint } from './syncCheckpoints';
 import { xOAuthConfigured, xOAuthStatus, type XOAuthEnv } from '../xOAuth';
 
 export interface PreflightEnv extends XOAuthEnv {
@@ -29,6 +31,9 @@ export interface PreflightEnv extends XOAuthEnv {
   X_DM_WRITE_USD?: string;
   X_DM_READ_USD?: string;
   X_INBOUND_READ_USD?: string;
+  X_LOOKUP_READ_USD?: string;
+  X_USER_READ_USD?: string;
+  X_OWNED_READ_USD?: string;
   INSTAGRAM_COMMENT_REPLY_USD?: string;
   INSTAGRAM_DM_WRITE_USD?: string;
   INSTAGRAM_DM_READ_USD?: string;
@@ -73,6 +78,9 @@ export async function buildProductionPreflight(env: PreflightEnv, userId: string
   checks.push(flagCheck('X reply write', capabilities.x.sendReply, scopes.includes('tweet.write'), env.X_REPLY_WRITE_ENABLED === 'true', 'tweet.write', 'Settings → X → 返信権限を追加'));
   checks.push(flagCheck('X follow write', capabilities.x.follow, scopes.includes('follows.write'), env.X_FOLLOW_WRITE_ENABLED === 'true', 'follows.write', 'Settings → X → フォロー権限を追加'));
   checks.push(flagCheck('X like write', capabilities.x.like, scopes.includes('like.write'), env.X_LIKE_WRITE_ENABLED === 'true', 'like.write', 'Settings → X → いいね権限を追加'));
+  checks.push(scopes.includes('like.read') && scopes.includes('like.write')
+    ? ok('X like.read', 'like.read is present for official liked-state reconciliation.')
+    : warn('X like.read', 'いいね reconcilation needs like.read + like.write.', 'Settings → X → いいね権限を追加 (requests like.read and like.write together).'));
   checks.push(flagCheck('X DM read', capabilities.x.readDm, scopes.includes('dm.read'), env.X_DM_READ_ENABLED === 'true' || env.X_DM_WRITE_ENABLED === 'true', 'dm.read', 'Settings → X → DM権限を追加'));
   checks.push(flagCheck('X DM write', capabilities.x.sendDm, scopes.includes('dm.write'), env.X_DM_WRITE_ENABLED === 'true', 'dm.write', 'Settings → X → DM権限を追加'));
 
@@ -107,6 +115,15 @@ export async function buildProductionPreflight(env: PreflightEnv, userId: string
   checks.push(webhookReady
     ? ok('instagramReceiverReady', 'Instagram webhook receiver secrets are present. Dashboard subscription is still manual.')
     : warn('instagramReceiverReady', 'Webhook receiver code is present but verify token / app secret are unset.', 'Set INSTAGRAM_WEBHOOK_VERIFY_TOKEN and INSTAGRAM_APP_SECRET, then register the callback in Meta App Dashboard.'));
+
+  const userCeiling = await loadUserBudgetCeilingUsd(env.DB, userId);
+  const hardLimit = serverHardLimitUsd(env);
+  checks.push(ok('userBudgetCeiling', userCeiling == null
+    ? `No stored user ceiling; effective limit is the server HARD LIMIT $${hardLimit}.`
+    : `User ceiling $${userCeiling}; effective limit $${Math.min(hardLimit, userCeiling)} (HARD LIMIT $${hardLimit}).`));
+
+  const sources = await sourceStatuses(env, userId, oauth.connected, scopes, probe, webhookReady);
+  for (const source of sources) checks.push(source.check);
 
   const blocked = checks.filter((item) => item.severity === 'block');
   const warned = checks.filter((item) => item.severity === 'warn');
@@ -153,6 +170,7 @@ export async function buildProductionPreflight(env: PreflightEnv, userId: string
       instagramReceiverReady: webhookReady,
       registrationDetectedIfPossible: false,
     },
+    inboxSources: Object.fromEntries(sources.map((item) => [item.id, { status: item.status, reason: item.check.reason, nextStep: item.check.nextStep }])),
     app: {
       socialActionSchemaReady: socialActionsReady,
       executionSchemaReady: executionsReady,
@@ -182,6 +200,9 @@ function collectPrices(env: PreflightEnv) {
     price('X_LIKE_WRITE_USD', env.X_LIKE_WRITE_USD),
     price('X_DM_WRITE_USD', env.X_DM_WRITE_USD),
     price('X_DM_READ_USD', env.X_DM_READ_USD),
+    price('X_INBOUND_READ_USD', env.X_INBOUND_READ_USD),
+    price('X_LOOKUP_READ_USD', env.X_LOOKUP_READ_USD ?? env.X_USER_READ_USD),
+    price('X_OWNED_READ_USD', env.X_OWNED_READ_USD),
     price('INSTAGRAM_COMMENT_REPLY_USD', env.INSTAGRAM_COMMENT_REPLY_USD),
     price('INSTAGRAM_DM_WRITE_USD', env.INSTAGRAM_DM_WRITE_USD),
     price('INSTAGRAM_DM_READ_USD', env.INSTAGRAM_DM_READ_USD),
@@ -225,6 +246,55 @@ function warn(label: string, reason: string, nextStep?: string): Check {
 }
 function block(label: string, reason: string, nextStep?: string): Check {
   return { ok: false, severity: 'block', label, reason, nextStep };
+}
+
+async function sourceStatuses(
+  env: PreflightEnv,
+  userId: string,
+  xConnected: boolean,
+  scopes: string[],
+  probe: Awaited<ReturnType<typeof probeInstagramPermissions>>,
+  webhookReady: boolean,
+) {
+  const xMentionsReady = xConnected && scopes.includes('tweet.read') && env.X_INBOUND_SYNC_ENABLED === 'true' && Boolean(env.X_INBOUND_READ_USD?.trim());
+  const xDmReady = xConnected && scopes.includes('dm.read') && env.X_DM_READ_ENABLED === 'true' && Boolean(env.X_DM_READ_USD?.trim());
+  const igCommentsPoll = probe.readComments === true;
+  const igDmReady = probe.readDm === true && env.INSTAGRAM_DM_READ_ENABLED === 'true' && env.INSTAGRAM_DM_READ_USD != null && String(env.INSTAGRAM_DM_READ_USD).trim() !== '';
+  const mentionCheckpoint = await loadSyncCheckpoint(env.DB, userId, 'x_mentions');
+  return [
+    sourceCheck('xMentions', 'X mentions', xMentionsReady ? 'READY' : (env.X_INBOUND_SYNC_ENABLED === 'true' ? 'BLOCKED' : 'DISABLED'), xMentionsReady
+      ? `X mention/reply polling is ready${mentionCheckpoint?.continuationCursor ? ' (continuation cursor stored).' : '.'}`
+      : 'X mention sync is not ready.', xMentionsReady ? undefined : 'Set X_INBOUND_SYNC_ENABLED=true, X_INBOUND_READ_USD, and connect X.'),
+    sourceCheck('xDm', 'X DM', xDmReady ? 'READY' : (env.X_DM_READ_ENABLED === 'true' ? 'BLOCKED' : 'DISABLED'), xDmReady
+      ? 'X DM read is ready.'
+      : 'X DM read is not ready.', xDmReady ? undefined : 'Settings → X → DM権限を追加, then X_DM_READ_ENABLED=true and X_DM_READ_USD.'),
+    sourceCheck('instagramCommentsWebhook', 'Instagram comments webhook', webhookReady && igCommentsPoll ? 'WEBHOOK READY' : webhookReady ? 'BLOCKED' : 'DISABLED', webhookReady && igCommentsPoll
+      ? 'Comment webhook receiver is ready. Dashboard subscription is still manual.'
+      : 'Comment webhook is not fully ready.', 'Register comments + live_comments in Meta App Dashboard after secrets exist.'),
+    sourceCheck('instagramCommentsPoll', 'Instagram comments polling', igCommentsPoll ? 'POLLING READY' : 'BLOCKED', igCommentsPoll
+      ? 'Comment catch-up polling can run without a webhook.'
+      : 'Comment polling is blocked until comment permission is verified.', 'Settings → Instagram → 権限状態を確認.'),
+    sourceCheck('instagramDm', 'Instagram DM', igDmReady ? 'READY' : 'BLOCKED', igDmReady
+      ? 'Instagram DM read is ready.'
+      : 'Instagram DM read is blocked.', 'Verify message permission, set INSTAGRAM_DM_READ_ENABLED=true and INSTAGRAM_DM_READ_USD.'),
+  ];
+}
+
+function sourceCheck(id: string, label: string, status: string, reason: string, nextStep?: string) {
+  const blocked = status === 'BLOCKED';
+  const disabled = status === 'DISABLED';
+  const severity: Check['severity'] = blocked || disabled ? 'warn' : 'ok';
+  return {
+    id,
+    status,
+    check: {
+      ok: true,
+      severity,
+      label: `${label}: ${status}`,
+      reason,
+      nextStep,
+    } satisfies Check,
+  };
 }
 
 export { operationWriteEnabled };

@@ -1,10 +1,13 @@
 import { readActiveMonthUsage, reserveActiveMonthBudget, voidBudgetReservation } from '../budgetIntegrity';
+import { resolveEffectiveBudgetLimit } from './budgetCeiling';
 import { liveInstagramCapabilities, liveXCapabilities, operationWriteEnabled } from './capabilities';
+import { buildExecutionFingerprint } from './fingerprint';
 import {
   assertExecutable,
   parseExecuteBody,
   resolveWriteTarget,
   writeOperationFor,
+  needsDraft,
   type ExecuteGuardErr,
 } from './executeGuard';
 import { replyToInstagramComment } from './instagram/execute';
@@ -65,6 +68,7 @@ export interface ExecutionRecord {
   createdAt: string;
   completedAt: string | null;
   reservationId?: string | null;
+  fingerprintJson?: string | null;
 }
 
 export interface SocialExecuteAdapters {
@@ -211,8 +215,8 @@ export async function executeSocialAction(
       await finalizeActionStatus(env.DB, userId, action.id, 'failed', { retryable: true, nowIso: new Date().toISOString() });
       return { status: 403, body: { ok: false as const, code: 'WRITE_COST_UNKNOWN', reason: 'Budget ledger is unavailable.' } };
     }
-    const limit = Number(env.DEFAULT_MONTHLY_BUDGET_USD);
-    const effectiveLimit = Number.isFinite(limit) && limit >= 0 ? limit : 0;
+    const budget = await resolveEffectiveBudgetLimit(env, userId);
+    const effectiveLimit = budget.effectiveLimitUsd;
     reservationId = crypto.randomUUID();
     const reserved = await reserveActiveMonthBudget(env.DB, {
       id: reservationId,
@@ -232,7 +236,55 @@ export async function executeSocialAction(
     await attachReservation(env, userId, parsed.executionId, reservationId);
   }
 
-  const result = await performProviderWrite(env, context, operation, adapters);
+  let providerCallStarted = false;
+  let result: ProviderWriteResult;
+  try {
+    const boundTarget = resolveWriteTarget(action, event);
+    let accessToken = '';
+    if (action.platform === 'x' && env.SOCIAL_WRITE_MODE !== 'test') {
+      accessToken = adapters.getXAccessToken
+        ? await adapters.getXAccessToken()
+        : await getValidXAccessToken(env, userId);
+    }
+    let actorId = action.platform === 'instagram' ? env.INSTAGRAM_USER_ID?.trim() : undefined;
+    if (action.platform === 'x' && accessToken) {
+      try {
+        actorId = (await lookupXAuthenticatedUser(accessToken))?.id;
+      } catch {
+        actorId = undefined;
+      }
+    }
+    const targetId = isExecuteGuardErr(boundTarget)
+      ? (action.externalEventId || action.platformUserId || action.id)
+      : boundTarget.externalEventId;
+    const fingerprint = await buildExecutionFingerprint({
+      draft: needsDraft(action.type) ? parsed.draft : undefined,
+      canonicalTargetId: targetId,
+      conversationId: isExecuteGuardErr(boundTarget) ? action.conversationId : boundTarget.conversationId,
+      parentContentId: isExecuteGuardErr(boundTarget) ? action.parentContentId : boundTarget.parentContentId,
+      actorId,
+      operation,
+    });
+    await attachFingerprint(env, userId, parsed.executionId, fingerprint);
+    providerCallStarted = true;
+    result = await performProviderWrite(env, context, operation, adapters);
+  } catch (error) {
+    if (!providerCallStarted && reservationId) {
+      await voidBudgetReservation(env.DB, { id: reservationId, userId });
+    }
+    const message = error instanceof Error ? error.message : 'Provider write did not start.';
+    if (!providerCallStarted) {
+      await completeExecution(env, { ...record, status: 'failed', errorCode: 'CAPABILITY_DENIED', completedAt: new Date().toISOString() });
+      await finalizeActionStatus(env.DB, userId, action.id, 'failed', { retryable: true, nowIso: new Date().toISOString() });
+      return { status: 403, body: { ok: false as const, code: 'CAPABILITY_DENIED', reason: message } };
+    }
+    result = {
+      certainty: 'unknown',
+      retryable: false,
+      errorCode: 'UNKNOWN_RESULT',
+      reason: message,
+    };
+  }
   const completedAt = new Date().toISOString();
 
   if (result.certainty === 'success') {
@@ -487,6 +539,28 @@ export function knownWriteCost(env: SocialExecuteEnv, operation: string) {
   if (!Number.isFinite(amount) || amount < 0) return null;
   if (operation === 'instagram_comment_reply' || operation === 'instagram_dm_write') return amount;
   return amount > 0 ? amount : null;
+}
+
+async function attachFingerprint(
+  env: SocialExecuteEnv,
+  userId: string,
+  executionId: string,
+  fingerprint: { normalizedTextSha256: string | null; canonicalTargetId: string; conversationId?: string; parentContentId?: string; actorId?: string; operation: string; preparedAt: string },
+) {
+  const payload = JSON.stringify(fingerprint);
+  try {
+    await env.DB.prepare(
+      'UPDATE social_executions SET fingerprint_json = ?, result_metadata_json = ? WHERE user_id = ? AND idempotency_key = ? AND status = ?',
+    ).bind(payload, payload, userId, executionId, 'pending').run();
+  } catch {
+    try {
+      await env.DB.prepare(
+        'UPDATE social_executions SET result_metadata_json = ? WHERE user_id = ? AND idempotency_key = ? AND status = ?',
+      ).bind(payload, userId, executionId, 'pending').run();
+    } catch {
+      // Fingerprint is still used in-memory by this process if D1 is behind.
+    }
+  }
 }
 
 async function attachReservation(env: SocialExecuteEnv, userId: string, executionId: string, reservationId: string) {

@@ -31,11 +31,12 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
     const oauthResult = currentUrl.searchParams.get('x_oauth');
     if (oauthResult) {
       if (oauthResult === 'connected') {
-        // The callback may represent reauthorization or a switch to another X account.
-        // Server-side derived cache is cleared in both cases, so the old local @username
-        // and stats must not be displayed as if they belonged to the new connection.
         onChange((current) => ({ ...current, xAccount: {} }));
         setNote('X接続を更新しました。Xの情報を更新すると現在のアカウント情報を表示します');
+      } else if (oauthResult === 'upgraded') {
+        setNote('同じXアカウントへ権限を追加しました。既存の読み取りデータは残しています');
+      } else if (oauthResult === 'account_mismatch') {
+        setNote('別のXアカウントが選ばれたため権限追加を中止しました。以前の接続はそのままです');
       } else {
         setNote('X接続を完了できませんでした。もう一度接続をお試しください');
       }
@@ -209,7 +210,7 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
 
     <div className="x-scope-note">
       <strong>既定は読み取り接続です</strong>
-      <span>プロフィール・投稿・フォロー関係の読み取りだけを使います。返信・フォロー・いいね・DMの書き込み権限は、それぞれ専用ボタンを押したときだけ要求します。まとめて取りすぎません。勝手にフォロー、解除、いいね、投稿、DM送信することはありません。</span>
+      <span>プロフィール・投稿・フォロー関係の読み取りだけを使います。返信・フォロー・いいね・DMの書き込み権限は、それぞれ専用ボタンを押したときだけ、いま持っている権限の上に積み上げて要求します。既定の接続は常に読み取り専用です。勝手にフォロー、解除、いいね、投稿、DM送信することはありません。</span>
     </div>
 
     {status.connected && <div className="x-capability-list" aria-label="Xの接続権限">
@@ -250,7 +251,7 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
 
     <details className="candidate-details">
       <summary>読み取り権限の詳細</summary>
-      <div className="candidate-details-body strategy-note"><p>既定の接続は tweet.read / users.read / follows.read / offline.access のみです。返信は tweet.write、フォローは follows.write、いいねは like.write、DMは dm.read+dm.write を、それぞれ専用ボタンでだけ追加します。既定接続で書き込み権限をまとめて要求することはありません。</p></div>
+      <div className="candidate-details-body strategy-note"><p>既定の接続は tweet.read / users.read / follows.read / offline.access のみです。返信は tweet.write、フォローは follows.write、いいねは like.read + like.write、DMは dm.read+dm.write を、それぞれ専用ボタンで累積追加します。既定接続で書き込み権限をまとめて要求することはありません。権限追加は同じXアカウントのまま行われます。</p></div>
     </details>
 
     <div className="x-account-actions">

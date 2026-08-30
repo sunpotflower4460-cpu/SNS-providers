@@ -1,8 +1,12 @@
 {
-  "expectedVersion": 3,
+  "expectedVersion": 7,
   "migrations": [
     { "version": 1, "file": "0001_baseline.sql" },
     { "version": 2, "file": "0002_social_action_lifecycle.sql" },
-    { "version": 3, "file": "0003_instagram_permission_probe.sql" }
+    { "version": 3, "file": "0003_instagram_permission_probe.sql" },
+    { "version": 4, "file": "0004_x_oauth_cumulative_identity.sql" },
+    { "version": 5, "file": "0005_execution_fingerprint.sql" },
+    { "version": 6, "file": "0006_social_sync_checkpoints.sql" },
+    { "version": 7, "file": "0007_user_runtime_settings.sql" }
   ]
 }

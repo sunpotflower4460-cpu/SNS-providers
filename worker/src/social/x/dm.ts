@@ -1,4 +1,5 @@
 import { fetchWithTimeout } from '../../fetchWithTimeout';
+import { queryRecord } from '../query';
 import { classifyProviderHttpStatus, providerErrorDetail } from '../httpStatus';
 import type { ProviderWriteResult } from '../types';
 
@@ -20,6 +21,7 @@ export interface NormalizedXDmEvent {
   conversationId: string;
   text?: string;
   username?: string;
+  displayName?: string;
   occurredAt: string;
   receivedAt: string;
   ownMessage: boolean;
@@ -123,16 +125,90 @@ export async function sendXDm(input: XDmSendInput): Promise<ProviderWriteResult>
   }
 }
 
+export function xDmEventsUrl(paginationToken?: string) {
+  const params = new URLSearchParams({
+    max_results: '100',
+    'dm_event.fields': 'id,text,event_type,dm_conversation_id,sender_id,created_at',
+    event_types: 'MessageCreate',
+    expansions: 'sender_id',
+    'user.fields': 'username,name,profile_image_url',
+  });
+  if (paginationToken) params.set('pagination_token', paginationToken);
+  return {
+    method: 'GET',
+    path: '/2/dm_events',
+    url: `https://api.x.com/2/dm_events?${params.toString()}`,
+    query: queryRecord(params),
+  };
+}
+
+export async function paginateXDmEvents(input: {
+  ownUserId: string;
+  paginationToken?: string;
+  knownNewest?: string;
+  pendingNewestId?: string;
+  maxPages: number;
+  receivedAt: string;
+  getJson: (url: string) => Promise<{ data?: unknown[]; includes?: { users?: unknown[] }; meta?: { next_token?: string } }>;
+}) {
+  let paginationToken = input.paginationToken;
+  const knownNewest = input.knownNewest || '';
+  let newestId = input.pendingNewestId || knownNewest;
+  const allEvents: ReturnType<typeof normalizeXDmEvents> = [];
+  let pages = 0;
+  let complete = false;
+  let reachedKnownBoundary = false;
+  const requests: Array<{ method: string; path: string; url: string; query: Record<string, string> }> = [];
+  while (pages < input.maxPages) {
+    const request = xDmEventsUrl(paginationToken);
+    requests.push(request);
+    const payload = await input.getJson(request.url);
+    pages += 1;
+    const pageEvents = normalizeXDmEvents(payload.data || [], input.ownUserId, input.receivedAt, payload.includes?.users || []);
+    for (const event of pageEvents) {
+      if (knownNewest && event.externalEventId === knownNewest) reachedKnownBoundary = true;
+      if (!newestId || event.externalEventId > newestId) newestId = event.externalEventId;
+    }
+    allEvents.push(...pageEvents);
+    const next = typeof payload.meta?.next_token === 'string' ? payload.meta.next_token : '';
+    if (!next || reachedKnownBoundary) {
+      complete = true;
+      paginationToken = undefined;
+      break;
+    }
+    paginationToken = next;
+  }
+  return {
+    events: allEvents,
+    newestId,
+    complete,
+    continuation: complete ? null : (paginationToken || null),
+    pages,
+    requests,
+  };
+}
+
 export function normalizeXDmEvents(
   events: unknown,
   ownUserId: string,
   receivedAt: string,
+  users: unknown = [],
 ): NormalizedXDmEvent[] {
   if (!Array.isArray(events)) return [];
+  const userById = new Map<string, { username?: string; name?: string }>();
+  if (Array.isArray(users)) {
+    for (const user of users) {
+      if (!isRecord(user) || typeof user.id !== 'string') continue;
+      userById.set(user.id, {
+        username: typeof user.username === 'string' ? user.username : undefined,
+        name: typeof user.name === 'string' ? user.name : undefined,
+      });
+    }
+  }
   const normalized: NormalizedXDmEvent[] = [];
   const seen = new Set<string>();
   for (const event of events) {
-    const item = normalizeOne(event, ownUserId, receivedAt);
+    const item = normalizeOne(event, ownUserId, receivedAt, userById);
     if (!item || seen.has(item.externalEventId)) continue;
     seen.add(item.externalEventId);
     normalized.push(item);
@@ -140,7 +216,12 @@ export function normalizeXDmEvents(
   return normalized;
 }
 
-function normalizeOne(event: unknown, ownUserId: string, receivedAt: string): NormalizedXDmEvent | null {
+function normalizeOne(
+  event: unknown,
+  ownUserId: string,
+  receivedAt: string,
+  userById: Map<string, { username?: string; name?: string }>,
+): NormalizedXDmEvent | null {
   if (!isRecord(event)) return null;
   const id = typeof event.id === 'string' && EVENT_ID.test(event.id) ? event.id : '';
   const conversationId = typeof event.dm_conversation_id === 'string' && CONVERSATION_ID.test(event.dm_conversation_id)
@@ -153,6 +234,7 @@ function normalizeOne(event: unknown, ownUserId: string, receivedAt: string): No
   const text = typeof event.text === 'string' ? event.text.trim().slice(0, 4000) : '';
   const createdAt = typeof event.created_at === 'string' && validPastishIso(event.created_at) ? event.created_at : receivedAt;
   const ownMessage = Boolean(senderId && senderId === ownUserId);
+  const profile = senderId ? userById.get(senderId) : undefined;
   return {
     id: `x-dm-${id}`,
     platform: 'x',
@@ -161,6 +243,8 @@ function normalizeOne(event: unknown, ownUserId: string, receivedAt: string): No
     externalUserId: ownMessage ? undefined : (senderId || undefined),
     conversationId,
     text: text || undefined,
+    username: profile?.username,
+    displayName: profile?.name,
     occurredAt: createdAt,
     receivedAt,
     ownMessage,

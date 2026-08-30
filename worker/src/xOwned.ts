@@ -1,4 +1,5 @@
 import { readActiveMonthUsage, reserveActiveMonthBudget } from './budgetIntegrity';
+import { resolveEffectiveBudgetLimit } from './social/budgetCeiling';
 import { fetchWithTimeout } from './fetchWithTimeout';
 import {
   FollowEvidenceStorageUnavailableError,
@@ -561,15 +562,13 @@ async function saveCache(env: XOwnedEnv, userId: string, snapshot: unknown) {
 }
 
 async function budgetForRequest(env: XOwnedEnv, userId: string, requestedLimitUsd?: number) {
-  const serverLimit = configuredLimit(env);
-  const requestedLimit = Number.isFinite(requestedLimitUsd) ? Math.max(0, requestedLimitUsd!) : serverLimit;
-  const effectiveLimit = Math.min(serverLimit, requestedLimit);
+  const resolved = await resolveEffectiveBudgetLimit(env, userId, requestedLimitUsd);
   const ledger = await monthUsage(env, userId);
   return {
     usedUsd: ledger.usedUsd,
-    effectiveLimit,
+    effectiveLimit: resolved.effectiveLimitUsd,
     ledgerAvailable: ledger.available,
-    remainingUsd: ledger.available ? Math.max(0, effectiveLimit - ledger.usedUsd) : 0,
+    remainingUsd: ledger.available ? Math.max(0, resolved.effectiveLimitUsd - ledger.usedUsd) : 0,
   };
 }
 

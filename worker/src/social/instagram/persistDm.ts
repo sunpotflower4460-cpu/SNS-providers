@@ -1,5 +1,5 @@
 import { instagramDmActionId, instagramDmEventRowId } from '../ids';
-import { upsertProviderSocialAction, upsertSocialEvent } from '../repository';
+import { loadCanonicalEvent, upsertProviderSocialAction, upsertSocialEvent } from '../repository';
 import type { CanonicalSocialAction, CanonicalSocialEvent } from '../types';
 import { instagramMessagingWindowOpen, type NormalizedInstagramDmEvent } from './dm';
 
@@ -11,6 +11,11 @@ export async function persistInstagramDmEvidence(
 ) {
   for (const event of events) {
     if (event.ownMessage || !event.externalUserId) continue;
+    const existing = await loadCanonicalEvent(db, userId, 'instagram', 'dm', event.externalEventId);
+    const existingConversation = typeof existing?.payload?.conversationId === 'string' ? existing.payload.conversationId : '';
+    const incomingConversation = event.conversationId?.trim() || '';
+    const conversationId = incomingConversation || existingConversation;
+    const unresolved = !conversationId;
     const row: CanonicalSocialEvent = {
       id: instagramDmEventRowId(event.externalEventId),
       userId,
@@ -20,7 +25,11 @@ export async function persistInstagramDmEvidence(
       externalUserId: event.externalUserId,
       payload: {
         text: event.text || '',
-        conversationId: event.conversationId,
+        conversationId: conversationId || undefined,
+        conversationUnresolved: unresolved,
+        username: event.username || '',
+        displayName: event.displayName || '',
+        recipientProfessionalId: event.recipientProfessionalId || '',
       },
       occurredAt: event.occurredAt,
       receivedAt: event.receivedAt,
@@ -34,17 +43,19 @@ export async function persistInstagramDmEvidence(
       platform: 'instagram',
       candidateId: event.externalUserId,
       type: 'dm_reply',
-      status: expired ? 'expired' : 'ready',
-      executionMode: expired ? 'handoff' : executionMode,
+      status: expired || unresolved ? (expired ? 'expired' : 'ready') : 'ready',
+      executionMode: expired || unresolved ? 'handoff' : executionMode,
       source: 'instagram_dm',
       externalEventId: event.externalEventId,
-      conversationId: event.conversationId,
+      conversationId: unresolved ? undefined : conversationId,
       observedAt: event.occurredAt,
       createdAt: event.receivedAt,
       updatedAt: event.receivedAt,
       platformUserId: event.externalUserId,
+      username: event.username,
       identityConflict: false,
-      retryable: !expired,
+      retryable: !expired && !unresolved,
+      resultMetadata: unresolved ? { conversationUnresolved: true } : undefined,
     };
     await upsertProviderSocialAction(db, action);
   }
