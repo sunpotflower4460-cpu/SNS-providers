@@ -71,7 +71,9 @@ Implemented server responsibilities:
 - pre-request budget reservations for paid calls
 - token-gated state snapshots for personal multi-device transfer
 - optimistic state-snapshot concurrency checks to prevent stale-device overwrites
-- user-approved social execute boundary with D1 idempotency; live provider writes stay disabled
+- user-approved social execute boundary with D1 canonical SocialAction/SocialEvent resolution and idempotency
+- Instagram comment reply adapter behind explicit production write flags
+- optional X mention/reply inbound sync into SocialEvents / Mission Inbox
 
 Future server responsibilities:
 
@@ -276,9 +278,9 @@ Mission Inbox ranks SocialActions with deterministic application math:
 
 plus bounded inbound boosts. Relationship value and urgency are derived from CRM/timestamps; the model may supply other component scores but not the sort order itself.
 
-Execution mode comes from a capability matrix, not scattered `if (platform === ...)` UI branches. Instagram follow stays HANDOFF. Instagram comment reply is an in-app capability; live provider writes remain disabled until a later milestone enables one operation at a time through `POST /api/social/actions/:id/execute`.
+Execution mode comes from a **live** capability matrix returned by the Worker, not from `platform === instagram` in the UI. Instagram follow stays HANDOFF. Instagram comment reply becomes in-app only when Instagram is configured, the write adapter is present, and `SOCIAL_WRITE_ENABLED` plus `INSTAGRAM_COMMENT_REPLY_ENABLED` are on. The execute route loads canonical rows from `social_actions` and provider evidence from `social_events`. Client JSON cannot retarget the write.
 
-That execute route requires personal-control auth, exact action/candidate/external binding, HANDOFF rejection, identity-conflict rejection, expiry/completion rejection, single-action bodies only, execution idempotency via `social_executions`, and fail-closed write costing. There is no bulk write route.
+That execute route requires personal-control auth, server-side action/candidate/event resolution, HANDOFF rejection, identity-conflict rejection, expiry/completion/snooze/executing rejection, single-action bodies only, execution idempotency via `social_executions`, and fail-closed write costing. There is no bulk write route. A lost provider response is `unknown`, not a guessed success, and retries must reuse the same `executionId`.
 
 ## Social safety invariant
 

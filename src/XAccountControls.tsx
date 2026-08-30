@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { apiConfigured } from './api';
+import { apiConfigured, syncXInbound } from './api';
+import { applyXInboundEvents } from './xInboundStore';
 import { CONTROL_TOKEN_CHANGED_EVENT } from './controlToken';
 import { applyOwnedXSyncWithDiscovery } from './xOwnedStore';
 import { disconnectXOAuth, fetchXOAuthStatus, startXOAuth, syncOwnedXData, type XOAuthStatus } from './xAccount';
@@ -19,6 +20,7 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
   const [status, setStatus] = useState<XOAuthStatus>(emptyStatus);
   const [loading, setLoading] = useState(apiConfigured);
   const [syncing, setSyncing] = useState(false);
+  const [inboundSyncing, setInboundSyncing] = useState(false);
   const [note, setNote] = useState(apiConfigured ? 'Xの接続状態を確認しています…' : 'X接続はまだ利用できません');
 
   useEffect(() => {
@@ -128,6 +130,24 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
     }
   }
 
+  async function syncInbound() {
+    setInboundSyncing(true);
+    setNote('Xのメンションと返信を確認しています…');
+    try {
+      const result = await syncXInbound('local-user', state.budget.monthlyLimitUsd);
+      if (!result.enabled) {
+        setNote(result.reason || '現在はXの受信メンションを同期できません');
+        return;
+      }
+      onChange((current) => applyXInboundEvents(current, result));
+      setNote(`Xの受信 ${result.events.length}件をMission Inboxへ反映しました · $${result.costUsd.toFixed(4)}`);
+    } catch (error) {
+      setNote(error instanceof Error ? error.message : 'Xの受信を更新できませんでした');
+    } finally {
+      setInboundSyncing(false);
+    }
+  }
+
   async function disconnect() {
     setLoading(true);
     try {
@@ -194,8 +214,9 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
       {!status.connected
         ? <button className="primary-button" disabled={loading || !apiConfigured || !status.configured} onClick={connect}>{loading ? '確認中…' : 'Xを読み取り専用で接続'}</button>
         : <>
-          <button className="primary-button" disabled={syncing || loading} onClick={sync}>{syncing ? '更新中…' : 'Xの情報を更新'}</button>
-          <button className="secondary-button" disabled={loading || syncing} onClick={disconnect}>{loading ? '処理中…' : 'Xとの接続を解除'}</button>
+          <button className="primary-button" disabled={syncing || loading || inboundSyncing} onClick={sync}>{syncing ? '更新中…' : 'Xの情報を更新'}</button>
+          <button className="secondary-button" disabled={syncing || loading || inboundSyncing} onClick={syncInbound}>{inboundSyncing ? '受信を確認中…' : 'メンション/返信を取り込む'}</button>
+          <button className="secondary-button" disabled={loading || syncing || inboundSyncing} onClick={disconnect}>{loading ? '処理中…' : 'Xとの接続を解除'}</button>
         </>}
     </div>
     <small>{note}</small>

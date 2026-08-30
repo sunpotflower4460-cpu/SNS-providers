@@ -65,9 +65,22 @@ The highest-risk tables to verify are:
 - `state_snapshots` — optimistic versioning protects cross-device state.
 - `x_owned_snapshots` / `instagram_engager_snapshots` — current Worker code now rejects malformed cached JSON, but the tables still need to exist with the expected keys.
 - `social_executions` — idempotency for user-approved writes. A repeated `executionId` must recover the prior result instead of posting twice.
-- `social_events` — optional provider-evidence log, conceptually separate from user-facing SocialActions.
+- `social_events` — provider-evidence log, conceptually separate from user-facing SocialActions. Instagram comment replies resolve the comment id from this table, never from client JSON.
+- `social_actions` — canonical execution records created from provider sync. Execute loads this row by URL `actionId` and authenticated `user_id`.
 
-Existing databases need `CREATE TABLE IF NOT EXISTS` for the new `social_executions` and `social_events` tables. Re-running the full `db/schema.sql` is safe for new tables; it will not retrofit older tables.
+Existing databases need `CREATE TABLE IF NOT EXISTS` for the new `social_executions`, `social_events` and `social_actions` tables. Re-running the full `db/schema.sql` is safe for new tables; it will not retrofit older tables.
+
+## 2b. Instagram comment reply accounting
+
+Meta Graph comment replies are not a USD-priced operation in this product's ledger (the owned comment *read* path is already tracked at `$0`). Production Instagram in-app reply still requires:
+
+```text
+SOCIAL_WRITE_ENABLED=true
+INSTAGRAM_COMMENT_REPLY_ENABLED=true
+INSTAGRAM_COMMENT_REPLY_USD=0
+```
+
+Leaving `INSTAGRAM_COMMENT_REPLY_USD` blank fail-closes. Do not interpret a missing price as `$0`. Confirm the Meta app/token still holds the current Instagram comment-manage permission before enabling the write flag.
 
 ## 3. X API pricing must be confirmed at deployment time
 

@@ -23,7 +23,9 @@ Personal-control Bearer token required unless otherwise noted:
 - `DELETE /api/x/oauth/disconnect?userId=local-user`
 - `POST /api/x/owned/sync`
 - `POST /api/instagram/engagers/sync`
-- `POST /api/social/actions/:id/execute` — user-approved single-action execute boundary; live writes stay disabled
+- `POST /api/social/actions/:id/execute` — user-approved single-action execute boundary. The Worker loads the canonical SocialAction and SocialEvent; the client may send only `executionId` and the approved `draft`.
+- `GET /api/social/capabilities` — live Instagram/X write capability snapshot
+- `POST /api/x/inbound/sync` — optional official X mention/reply ingest into SocialEvents / Mission Inbox
 - `GET /api/sync/state?userId=local-user`
 - `PUT /api/sync/state`
 
@@ -161,9 +163,11 @@ For a larger production deployment, comment webhooks are preferable to frequent 
 
 ## User-approved social execute
 
-`POST /api/social/actions/:id/execute` is the generic write boundary. It requires the personal control key, a single action, and a durable `executionId`. Bulk paths are rejected. HANDOFF, completed, expired, identity-conflict and mis-bound actions cannot write.
+`POST /api/social/actions/:id/execute` is the generic write boundary. It requires the personal control key, a single action id in the URL, and a durable `executionId`. The JSON body is not allowed to choose the provider target: platform, candidate, external event id, target URL and action type are resolved from D1 `social_actions` + `social_events`. Bulk paths are rejected. HANDOFF, completed, expired, identity-conflict, snoozed, executing and mis-bound actions cannot write.
 
-Live provider writes stay disabled. `SOCIAL_WRITE_MODE=test` can record an idempotent fake success for invariant tests; unknown write prices fail closed. A repeated `executionId` recovers the prior `social_executions` row instead of posting twice.
+Instagram comment reply is the first live provider write. It is enabled only when `SOCIAL_WRITE_ENABLED=true`, `INSTAGRAM_COMMENT_REPLY_ENABLED=true`, Instagram credentials are configured, and `INSTAGRAM_COMMENT_REPLY_USD` is set explicitly. Meta Graph comment replies are not billed in this product's USD ledger, so `INSTAGRAM_COMMENT_REPLY_USD=0` is the documented non-billable value; a missing price still fail-closes. `SOCIAL_WRITE_MODE=test` can record an idempotent fake success for invariant tests. A repeated `executionId` recovers the prior `social_executions` row instead of posting twice. If the provider response is lost after the request is sent, the execution stays `unknown` and must be reconciled with the same id.
+
+X inbound mention/reply sync is optional and flag-gated (`X_INBOUND_SYNC_ENABLED`). It persists SocialEvents by tweet id and binds Candidates by immutable `author_id`. Live X replies, follows and DMs stay disabled.
 
 ## Free social discovery
 

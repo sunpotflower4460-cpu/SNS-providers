@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { apiConfigured, executeSocialActionRequest } from './api';
 import DailyQueue from './DailyQueue';
 import { buildMissionInbox, inboxSummary, type MissionInboxItem } from './missionInbox';
 import { copyDraft, platformLabel } from './social';
-import { dismissInboxAction, snoozeInboxAction, updateSocialActionDraft } from './store';
+import { capabilitiesForPlatform, executionModeForAction, getLiveSocialCapabilities } from './socialCapabilities';
+import { completeInboxAction, dismissInboxAction, snoozeInboxAction, updateSocialActionDraft } from './store';
+import { failSocialAction } from './socialAction';
 import type { AppState, AppStateUpdater, Candidate, SocialAction } from './types';
 import { useLocalDayKey } from './useLocalDay';
 import './daily.css';
@@ -14,6 +17,7 @@ interface Props {
   onOpenCandidate: (candidate: Candidate, action?: SocialAction) => void;
   onOpenMe: () => void;
   onOpenDiscover: () => void;
+  capabilityEpoch?: number;
 }
 
 const categoryLabel: Record<MissionInboxItem['category'], string> = {
@@ -37,9 +41,9 @@ const typeLabel: Record<SocialAction['type'], string> = {
   unfollow_review: 'フォロー整理',
 };
 
-export default function MissionInbox({ state, onChange, onOpenCandidate, onOpenMe, onOpenDiscover }: Props) {
+export default function MissionInbox({ state, onChange, onOpenCandidate, onOpenMe, onOpenDiscover, capabilityEpoch }: Props) {
   const localDay = useLocalDayKey();
-  const items = useMemo(() => buildMissionInbox(state), [state, localDay]);
+  const items = useMemo(() => buildMissionInbox(state), [state, localDay, capabilityEpoch]);
   const socialItems = items.filter((item) => item.kind === 'social');
 
   if (socialItems.length === 0) {
@@ -73,6 +77,7 @@ export default function MissionInbox({ state, onChange, onOpenCandidate, onOpenM
         onSnooze={(actionId) => onChange((current) => snoozeInboxAction(current, actionId))}
         onDismiss={(actionId) => onChange((current) => dismissInboxAction(current, actionId))}
         onEditDraft={(actionId, draft) => onChange((current) => updateSocialActionDraft(current, actionId, draft))}
+        onChange={onChange}
       />
     )}
     {remaining.length > 0 && <div className="queue-list-block">
@@ -128,6 +133,7 @@ function SocialActionCard({
   onSnooze,
   onDismiss,
   onEditDraft,
+  onChange,
 }: {
   action: SocialAction;
   candidate: Candidate;
@@ -136,8 +142,13 @@ function SocialActionCard({
   onSnooze: (actionId: string) => void;
   onDismiss: (actionId: string) => void;
   onEditDraft: (actionId: string, draft: string) => void;
+  onChange: AppStateUpdater;
 }) {
   const [draftText, setDraftText] = useState(action.draft ?? action.aiDraft ?? '');
+  const [confirming, setConfirming] = useState(false);
+  const [executing, setExecuting] = useState(false);
+  const [note, setNote] = useState('');
+  const executionIds = useRef<Record<string, string>>({});
   useEffect(() => setDraftText(action.draft ?? action.aiDraft ?? ''), [action.draft, action.aiDraft]);
   const showDraft = action.type === 'comment_reply'
     || action.type === 'reply_inbound'
@@ -145,9 +156,81 @@ function SocialActionCard({
     || action.type === 'dm_reply'
     || action.type === 'dm_outbound';
   const age = formatAge(action.observedAt || action.createdAt);
-  const cta = action.executionMode === 'in_app'
-    ? `${platformLabel(action.platform)}で返信する`
+  const liveCaps = capabilitiesForPlatform(action.platform);
+  const identityConflict = candidate.tags.includes('identity-conflict');
+  const liveMode = identityConflict
+    ? 'handoff'
+    : (getLiveSocialCapabilities()
+      ? executionModeForAction(action.type, liveCaps)
+      : action.executionMode);
+  const inAppReply = liveMode === 'in_app' && action.type === 'comment_reply' && apiConfigured && Boolean(getLiveSocialCapabilities()?.instagram.sendCommentReply);
+  const cta = inAppReply
+    ? '返信する'
     : `${platformLabel(action.platform)}で開く`;
+
+  function persistDraft() {
+    onEditDraft(action.id, draftText);
+  }
+
+  function durableExecutionId() {
+    if (!executionIds.current[action.id]) executionIds.current[action.id] = `exec-${crypto.randomUUID()}`;
+    return executionIds.current[action.id];
+  }
+
+  async function sendApprovedReply() {
+    if (executing) return;
+    persistDraft();
+    if (!draftText.trim()) {
+      setNote('返信文を入力してください');
+      return;
+    }
+    setExecuting(true);
+    setNote('Instagramへ送信しています…');
+    const executionId = durableExecutionId();
+    try {
+      const result = await executeSocialActionRequest(action.id, { executionId, draft: draftText.trim() });
+      if (result.ok && (result.status === 'succeeded' || result.certainty === 'success')) {
+        onChange((current) => completeInboxAction(current, action.id, {
+          executionId,
+          externalResultId: result.externalResultId || undefined,
+        }));
+        setConfirming(false);
+        setNote('');
+        return;
+      }
+      if (!result.ok && (result.code === 'UNKNOWN_RESULT' || result.certainty === 'unknown' || result.status === 'unknown' || result.status === 'executing')) {
+        setNote('送信結果を確認できません。同じ実行IDで再確認します。新しい送信はしません。');
+        return;
+      }
+      if (result.ok && result.idempotent && result.status === 'succeeded') {
+        onChange((current) => completeInboxAction(current, action.id, {
+          executionId,
+          externalResultId: result.externalResultId || undefined,
+        }));
+        setConfirming(false);
+        setNote('');
+        return;
+      }
+      delete executionIds.current[action.id];
+      const reason = 'ok' in result && result.ok === false ? result.reason : '送信できませんでした';
+      onChange((current) => failSocialAction(current, action.id, reason));
+      setNote(reason);
+    } catch (error) {
+      setNote('通信結果が不明です。同じ実行IDで再試行します。');
+    } finally {
+      setExecuting(false);
+    }
+  }
+
+  function onPrimary() {
+    if (inAppReply) {
+      persistDraft();
+      setConfirming(true);
+      setNote('');
+      return;
+    }
+    onOpen(candidate, action);
+  }
 
   return <article className={featured ? 'inbox-action-card featured' : 'inbox-action-card'}>
     <div className="inbox-action-meta">
@@ -157,18 +240,20 @@ function SocialActionCard({
         <strong>{candidate.displayName || `@${candidate.username}`}</strong>
         <span>@{candidate.username}</span>
       </div>
-      <em className={action.executionMode === 'in_app' ? 'exec-mode in-app' : 'exec-mode handoff'}>
-        {action.executionMode === 'in_app' ? 'IN_APP' : 'HANDOFF'}
+      <em className={inAppReply ? 'exec-mode in-app' : 'exec-mode handoff'}>
+        {inAppReply ? 'IN_APP' : 'HANDOFF'}
       </em>
     </div>
     {action.inboundText && <p className="inbox-inbound">「{action.inboundText}」</p>}
     <p className="inbox-reason">{action.reason}</p>
     <p className="inbox-execute-note">
-      {action.executionMode === 'in_app'
-        ? '能力上はアプリ内実行できますが、現時点の書き込みは無効です。承認した1件だけ公式画面で行います。'
-        : '公式APIがこの操作を許可しないため、承認した1件だけ公式画面で行います。'}
+      {inAppReply
+        ? '承認した1件だけ、この画面からInstagramへ返信できます。自動送信はありません。'
+        : liveMode === 'in_app'
+          ? '能力上はアプリ内実行できますが、いまの接続では公式画面で行います。'
+          : '公式APIがこの操作を許可しないため、承認した1件だけ公式画面で行います。'}
     </p>
-    {showDraft && (action.draft !== undefined || action.aiDraft !== undefined) && <div className="draft-box">
+    {showDraft && (action.draft !== undefined || action.aiDraft !== undefined || inAppReply) && <div className="draft-box">
       <span>返信案 · 編集できます</span>
       <textarea value={draftText} onChange={(event) => setDraftText(event.target.value)} onBlur={() => onEditDraft(action.id, draftText)} rows={3} />
       <div className="draft-box-actions">
@@ -176,10 +261,20 @@ function SocialActionCard({
         <button disabled={!draftText} onClick={() => copyDraft(draftText)}>コピー</button>
       </div>
     </div>}
+    {confirming && inAppReply && <div className="inbox-confirm" role="status">
+      <strong>この内容をInstagramに送信します。よろしいですか？</strong>
+      <p>送信はあなたが承認したこの1件だけです。下書きの最新版を使います。</p>
+    </div>}
+    {note && <p className="inbox-execute-status">{note}</p>}
     <div className="inbox-action-buttons">
-      <button className="secondary-button" onClick={() => onSnooze(action.id)}>明日へ</button>
-      <button className="ghost-button" onClick={() => onDismiss(action.id)}>今回は返さない</button>
-      <button className="primary-button" onClick={() => onOpen(candidate, action)}>{cta}</button>
+      <button className="secondary-button" disabled={executing} onClick={() => onSnooze(action.id)}>明日へ</button>
+      <button className="ghost-button" disabled={executing} onClick={() => onDismiss(action.id)}>今回は返さない</button>
+      {confirming && inAppReply ? <>
+        <button className="ghost-button" disabled={executing} onClick={() => { if (!executing) setConfirming(false); }}>キャンセル</button>
+        <button className="primary-button" disabled={executing || !draftText.trim()} onClick={() => void sendApprovedReply()}>
+          {executing ? '送信中…' : '送信する'}
+        </button>
+      </> : <button className="primary-button" disabled={executing} onClick={onPrimary}>{cta}</button>}
     </div>
   </article>;
 }

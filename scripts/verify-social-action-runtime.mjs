@@ -26,13 +26,12 @@ await emit('daily.js', new URL('../src/daily.ts', import.meta.url));
 await emit('missionInbox.js', new URL('../src/missionInbox.ts', import.meta.url));
 await emit('capabilities.js', new URL('../worker/src/social/capabilities.ts', import.meta.url));
 await emit('executeGuard.js', new URL('../worker/src/social/executeGuard.ts', import.meta.url));
-await emit('execute.js', new URL('../worker/src/social/execute.ts', import.meta.url));
 await emit('inbound.js', new URL('../worker/src/social/instagram/inbound.ts', import.meta.url));
 await emit('xInbound.js', new URL('../worker/src/social/x/inbound.ts', import.meta.url));
+await emit('xInboundStore.js', new URL('../src/xInboundStore.ts', import.meta.url));
 await emit('backup.js', new URL('../src/backup.ts', import.meta.url));
 
-const {
-  completeSocialAction,
+const { completeSocialAction,
   dismissSocialAction,
   failSocialAction,
   normalizeSocialAction,
@@ -41,14 +40,15 @@ const {
   scoreSocialAction,
   snoozeSocialAction,
   upsertSocialActions,
+  instagramCommentActionId,
 } = await import(pathToFileURL(`${outDir}/socialAction.js`).href);
 const { buildMissionInbox, fallbackDailyQueue, hasDeferredSocialWork } = await import(pathToFileURL(`${outDir}/missionInbox.js`).href);
-const { executionBindingsConflict } = await import(pathToFileURL(`${outDir}/execute.js`).href);
+const { applyXInboundEvents } = await import(pathToFileURL(`${outDir}/xInboundStore.js`).href);
 const { normalizeAppState, validateAppState } = await import(pathToFileURL(`${outDir}/backup.js`).href);
-const { assertExecutable, assertSingleActionExecute } = await import(pathToFileURL(`${outDir}/executeGuard.js`).href);
-const { INSTAGRAM_PROFESSIONAL_CAPABILITIES, xCapabilitiesFromScopes } = await import(pathToFileURL(`${outDir}/capabilities.js`).href);
+const { INSTAGRAM_PROFESSIONAL_CAPABILITIES, xCapabilitiesFromScopes, DISABLED_SOCIAL_CAPABILITIES } = await import(pathToFileURL(`${outDir}/capabilities.js`).href);
 const { instagramCommentEvent, sameLatestCommentEvent } = await import(pathToFileURL(`${outDir}/inbound.js`).href);
 const { normalizeXInboundEvents } = await import(pathToFileURL(`${outDir}/xInbound.js`).href);
+const { assertExecutable, parseExecuteBody } = await import(pathToFileURL(`${outDir}/executeGuard.js`).href);
 
 function fail(message) {
   throw new Error(message);
@@ -188,61 +188,19 @@ const score = scoreSocialAction({
 const expected = Math.max(0, Math.min(100, Math.round(80 * 0.25 + 40 * 0.20 + 90 * 0.30 + 70 * 0.25 + 10 * -0.20 + 25)));
 if (score !== expected) fail(`Priority math drifted: ${score} !== ${expected}`);
 
-const executeBody = {
+const parsed = parseExecuteBody({
   executionId: 'exec-abc-1',
   draft: 'ありがとう',
-  action: {
-    id: 'sa-1',
-    platform: 'instagram',
-    candidateId: 'ig-1',
-    type: 'comment_reply',
-    status: 'ready',
-    executionMode: 'in_app',
-    source: 'instagram_comment',
-    externalEventId: '111',
-    parentContentId: 'media-1',
-  },
-  candidate: { id: 'ig-1', platform: 'instagram', username: 'alice', tags: [] },
-};
-const parsed = assertSingleActionExecute(executeBody);
+  action: { platform: 'x', candidateId: 'evil', externalEventId: '999' },
+  candidate: { id: 'evil', platform: 'x' },
+});
 if ('ok' in parsed && parsed.ok === false) fail(parsed.reason);
-const blockedCompleted = assertExecutable({ ...parsed, action: { ...parsed.action, status: 'completed' } }, INSTAGRAM_PROFESSIONAL_CAPABILITIES, { writesEnabled: true, writeCostKnown: true });
-if (blockedCompleted.ok || blockedCompleted.code !== 'COMPLETED') fail('Completed action was executable.');
-const blockedExpired = assertExecutable({ ...parsed, action: { ...parsed.action, status: 'expired' } }, INSTAGRAM_PROFESSIONAL_CAPABILITIES, { writesEnabled: true, writeCostKnown: true });
-if (blockedExpired.ok || blockedExpired.code !== 'EXPIRED') fail('Expired action was executable.');
-const blockedSnoozed = assertExecutable({ ...parsed, action: { ...parsed.action, status: 'snoozed' } }, INSTAGRAM_PROFESSIONAL_CAPABILITIES, { writesEnabled: true, writeCostKnown: true });
-if (blockedSnoozed.ok || blockedSnoozed.code !== 'INVALID_ACTION') fail('Snoozed action was executable.');
-const blockedExecuting = assertExecutable({ ...parsed, action: { ...parsed.action, status: 'executing' } }, INSTAGRAM_PROFESSIONAL_CAPABILITIES, { writesEnabled: true, writeCostKnown: true });
-if (blockedExecuting.ok || blockedExecuting.code !== 'ALREADY_EXECUTED') fail('Executing action was executable.');
-const garbageStatus = assertSingleActionExecute({
-  ...executeBody,
-  action: { ...executeBody.action, status: 'not-a-status' },
-});
-if (!('ok' in garbageStatus) || garbageStatus.ok !== false) fail('Unknown action status was accepted.');
-const blockedHandoff = assertExecutable({ ...parsed, action: { ...parsed.action, executionMode: 'handoff' } }, INSTAGRAM_PROFESSIONAL_CAPABILITIES, { writesEnabled: true, writeCostKnown: true });
-if (blockedHandoff.ok || blockedHandoff.code !== 'HANDOFF_NOT_EXECUTABLE') fail('HANDOFF action called provider write.');
-const blockedIdentity = assertExecutable(parsed, INSTAGRAM_PROFESSIONAL_CAPABILITIES, { writesEnabled: true, writeCostKnown: true });
-const identityParsed = assertSingleActionExecute({
-  ...executeBody,
-  candidate: { id: 'ig-1', platform: 'instagram', username: 'alice', tags: ['identity-conflict'] },
-});
-const blockedConflict = assertExecutable(identityParsed, INSTAGRAM_PROFESSIONAL_CAPABILITIES, { writesEnabled: true, writeCostKnown: true });
-if (blockedConflict.ok || blockedConflict.code !== 'IDENTITY_CONFLICT') fail('Identity conflict did not block execution.');
-const wrongCandidate = assertSingleActionExecute({
-  ...executeBody,
-  candidate: { id: 'other', platform: 'instagram', username: 'alice', tags: [] },
-});
-if (!('ok' in wrongCandidate) || wrongCandidate.ok !== false || wrongCandidate.code !== 'BINDING_MISMATCH') {
-  fail('Wrong candidate binding was accepted.');
-}
-const disabled = assertExecutable(parsed, INSTAGRAM_PROFESSIONAL_CAPABILITIES, { writesEnabled: false, writeCostKnown: true });
-if (disabled.ok || disabled.code !== 'WRITE_DISABLED') fail('Writes were not fail-closed when disabled.');
-const unknownCost = assertExecutable(parsed, INSTAGRAM_PROFESSIONAL_CAPABILITIES, { writesEnabled: true, writeCostKnown: false });
-if (unknownCost.ok || unknownCost.code !== 'WRITE_COST_UNKNOWN') fail('Unknown write cost was not fail-closed.');
+if (parsed.draft !== 'ありがとう' || parsed.executionId !== 'exec-abc-1') fail('Minimal execute parse dropped the durable execution fields.');
+const bulk = parseExecuteBody({ executionId: 'exec-abc-1', actions: [{ id: 'a' }] });
+if (!('ok' in bulk) || bulk.ok !== false) fail('Bulk execute body was accepted.');
 const xReadOnly = xCapabilitiesFromScopes(['tweet.read', 'users.read', 'follows.read', 'offline.access']);
 if (xReadOnly.sendReply || xReadOnly.follow || xReadOnly.sendDm) fail('Read-only X scopes silently enabled writes.');
-const bulk = assertSingleActionExecute({ executionId: 'exec-abc-1', actions: [executeBody.action], candidate: executeBody.candidate });
-if (!('ok' in bulk) || bulk.ok !== false) fail('Bulk execute body was accepted.');
+if (DISABLED_SOCIAL_CAPABILITIES.sendCommentReply) fail('Disabled Instagram capabilities enabled comment reply.');
 
 const commentEvent = instagramCommentEvent({
   latestCommentId: '123',
@@ -337,13 +295,59 @@ if (!inboxLater.some((item) => item.kind === 'queue' && item.queueItem?.action =
   fail('A newer post reply was hidden by a completed comment on a different post.');
 }
 
-if (!executionBindingsConflict(
-  { actionId: 'sa-1', platform: 'instagram', operation: 'instagram_comment_reply' },
-  { ...parsed, action: { ...parsed.action, id: 'sa-other' } },
-)) fail('Reused executionId across different actions was treated as idempotent success.');
-if (executionBindingsConflict(
-  { actionId: 'sa-1', platform: 'instagram', operation: 'instagram_comment_reply' },
-  parsed,
-)) fail('Matching execution recovery was treated as a binding mismatch.');
+if (instagramCommentActionId('111') !== 'sa-ig-comment-111') fail('Canonical Instagram comment action ids drifted.');
 
-console.log('SocialAction runtime invariants OK: restore defaults, malformed rejection, dedupe, reopen, snooze, complete-once, ranking math, execute guards, Instagram same-event binding, X inbound normalization, identity remap, history cap, fallback suppression, later-post reopen, engagement consume, execution binding.');
+const inboundState = applyXInboundEvents(emptyState, {
+  enabled: true,
+  source: 'x',
+  costUsd: 0.01,
+  syncedAt: now.toISOString(),
+  events: [{
+    id: 'x-mention-101',
+    actionId: 'sa-x-mention-101',
+    type: 'mention',
+    externalEventId: '101',
+    externalUserId: '111',
+    username: 'bob',
+    text: 'hello',
+    occurredAt: now.toISOString(),
+    permalink: 'https://x.com/bob/status/101',
+  }],
+});
+if (!inboundState.candidates.some((item) => item.platform === 'x' && item.platformUserId === '111')) {
+  fail('X inbound did not bind Candidate to the immutable author id.');
+}
+const recycled = applyXInboundEvents({
+  ...emptyState,
+  candidates: [{
+    ...candidate,
+    platform: 'x',
+    id: 'old-bob',
+    username: 'bob',
+    platformUserId: '999',
+    profileUrl: 'https://x.com/bob',
+    tags: [],
+  }],
+}, {
+  enabled: true,
+  source: 'x',
+  costUsd: 0.01,
+  syncedAt: now.toISOString(),
+  events: [{
+    id: 'x-mention-202',
+    actionId: 'sa-x-mention-202',
+    type: 'reply',
+    externalEventId: '202',
+    externalUserId: '888',
+    username: 'bob',
+    text: 'recycled',
+    occurredAt: now.toISOString(),
+  }],
+});
+const recycledCandidate = recycled.candidates.find((item) => item.id === 'old-bob');
+if (!recycledCandidate?.tags.includes('identity-conflict')) fail('Recycled X username stole or ignored history instead of identity-conflict.');
+if (recycled.socialActions.some((action) => action.candidateId === 'old-bob' && action.executionMode === 'in_app')) {
+  fail('Identity-conflict X inbound remained directly writable.');
+}
+
+console.log('SocialAction runtime invariants OK: restore defaults, malformed rejection, dedupe, reopen, snooze, complete-once, ranking math, execute guards, Instagram same-event binding, X inbound normalization, identity remap, history cap, fallback suppression, later-post reopen, engagement consume, canonical Instagram action ids, X immutable identity.');

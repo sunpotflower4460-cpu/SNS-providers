@@ -1,3 +1,5 @@
+import { persistInstagramCommentEvidence, type PersistableInstagramEngager } from './social/instagram/persist';
+import { executionModeForAction, liveInstagramCapabilities } from './social/capabilities';
 import { fetchWithTimeout } from './fetchWithTimeout';
 
 export interface InstagramOwnedEnv {
@@ -5,6 +7,9 @@ export interface InstagramOwnedEnv {
   INSTAGRAM_ACCESS_TOKEN?: string;
   INSTAGRAM_USER_ID?: string;
   INSTAGRAM_API_VERSION?: string;
+  SOCIAL_WRITE_ENABLED?: string;
+  SOCIAL_WRITE_MODE?: string;
+  INSTAGRAM_COMMENT_REPLY_ENABLED?: string;
 }
 
 export interface InstagramOwnedSyncRequest {
@@ -66,7 +71,10 @@ export async function syncInstagramEngagers(env: InstagramOwnedEnv, body: Instag
   if (!/^\d{4,30}$/.test(instagramUserId)) return disabled('INSTAGRAM_USER_ID is invalid.');
 
   const cached = await loadFreshCache(env, userId, Boolean(body.force), instagramUserId);
-  if (cached) return { ...cached, source: 'cache', externalCostUsd: 0 };
+  if (cached) {
+    await persistInstagramEvidenceSafe(env, userId, cached.engagers || [], String(cached.syncedAt || new Date().toISOString()));
+    return { ...cached, source: 'cache', externalCostUsd: 0 };
+  }
 
   const maxMedia = clampInt(body.maxMedia, 8, 1, 12);
   const maxCommentsPerMedia = clampInt(body.maxCommentsPerMedia, 25, 1, 50);
@@ -151,6 +159,7 @@ export async function syncInstagramEngagers(env: InstagramOwnedEnv, body: Instag
   }
   await saveCache(env, userId, result);
   await recordUsage(env, userId, media.length, commentEvents);
+  await persistInstagramEvidenceSafe(env, userId, result.engagers, syncedAt);
   return result;
 }
 
@@ -416,6 +425,28 @@ function sanitizeUserId(value: string) {
   const userId = value.trim();
   if (!/^[A-Za-z0-9._-]{1,80}$/.test(userId)) throw new Error('invalid userId');
   return userId;
+}
+
+async function persistInstagramEvidenceSafe(
+  env: InstagramOwnedEnv,
+  userId: string,
+  engagers: PersistableInstagramEngager[] | unknown,
+  receivedAt: string,
+) {
+  if (!Array.isArray(engagers) || !engagers.length) return;
+  try {
+    const caps = liveInstagramCapabilities(env);
+    await persistInstagramCommentEvidence(
+      env.DB,
+      userId,
+      engagers as PersistableInstagramEngager[],
+      receivedAt,
+      executionModeForAction('comment_reply', caps),
+    );
+  } catch {
+    // Provider evidence persistence must not discard a successful Instagram read. Execute
+    // still fail-closes later if the canonical SocialEvent row is missing.
+  }
 }
 
 function clampInt(value: number | undefined, fallback: number, min: number, max: number) {

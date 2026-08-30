@@ -24,6 +24,7 @@ export interface NormalizedXSocialEvent {
   contentId: string;
   parentContentId?: string;
   permalink?: string;
+  username?: string;
   occurredAt: string;
   receivedAt: string;
 }
@@ -79,6 +80,7 @@ function normalizeXTweet(
     conversationId,
     contentId: tweet.id,
     permalink: username ? `https://x.com/${username}/status/${tweet.id}` : undefined,
+    username: username || undefined,
     occurredAt: createdAt,
     receivedAt,
   };

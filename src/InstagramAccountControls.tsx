@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { apiConfigured } from './api';
+import { apiConfigured, fetchSocialCapabilities } from './api';
+import { setLiveSocialCapabilities } from './socialCapabilities';
 import { syncInstagramEngagers } from './instagramAccount';
 import { applyInstagramEngagers } from './instagramOwnedStore';
 import type { AppState, AppStateUpdater } from './types';
@@ -20,6 +21,11 @@ export default function InstagramAccountControls({ state, onChange }: { state: A
       }
       // Preserve edits made elsewhere while the network request was running.
       onChange((current) => applyInstagramEngagers(current, result));
+      try {
+        setLiveSocialCapabilities(await fetchSocialCapabilities());
+      } catch {
+        // Capability refresh is best-effort; execute still fail-closes on the Worker.
+      }
       const source = result.source === 'cache' ? '保存済みデータ' : 'Instagram公式データ';
       setNote(`${source}から更新しました · 反応してくれた人 ${result.engagers.length}人 · $0`);
     } catch (error) {
@@ -36,7 +42,7 @@ export default function InstagramAccountControls({ state, onChange }: { state: A
     </div>
     <div className="instagram-source-note">
       <strong>自分の投稿へのコメントだけを読み取ります</strong>
-      <span>コメント返信は公式APIが許可する範囲でアプリ内実行の対象です。フォローは公式プロフィールへのHANDOFFのままです。勝手に巡回したり、承認なしで送信したりはしません。</span>
+      <span>コメント返信は、Workerが実際の接続・権限・書き込みフラグを確認できたときだけアプリ内送信できます。フォローは公式プロフィールへのHANDOFFのままです。勝手に巡回したり、承認なしで送信したりはしません。</span>
     </div>
     {state.instagramAccount?.lastSyncedAt && <div className="instagram-sync-summary">
       <span><b>{state.instagramAccount.mediaScanned || 0}</b> 投稿を確認</span>
