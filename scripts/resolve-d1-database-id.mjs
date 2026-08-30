@@ -2,10 +2,10 @@
 /**
  * Resolve (or create) the Cloudflare D1 database ID for Worker deploys.
  *
- * worker/wrangler.jsonc omits database_id so Cloudflare Workers Builds can
- * auto-provision / bind by database_name. GitHub Actions / local deploy can
- * still run this script with CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID to
- * patch a real UUID into wrangler.jsonc for that job only.
+ * worker/wrangler.jsonc omits database_id so a non-UUID placeholder is not
+ * committed. GitHub Actions / local deploy can still run this script with
+ * CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID to patch a real UUID into
+ * wrangler.jsonc for that job only.
  *
  * Usage:
  *   node scripts/resolve-d1-database-id.mjs [--write]

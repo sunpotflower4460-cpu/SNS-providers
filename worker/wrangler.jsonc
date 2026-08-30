@@ -1,8 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  // Must match the Git-connected Worker name in the Cloudflare dashboard.
-  // Workers Builds fails the GitHub check when this does not match `sns-providers`.
-  "name": "sns-providers",
+  "name": "social-mission-api",
   "main": "src/router.ts",
   "compatibility_date": "2026-08-21",
   "vars": {
@@ -17,9 +15,9 @@
     {
       "binding": "DB",
       "database_name": "social-mission"
-      // database_id is omitted on purpose. A non-UUID placeholder made
-      // Cloudflare Workers Builds preview deploys fail closed. Wrangler
-      // resolves or provisions the named D1 database at deploy time.
+      // database_id is omitted on purpose. A non-UUID placeholder made local
+      // and GitHub Actions deploys fail closed. Wrangler / the resolve script
+      // patches a real UUID at deploy time when credentials are present.
     }
   ]
 }

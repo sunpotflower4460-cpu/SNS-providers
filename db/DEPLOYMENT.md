@@ -4,7 +4,7 @@ This file is the production boundary checklist for the optional Cloudflare Worke
 
 ## 1. Prefer a fresh D1 database for the first production deployment
 
-`db/schema.sql` is authoritative for a fresh database. `worker/wrangler.jsonc` binds D1 by `database_name` and omits `database_id`, so Cloudflare Workers Builds can auto-provision or attach the named database instead of failing on a non-UUID placeholder. GitHub Actions can still patch a real UUID into `wrangler.jsonc` for that job only via `scripts/resolve-d1-database-id.mjs --write`. Do not deploy paid/provider routes until a real D1 database exists and the Worker is reachable.
+`db/schema.sql` is authoritative for a fresh database. `worker/wrangler.jsonc` binds D1 by `database_name` and omits `database_id`. GitHub Actions can patch a real UUID into `wrangler.jsonc` for that job only via `scripts/resolve-d1-database-id.mjs --write`. Do not deploy paid/provider routes until a real D1 database exists and the Worker is reachable.
 
 ### Option A — GitHub Actions (recommended)
 
@@ -36,7 +36,9 @@ cd worker && npx wrangler d1 execute social-mission --remote --file=../db/schema
 
 ### Cloudflare Workers Builds (dashboard)
 
-The Git-connected Worker in the dashboard is named `sns-providers`. The `name` field in `worker/wrangler.jsonc` must match that dashboard name, or the GitHub `Workers Builds: sns-providers` check fails before deploy. D1 is bound by `database_name` (`social-mission`) without a committed UUID so preview builds do not fail on a placeholder ID. Prefer GitHub Actions Option A for production deploys that also apply `db/schema.sql`.
+The Git-connected dashboard Worker is named `sns-providers` and deploys the **PWA** from the repository root. Root `wrangler.jsonc` must use that same `name` and point `assets.directory` at `./dist`, or the GitHub `Workers Builds: sns-providers` check fails immediately on pull requests (missing entry-point / “Deployment skipped”).
+
+The API Worker is a separate project: `worker/wrangler.jsonc` keeps `name` as `social-mission-api`. Prefer GitHub Actions Option A for API deploys that also apply `db/schema.sql`. Do not rename the API Worker to `sns-providers`; that would overwrite the PWA deployment.
 
 Then deploy the Worker and verify `/api/health` before connecting the PWA.
 
