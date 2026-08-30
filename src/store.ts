@@ -2,6 +2,7 @@ import type { RankResult, XProfileResultList } from './api';
 import { normalizeAppState } from './backup';
 import { candidateRequestKey, missionRequestKey, selfRequestKey, xProfileRequestKey } from './requestContext';
 import type { XOwnedSyncResponse } from './xAccount';
+import { completeSocialAction, dismissMatchingSocialActions, dismissSocialAction, markSocialActionsCompleted, snoozeSocialAction } from './socialAction';
 import type { AppState, Candidate, Interaction, Mission, Platform, RecommendedAction, RelationshipPolicy } from './types';
 
 const KEY = 'sns-providers:v1';
@@ -17,6 +18,7 @@ const defaultState: AppState = {
   },
   candidates: [],
   interactions: [],
+  socialActions: [],
   budget: {
     monthlyLimitUsd: 3,
     hardLimit: true,
@@ -59,6 +61,7 @@ export function loadState(): AppState {
       ...parsed,
       candidates: Array.isArray(parsed.candidates) ? parsed.candidates : [],
       interactions: Array.isArray(parsed.interactions) ? parsed.interactions : [],
+      socialActions: Array.isArray(parsed.socialActions) ? parsed.socialActions : [],
       mission: { ...defaultState.mission, ...(parsed.mission || {}) },
       budget: { ...defaultState.budget, ...(parsed.budget || {}) },
       relationshipPolicy: { ...defaultState.relationshipPolicy, ...(parsed.relationshipPolicy || {}) },
@@ -457,6 +460,25 @@ export function updateCandidateDraft(state: AppState, candidateId: string, draft
   return { ...state, candidates };
 }
 
+export function updateSocialActionDraft(state: AppState, actionId: string, draft: string): AppState {
+  const socialActions = (state.socialActions || []).map((action) => action.id === actionId
+    ? { ...action, draft: draft.slice(0, 2400), updatedAt: new Date().toISOString() }
+    : action);
+  return { ...state, socialActions };
+}
+
+export function snoozeInboxAction(state: AppState, actionId: string): AppState {
+  return snoozeSocialAction(state, actionId);
+}
+
+export function dismissInboxAction(state: AppState, actionId: string): AppState {
+  return dismissSocialAction(state, actionId);
+}
+
+export function completeInboxAction(state: AppState, actionId: string): AppState {
+  return refreshRelationshipAdvice(completeSocialAction(state, actionId));
+}
+
 export function recordInteraction(state: AppState, candidateId: string, action: Interaction['action']): AppState {
   const now = new Date().toISOString();
   const target = state.candidates.find((candidate) => candidate.id === candidateId);
@@ -517,7 +539,9 @@ export function recordInteraction(state: AppState, candidateId: string, action: 
     }
     return { ...candidate, lastInteractionAt: now };
   });
-  return refreshRelationshipAdvice({ ...state, interactions, candidates });
+  const next = refreshRelationshipAdvice({ ...state, interactions, candidates });
+  if (recordedAction === 'skipped') return dismissMatchingSocialActions(next, candidateId);
+  return markSocialActionsCompleted(next, candidateId, recordedAction);
 }
 
 function advanceRelationshipStage(stage: Candidate['stage'], priorEngagements: number, followedAt?: string): Candidate['stage'] {

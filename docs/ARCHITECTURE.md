@@ -2,7 +2,7 @@
 
 ## Product principle
 
-The product is a mobile-first PWA that helps a user grow meaningful social relationships toward a stated Mission. It does not automate follows, likes, replies, DMs, or unfollows. The app discovers, ranks, drafts, remembers and advises; the user performs the final social action in the official X or Instagram experience.
+The product is a mobile-first PWA that helps a user grow meaningful social relationships toward a stated Mission. It does not automate follows, likes, replies, DMs, or unfollows. The loop is DISCOVER → RANK → DRAFT → APPROVE → EXECUTE. Only EXECUTE performs a social write, and only after one explicit user approval for one action. When an official platform API permits that action, SNS-providers may execute it. When it does not, the PWA uses an explicit HANDOFF. There is no auto-send and no bulk write.
 
 ## Core loop
 
@@ -10,12 +10,12 @@ The product is a mobile-first PWA that helps a user grow meaningful social relat
 2. Candidate sources add reusable relationship signals and public profiles to the candidate pool.
 3. Duplicate filtering, local prefiltering and cached state prevent needless provider/model reads.
 4. The AI router ranks the strongest candidate subset against Mission and returns recommended action, rationale, strategy and limited drafts when context is sufficient.
-5. A local-first Daily Queue mixes new connections, conversations, light engagement, self-improvement and follow cleanup so the day is not dominated by raw following volume.
+5. A local-first Mission Inbox ranks SocialActions (concrete work) above Candidate-based Daily Queue fallback items so the day is not a social feed.
 6. User-configured workload caps and a local workload advisor control how much work appears without treating any number as a platform safety threshold.
-7. A candidate can be snoozed until the next local day without deleting relationship history.
-8. The PWA hands off to the official social surface.
-9. On return, the user records the result in one tap.
-10. Completed candidates roll out of the current Daily Queue and relationship state feeds future advice.
+7. A candidate or SocialAction can be snoozed until the next local day without deleting relationship history.
+8. The PWA either executes one user-approved write when the official API and connected capabilities allow it, or hands off to the official social surface.
+9. On return or after an approved in-app execute, the user/result path records the outcome.
+10. Completed SocialActions roll out of Mission Inbox, create Interaction rows, and conservatively update relationship state.
 11. The Me surface analyzes the user's own profile/recent posts against the same Mission.
 12. Optional read-only X sync can refresh the user's own profile/posts/follow graph and seed inbound followers into the same candidate loop.
 13. Optional Instagram Professional sync can turn people who already commented on the user's own media into higher-signal relationship candidates.
@@ -28,10 +28,11 @@ The product is a mobile-first PWA that helps a user grow meaningful social relat
 - Service Worker for app-shell resilience
 - GitHub Pages subpath-safe deployment
 - production CSP restricts network connections to the configured Worker origin; CI verifies the built binding
-- X/Instagram official-surface handoff for final social actions
+- X/Instagram official-surface HANDOFF when the connected capabilities do not allow an in-app write
+- SocialAction cards with inbound context, editable drafts, snooze, dismiss and executionMode
 - Instagram reply candidates may retain the original engagement-post permalink so the user returns to the real context
 - clipboard/profile-URL candidate import for iPhone-friendly operation
-- local Daily Queue generation without a mandatory daily LLM call
+- local Mission Inbox generation plus Daily Queue fallback without a mandatory daily LLM call
 - Today progress and summary derived from the actual current Daily Queue
 - user-configurable daily workload caps by action family
 - deterministic local workload suggestion from candidate quality and budget state
@@ -70,6 +71,7 @@ Implemented server responsibilities:
 - pre-request budget reservations for paid calls
 - token-gated state snapshots for personal multi-device transfer
 - optimistic state-snapshot concurrency checks to prevent stale-device overwrites
+- user-approved social execute boundary with D1 idempotency; live provider writes stay disabled
 
 Future server responsibilities:
 
@@ -98,20 +100,18 @@ Instagram commenters are different from cold discovery: they have already chosen
 
 ## Read-only X account boundary
 
-The OAuth scopes are fixed to:
+The OAuth scopes requested by the default connect flow are fixed to:
 
 - `tweet.read`
 - `users.read`
 - `follows.read`
 - `offline.access`
 
-No `tweet.write`, `follows.write`, DM-write or equivalent social-action scope is requested.
+`tweet.write`, `follows.write`, `dm.read` and `dm.write` exist as a separate optional write set. They are not requested by the default connection. Grant validation compares the token to the requested set, so extra write scopes cannot silently appear. The PWA shows which capabilities are connected. Token encryption, refresh handling, identity leasing and derived-state cleanup stay unchanged.
 
-The same personal control Bearer token used for optional D1 state sync gates X OAuth start/disconnect and owned-X reads. The Worker stores only the configured SHA-256 comparison value for that personal key. X OAuth access/refresh tokens use a separate 32-byte encryption key and are AES-GCM encrypted before D1 storage.
+A CI security invariant parses the default read-only list and fails when a write-capable X scope is added there, and also fails if the default authorize URL starts requesting the optional write set.
 
 Owned-X reads fail closed unless eligibility and current rates are explicitly configured. The Worker reserves budget before the network request and never uses a missing price as zero.
-
-A CI security invariant parses the fixed scope list and fails when a write-capable X scope appears.
 
 ## Owned-X pacing, pagination and full-cycle evidence
 
@@ -138,7 +138,7 @@ The Instagram owned-engager adapter is intentionally narrow.
 
 - It requires a configured Instagram Professional account (Creator or Business), server-side access token, account ID and explicit current Graph API version.
 - It reads a bounded set of media owned by that account and a bounded set of comments on those media through the official API.
-- It extracts commenter identity/username, comment text and the related media permalink for relationship context.
+- It extracts commenter identity/username, latest comment ID, comment text, media ID and the related media permalink for the same latest comment event.
 - It does not crawl arbitrary Instagram profiles or enumerate consumer accounts.
 - It does not request or perform follow/like/DM automation.
 - The personal control key protects the sync route.
@@ -161,7 +161,7 @@ The client prefilter uses Mission lexical overlap, existing Mission Match, avail
 
 The app combines candidate score, recommended action, strategic rationale and a limited number of individualized reply/DM drafts in one AI pass to reduce token use. The Daily Queue and workload suggestion are generated locally from stored state.
 
-Draft generation is user-configurable (`relationshipPolicy.autoDraftReplies`, default on) and enforced on both sides: the client passes `draftsEnabled` on `/api/ai/rank`, the Worker prompt omits the draft instruction when it is off, and `normalizeProviderResults` discards any draft the model returns anyway unless `draftsEnabled` is true. Drafts shown in the PWA are editable before use; editing only replaces the local `draft` field and never touches `aiDraft` (the original AI suggestion, kept so the user can revert), and both are cleared/replaced together on the next re-rank. This does not change the "no automated final action" boundary above — the user still copies the (possibly edited) draft into the official app and sends it themselves.
+Draft generation is user-configurable (`relationshipPolicy.autoDraftReplies`, default on) and enforced on both sides: the client passes `draftsEnabled` on `/api/ai/rank`, the Worker prompt omits the draft instruction when it is off, and `normalizeProviderResults` discards any draft the model returns anyway unless `draftsEnabled` is true. Drafts shown in the PWA are editable before use; editing only replaces the local `draft` field and never touches `aiDraft` (the original AI suggestion, kept so the user can revert), and both are cleared/replaced together on the next re-rank. This does not change the approval boundary — a draft is never sent without one explicit user approval for that one action.
 
 Provider availability, prices and free tiers change. Free/paid mode and paid rates are server configuration rather than hard-coded product truth.
 
@@ -192,7 +192,7 @@ The user may set local caps for:
 - follow-cleanup reviews
 - self-improvement tasks
 
-These values are **productivity and quality controls only**. They are not presented as X/Instagram safe-action thresholds, they do not automate the action, and they are not used to evade platform enforcement. The local advisor can propose a smaller/larger workload from candidate quality and remaining app budget, but the final action still happens manually in the official platform.
+These values are **productivity and quality controls only**. They are not presented as X/Instagram safe-action thresholds, they do not automate the action, and they are not used to evade platform enforcement. The local advisor can propose a smaller/larger workload from candidate quality and remaining app budget, but each social write still requires one explicit user approval.
 
 A candidate may be moved to `snoozedUntil` the next local midnight. Snoozing removes the candidate from the active Discover/Today queue temporarily without deleting candidate data or relationship history.
 
@@ -260,10 +260,25 @@ CI currently verifies:
 - GitHub Pages subpath build
 - production CSP Worker-origin binding
 - provider-route personal-control authentication
-- read-only X OAuth scope set
+- default read-only X OAuth scope set, with optional writes kept as a separate unrequested set
+- SocialAction restore/dedupe/execute-guard invariants
 - optimistic D1 state-sync protection
 
 The intent is to turn the most important cost/safety boundaries into build failures rather than documentation-only rules.
+
+## SocialAction and Mission Inbox
+
+Candidate remains the person/relationship record. SocialAction is a separate validated model for one piece of work (inbound reply, comment, DM, follow, cleanup, and so on). One Candidate may have many SocialActions. Inbound events dedupe on `platform + source + externalEventId`, never on message text.
+
+Mission Inbox ranks SocialActions with deterministic application math:
+
+`missionRelevance * 0.25 + relationshipValue * 0.20 + urgency * 0.30 + conversationOpportunity * 0.25 + authenticityRisk * -0.20`
+
+plus bounded inbound boosts. Relationship value and urgency are derived from CRM/timestamps; the model may supply other component scores but not the sort order itself.
+
+Execution mode comes from a capability matrix, not scattered `if (platform === ...)` UI branches. Instagram follow stays HANDOFF. Instagram comment reply is an in-app capability; live provider writes remain disabled until a later milestone enables one operation at a time through `POST /api/social/actions/:id/execute`.
+
+That execute route requires personal-control auth, exact action/candidate/external binding, HANDOFF rejection, identity-conflict rejection, expiry/completion rejection, single-action bodies only, execution idempotency via `social_executions`, and fail-closed write costing. There is no bulk write route.
 
 ## Social safety invariant
 
@@ -272,7 +287,7 @@ The intent is to turn the most important cost/safety boundaries into build failu
 - No collection of social-account passwords.
 - No automatic bulk follow/unfollow behavior.
 - No follower-churn recommendation logic.
-- No write scope in the X OAuth connection used for account analysis.
+- No write scope in the default X OAuth connection used for account analysis; optional write scopes require an explicit reconnect.
 - Instagram integration reads only explicitly configured, permitted first-party Professional-account surfaces.
-- Final follow/like/reply/DM/unfollow action is user-initiated in the official social experience.
+- No social write without an explicit single-action user approval. HANDOFF actions cannot call a provider write. Completed, expired, identity-conflict, or mis-bound actions cannot write.
 - Discovery/ranking may optimize relevance and relationship value, not evasion of platform enforcement.

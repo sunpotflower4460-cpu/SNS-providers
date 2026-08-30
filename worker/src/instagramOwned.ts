@@ -44,8 +44,10 @@ interface EngagerAccumulator {
   username: string;
   commentCount: number;
   mediaIds: Set<string>;
+  latestCommentId: string | null;
   lastCommentText: string;
   lastCommentAt: string | null;
+  mediaId: string | null;
   latestMediaPermalink: string | null;
 }
 
@@ -90,8 +92,10 @@ export async function syncInstagramEngagers(env: InstagramOwnedEnv, body: Instag
         username,
         commentCount: 0,
         mediaIds: new Set<string>(),
+        latestCommentId: null,
         lastCommentText: '',
         lastCommentAt: null,
+        mediaId: null,
         latestMediaPermalink: null,
       };
       if (fromId) {
@@ -105,9 +109,11 @@ export async function syncInstagramEngagers(env: InstagramOwnedEnv, body: Instag
       if (isLater(comment.timestamp, existing.lastCommentAt)) {
         existing.lastCommentAt = comment.timestamp || existing.lastCommentAt;
         existing.lastCommentText = (comment.text || '').trim().slice(0, 500);
+        existing.latestCommentId = comment.id;
+        existing.mediaId = item.id;
         // Keep the concrete action target bound to the exact same comment event as
-        // lastCommentAt/lastCommentText. If this newest media lacks a permalink, do not
-        // inherit an older post URL and accidentally send the user to the wrong post.
+        // lastCommentAt/lastCommentText/latestCommentId/mediaId. If this newest media
+        // lacks a permalink, do not inherit an older post URL.
         existing.latestMediaPermalink = item.permalink || null;
       }
       engagers.set(key, existing);
@@ -134,6 +140,8 @@ export async function syncInstagramEngagers(env: InstagramOwnedEnv, body: Instag
         mediaCount: entry.mediaIds.size,
         lastCommentText: entry.lastCommentText,
         lastCommentAt: entry.lastCommentAt,
+        latestCommentId: entry.latestCommentId,
+        mediaId: entry.mediaId,
         latestMediaPermalink: entry.latestMediaPermalink,
       })),
   };
@@ -168,7 +176,7 @@ async function fetchMedia(token: string, version: string, instagramUserId: strin
 
 async function fetchComments(token: string, version: string, mediaId: string, limit: number) {
   const params = new URLSearchParams({
-    fields: 'from,text,timestamp',
+    fields: 'id,from,text,timestamp',
     limit: String(limit),
   });
   const result = await graphFetch<GraphPage<unknown>>(`https://graph.instagram.com/${version}/${encodeURIComponent(mediaId)}/comments?${params.toString()}`, token);
@@ -315,7 +323,16 @@ function validEngager(value: unknown) {
     && typeof value.lastCommentText === 'string'
     && value.lastCommentText.length <= 500
     && (value.lastCommentAt == null || (typeof value.lastCommentAt === 'string' && validPastishIso(value.lastCommentAt)))
-    && (value.latestMediaPermalink == null || (typeof value.latestMediaPermalink === 'string' && validInstagramMediaUrl(value.latestMediaPermalink)));
+    && (value.latestCommentId == null || (typeof value.latestCommentId === 'string' && /^\d{1,30}$/.test(value.latestCommentId)))
+    && (value.mediaId == null || (typeof value.mediaId === 'string' && /^\d{1,30}$/.test(value.mediaId)))
+    && (value.latestMediaPermalink == null || (typeof value.latestMediaPermalink === 'string' && validInstagramMediaUrl(value.latestMediaPermalink)))
+    && sameLatestCommentEvent(value);
+}
+
+function sameLatestCommentEvent(value: Record<string, unknown>) {
+  const hasAny = Boolean(value.lastCommentAt || value.latestCommentId || value.mediaId || value.lastCommentText || value.latestMediaPermalink);
+  if (!hasAny) return true;
+  return typeof value.latestCommentId === 'string' && typeof value.mediaId === 'string';
 }
 
 function uniqueEngagers(engagers: unknown[]) {

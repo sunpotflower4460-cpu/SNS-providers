@@ -1,6 +1,7 @@
 import api from './index';
 import { discoverSocialProfiles } from './discovery';
 import { syncInstagramEngagers, type InstagramOwnedSyncRequest } from './instagramOwned';
+import { executeSocialAction } from './social/execute';
 import { reserveSyncLease, releaseSyncLease } from './syncLease';
 import { completeXOAuth, disconnectXOAuth, startXOAuth, xOAuthStatus } from './xOAuth';
 import { syncOwnedXData, type XOwnedSyncRequest } from './xOwned';
@@ -21,6 +22,12 @@ interface Env {
   INSTAGRAM_ACCESS_TOKEN?: string;
   INSTAGRAM_USER_ID?: string;
   INSTAGRAM_API_VERSION?: string;
+  SOCIAL_WRITE_ENABLED?: string;
+  SOCIAL_WRITE_MODE?: string;
+  X_REPLY_WRITE_USD?: string;
+  X_FOLLOW_WRITE_USD?: string;
+  X_DM_WRITE_USD?: string;
+  INSTAGRAM_COMMENT_REPLY_USD?: string;
   DEFAULT_MONTHLY_BUDGET_USD?: string;
   ALLOWED_ORIGIN?: string;
   [key: string]: unknown;
@@ -63,14 +70,22 @@ const PROVIDER_COST_PATHS = new Set([
   '/api/discover/social',
 ]);
 
+function isSocialExecutePath(pathname: string) {
+  return /^\/api\/social\/actions\/[^/]+\/execute$/.test(pathname);
+}
+
+function isRoutedApiPath(pathname: string) {
+  return ROUTER_CORS_PATHS.has(pathname) || isSocialExecutePath(pathname);
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    if (request.method === 'OPTIONS' && ROUTER_CORS_PATHS.has(url.pathname)) {
+    if (request.method === 'OPTIONS' && isRoutedApiPath(url.pathname)) {
       return new Response(null, { status: 204, headers: corsHeaders(request, env) });
     }
 
-    if (ROUTER_CORS_PATHS.has(url.pathname)) {
+    if (isRoutedApiPath(url.pathname)) {
       const userBoundary = await enforceSingleUserRequest(request, url);
       if (!userBoundary.ok) return json({ error: userBoundary.reason }, userBoundary.status, request, env);
     }
@@ -234,6 +249,28 @@ export default {
       return json({ error: 'Method not allowed' }, 405, request, env);
     }
 
+    if (request.method === 'POST' && /\/api\/social\/actions\/(?:bulk|batch|execute-all)/.test(url.pathname)) {
+      return json({ error: 'Bulk social writes are not permitted.', code: 'INVALID_ACTION' }, 400, request, env);
+    }
+
+    if (request.method === 'POST' && isSocialExecutePath(url.pathname)) {
+      const authorized = await authorizeSync(request, env);
+      if (!authorized.ok) return json({ error: authorized.reason, code: 'UNAUTHENTICATED' }, authorized.status, request, env);
+      try {
+        const body = await request.json<unknown>();
+        const actionId = decodeURIComponent(url.pathname.split('/')[4] || '');
+        if (isRecord(body) && isRecord(body.action) && typeof body.action.id === 'string' && body.action.id !== actionId) {
+          return json({ ok: false, code: 'BINDING_MISMATCH', reason: 'URL action id does not match the action body.' }, 400, request, env);
+        }
+        const userId = sanitizeUserId((isRecord(body) && typeof body.userId === 'string' ? body.userId : 'local-user') || 'local-user');
+        const result = await executeSocialAction(env, userId, body);
+        return json(result.body, result.status, request, env);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Social action execute failed';
+        return json({ error: message }, 400, request, env);
+      }
+    }
+
     if (request.method === 'POST' && url.pathname === '/api/discover/social') {
       let automaticGuardId: string | null = null;
       try {
@@ -351,6 +388,10 @@ function sanitizeUserId(value: string) {
   const userId = value.trim();
   if (userId !== 'local-user') throw new Error('unsupported userId');
   return userId;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function validPastishIso(value: string) {

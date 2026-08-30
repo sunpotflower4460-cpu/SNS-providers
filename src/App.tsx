@@ -2,16 +2,16 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { analyzeSelfProfile, apiConfigured, discoverSocialCandidates, enrichXProfiles, fetchBudget, rankCandidates } from './api';
 import BackupControls from './BackupControls';
 import { getSyncToken } from './controlToken';
-import DailyQueue from './DailyQueue';
 import { buildDailyQueue, queueSummary } from './daily';
 import { mergeDiscoveredProfiles } from './discoveryStore';
 import Manual from './Manual';
+import MissionInbox from './MissionInbox';
 import Onboarding from './Onboarding';
 import { hasSeenOnboarding, markOnboardingSeen } from './onboarding';
 import { resolveVisibleResult } from './resultResolution';
 import { addCandidateFromReference, applyRankResults, applySelfAnalysis, applyXProfiles, loadState, saveState, setFollowBackStatus, syncBudget, updateCandidateDraft, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
-import { copyDraft, openCandidate, platformLabel } from './social';
-import type { AppState, AppStateUpdater, Candidate, Platform } from './types';
+import { copyDraft, openCandidate, openSocialAction, platformLabel } from './social';
+import type { AppState, AppStateUpdater, Candidate, Platform, SocialAction } from './types';
 import { useLocalDayKey } from './useLocalDay';
 import { useModalA11y } from './useModalA11y';
 
@@ -263,9 +263,10 @@ function App() {
     return relationshipDone + selfDone;
   }, [state.interactions, state.selfProfile.analyzedAt, localDay]);
 
-  function onOpen(candidate: Candidate) {
+  function onOpen(candidate: Candidate, action?: SocialAction) {
     setPending(candidate);
-    openCandidate(candidate);
+    if (action) openSocialAction(action, candidate);
+    else openCandidate(candidate);
   }
 
   function resolvePending(action: 'followed' | 'skipped' | 'later' | 'kept') {
@@ -415,7 +416,7 @@ function App() {
       </header>
 
       <main className="page">
-        {tab === 'today' && <Today state={state} doneToday={doneToday} onOpen={onOpen} onTab={setTab} />}
+        {tab === 'today' && <Today state={state} onChange={setState} doneToday={doneToday} onOpen={onOpen} onTab={setTab} />}
         {tab === 'discover' && <Discover state={state} candidates={active} onOpen={onOpen} onChange={setState} onDiscover={discoverCandidates} onRerank={rerankCandidates} onEnrichX={enrichXCandidates} discovering={discovering} ranking={ranking} enrichingX={enrichingX} apiNote={statusNote} />}
         {tab === 'relations' && <Relations state={state} onOpen={onOpen} onChange={setState} />}
         {tab === 'me' && <Me state={state} onAnalyze={analyzeMe} analyzing={analyzingSelf} />}
@@ -447,8 +448,12 @@ function BudgetPill({ state }: { state: AppState }) {
   </div>;
 }
 
-function Today({ state, doneToday, onOpen, onTab }: {
-  state: AppState; doneToday: number; onOpen: (c: Candidate) => void; onTab: (tab: Tab) => void;
+function Today({ state, onChange, doneToday, onOpen, onTab }: {
+  state: AppState;
+  onChange: AppStateUpdater;
+  doneToday: number;
+  onOpen: (c: Candidate, action?: SocialAction) => void;
+  onTab: (tab: Tab) => void;
 }) {
   const rawQueue = buildDailyQueue(state);
   const hasCandidates = state.candidates.some((candidate) => !candidate.skipped);
@@ -476,7 +481,7 @@ function Today({ state, doneToday, onOpen, onTab }: {
       </div>
     </section>
 
-    <DailyQueue state={state} onOpenCandidate={onOpen} onOpenMe={() => onTab('me')} onOpenDiscover={() => onTab('discover')} />
+    <MissionInbox state={state} onChange={onChange} onOpenCandidate={onOpen} onOpenMe={() => onTab('me')} onOpenDiscover={() => onTab('discover')} />
 
     {state.insights[0] && <section className="coach-card">
       <div className="coach-icon">✦</div>
@@ -553,7 +558,7 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
       <div className="discover-primary-copy">
         <span className="section-kicker">おすすめ</span>
         <h2>Missionから自動で探す</h2>
-        <p>XとInstagramの公開情報から、今の目的に合う相手を探します。最終フォローや返信は公式SNSであなたが行います。</p>
+        <p>XとInstagramの公開情報から、今の目的に合う相手を探します。最終的なフォローや返信は、あなたが1件ずつ承認してから実行します。</p>
       </div>
       <button className="discovery-button" disabled={candidateOperationBusy} onClick={onDiscover}>
         <span>✦</span>
@@ -754,7 +759,7 @@ function Settings({ state, onChange, onOpenManual }: { state: AppState; onChange
           <label>フォローバック整理を確認するまで <span className="inline-value">{followBackDays}日</span><input className="range" type="range" min="7" max="90" step="1" value={followBackDays} onChange={(event) => { setFollowBackDays(Number(event.target.value)); markEdited(); }} /></label>
           <div className="hard-limit-row"><span><strong>予算上限を超えない</strong><small>設定額を超える有料API処理は実行しません</small></span><b>ON</b></div>
           <button type="button" className="policy-toggle" onClick={() => onChange((current) => updateRelationshipPolicy(current, { ...current.relationshipPolicy, autoDraftReplies: !(current.relationshipPolicy.autoDraftReplies !== false) }))}>
-            <span><strong>返信文案を自動で提案する</strong><small>AI再評価のとき、返信・DMが適切な候補に下書き文を自動生成します(1回の評価につき最大5件)。オフでも評価自体は行われますが下書きは作られません。送信は引き続きご自身で公式アプリから行います。</small></span>
+            <span><strong>返信文案を自動で提案する</strong><small>AI再評価のとき、返信・DMが適切な候補に下書き文を自動生成します(1回の評価につき最大5件)。オフでも評価自体は行われますが下書きは作られません。送信は1件ずつ、あなたが承認したときだけです。</small></span>
             <span className={state.relationshipPolicy.autoDraftReplies !== false ? 'toggle on' : 'toggle'} />
           </button>
         </div>

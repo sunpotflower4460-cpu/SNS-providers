@@ -27,7 +27,9 @@ interface StoredTokenRow {
 }
 
 const READ_ONLY_SCOPES = ['tweet.read', 'users.read', 'follows.read', 'offline.access'];
+const OPTIONAL_WRITE_SCOPES = ['tweet.write', 'follows.write', 'dm.read', 'dm.write'];
 const READ_ONLY_SCOPE_SET = new Set(READ_ONLY_SCOPES);
+const OPTIONAL_WRITE_SCOPE_SET = new Set(OPTIONAL_WRITE_SCOPES);
 const SESSION_TTL_MS = 10 * 60 * 1000;
 const REFRESH_EARLY_MS = 60 * 1000;
 const X_IDENTITY_LEASE_MS = 3 * 60 * 1000;
@@ -44,6 +46,9 @@ export function xOAuthConfigured(env: XOAuthEnv) {
 
 export async function startXOAuth(env: XOAuthEnv) {
   assertConfigured(env);
+  if (OPTIONAL_WRITE_SCOPES.some((scope) => READ_ONLY_SCOPE_SET.has(scope))) {
+    throw new Error('Optional X write scopes must stay separate from the default read-only connection.');
+  }
   await pruneOAuthSessions(env);
 
   const state = randomBase64Url(32);
@@ -103,10 +108,10 @@ export async function completeXOAuth(env: XOAuthEnv, requestUrl: URL, userId = '
 
 export async function xOAuthStatus(env: XOAuthEnv, userId = 'local-user') {
   if (!xOAuthConfigured(env)) {
-    return { configured: false, connected: false, scopes: [], expiresAt: null, updatedAt: null, refreshable: false };
+    return { configured: false, connected: false, scopes: [], capabilities: xWriteCapabilities([]), expiresAt: null, updatedAt: null, refreshable: false };
   }
   const row = await loadStoredToken(env, userId);
-  if (!row) return { configured: true, connected: false, scopes: [], expiresAt: null, updatedAt: null, refreshable: false };
+  if (!row) return { configured: true, connected: false, scopes: [], capabilities: xWriteCapabilities([]), expiresAt: null, updatedAt: null, refreshable: false };
 
   try {
     const scopes = validateGrantedScopes(row.scope);
@@ -130,6 +135,7 @@ export async function xOAuthStatus(env: XOAuthEnv, userId = 'local-user') {
       configured: true,
       connected: usable,
       scopes: usable ? scopes : [],
+      capabilities: usable ? xWriteCapabilities(scopes) : xWriteCapabilities([]),
       expiresAt: usable ? row.expires_at : null,
       updatedAt: usable && validIso(row.updated_at) ? row.updated_at : null,
       refreshable: usable && refreshable,
@@ -137,7 +143,7 @@ export async function xOAuthStatus(env: XOAuthEnv, userId = 'local-user') {
   } catch {
     // A malformed/undecryptable access-token row is not a usable connection. Keep
     // configuration true so the UI offers a fresh OAuth connection that can replace it.
-    return { configured: true, connected: false, scopes: [], expiresAt: null, updatedAt: null, refreshable: false };
+    return { configured: true, connected: false, scopes: [], capabilities: xWriteCapabilities([]), expiresAt: null, updatedAt: null, refreshable: false };
   }
 }
 
@@ -246,17 +252,30 @@ async function persistTokenResponse(
   ).bind(userId, accessTokenEnc, refreshTokenEnc, expiresAt, grantedScopes.join(' '), updatedAt).run();
 }
 
-function validateGrantedScopes(scopeValue?: string, verifiedFallbackScope?: string) {
+function validateGrantedScopes(scopeValue?: string, verifiedFallbackScope?: string, requestedScopes: readonly string[] = READ_ONLY_SCOPES) {
   // Authorization-code responses must prove the granted scopes. A refresh response may
   // omit an unchanged scope; in that one case only, reuse the already-validated stored scope.
+  // Default connect requests READ_ONLY_SCOPES only. Optional write scopes are a separate
+  // set and must never appear unless that reconnect explicitly requested them.
   const rawScope = scopeValue?.trim() || verifiedFallbackScope?.trim();
   if (!rawScope) throw new Error('X OAuth response is missing granted scope metadata');
   const scopes = [...new Set(rawScope.split(/\s+/).filter(Boolean))];
-  const unexpected = scopes.filter((scope) => !READ_ONLY_SCOPE_SET.has(scope));
+  const requested = new Set(requestedScopes);
+  const unexpected = scopes.filter((scope) => !requested.has(scope));
   if (unexpected.length) throw new Error(`X OAuth returned unexpected scope(s): ${unexpected.join(', ')}`);
-  const missing = READ_ONLY_SCOPES.filter((scope) => !scopes.includes(scope));
+  const missing = requestedScopes.filter((scope) => !scopes.includes(scope));
   if (missing.length) throw new Error(`X OAuth response is missing required scope(s): ${missing.join(', ')}`);
   return scopes;
+}
+
+function xWriteCapabilities(scopes: readonly string[]) {
+  const granted = new Set(scopes);
+  return {
+    read: READ_ONLY_SCOPES.every((scope) => granted.has(scope)),
+    reply: granted.has('tweet.write'),
+    follow: granted.has('follows.write'),
+    dm: granted.has('dm.read') && granted.has('dm.write'),
+  };
 }
 
 async function exchangeAuthorizationCode(env: XOAuthEnv, code: string, verifier: string) {

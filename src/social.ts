@@ -1,4 +1,4 @@
-import type { Candidate } from './types';
+import type { Candidate, SocialAction } from './types';
 
 const xReservedPaths = new Set(['home', 'explore', 'notifications', 'messages', 'search', 'i', 'settings', 'compose', 'intent']);
 const instagramReservedPaths = new Set(['p', 'reel', 'reels', 'stories', 'explore', 'accounts', 'direct', 'about', 'developer']);
@@ -16,6 +16,19 @@ export function openCandidate(candidate: Candidate) {
   // Keep final follow/like/reply/DM/unfollow decisions on the official profile or
   // conversation surface. Stored profile URLs are never trusted directly.
   window.open(profileUrl, '_blank', 'noopener,noreferrer');
+}
+
+export function openSocialAction(action: SocialAction, candidate: Candidate) {
+  const targetUrl = safeEngagementUrl(action.platform, action.targetUrl);
+  if (targetUrl) {
+    window.open(targetUrl, '_blank', 'noopener,noreferrer');
+    return;
+  }
+  openCandidate({
+    ...candidate,
+    recommendedAction: recommendedActionForSocialType(action.type),
+    engagementUrl: action.targetUrl || candidate.engagementUrl,
+  });
 }
 
 export async function copyDraft(text: string) {
@@ -47,6 +60,24 @@ function showCopyFeedback(button: HTMLButtonElement | null, originalLabel: strin
 
 export function platformLabel(platform: Candidate['platform']) {
   return platform === 'x' ? 'X' : 'Instagram';
+}
+
+function recommendedActionForSocialType(type: SocialAction['type']): Candidate['recommendedAction'] {
+  switch (type) {
+    case 'follow': return 'follow';
+    case 'like': return 'like';
+    case 'reply_inbound':
+    case 'reply_outbound':
+    case 'comment_reply':
+      return 'reply';
+    case 'dm_reply':
+    case 'dm_outbound':
+      return 'dm';
+    case 'unfollow_review':
+      return 'unfollow_review';
+    default:
+      return 'review';
+  }
 }
 
 function canonicalProfileUrl(platform: Candidate['platform'], rawUsername: string) {

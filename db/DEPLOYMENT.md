@@ -62,6 +62,10 @@ The highest-risk tables to verify are:
 - `x_owned_paging` / `x_follow_cycle_targets` — cycle and evidence integrity protects follow-back decisions.
 - `state_snapshots` — optimistic versioning protects cross-device state.
 - `x_owned_snapshots` / `instagram_engager_snapshots` — current Worker code now rejects malformed cached JSON, but the tables still need to exist with the expected keys.
+- `social_executions` — idempotency for user-approved writes. A repeated `executionId` must recover the prior result instead of posting twice.
+- `social_events` — optional provider-evidence log, conceptually separate from user-facing SocialActions.
+
+Existing databases need `CREATE TABLE IF NOT EXISTS` for the new `social_executions` and `social_events` tables. Re-running the full `db/schema.sql` is safe for new tables; it will not retrofit older tables.
 
 ## 3. X API pricing must be confirmed at deployment time
 
@@ -103,6 +107,6 @@ Do not hard-code today's rates into application logic: the Worker requires expli
 9. Configure Instagram Professional credentials/version and verify media/comment sync twice, including cache reuse.
 10. Configure free Tavily/Groq paths as desired and test automatic replenishment with the monthly paid budget still protected.
 11. Deploy the Pages build with `VITE_API_BASE_URL` pointing at the Worker.
-12. Smoke-test Today/Discover/Relations/Me/Settings on desktop and iPhone, including official X/Instagram handoff.
+12. Smoke-test Today/Discover/Relations/Me/Settings on desktop and iPhone, including Mission Inbox, official HANDOFF, and that no social write happens without a single-action approval.
 
-Final follow/like/reply/DM/unfollow actions remain human-controlled on the official social platform.
+Final social writes stay user-approved. When an official platform API permits the action, SNS-providers may execute that one approved action; otherwise it remains an explicit HANDOFF. There is still no auto-send or bulk write.

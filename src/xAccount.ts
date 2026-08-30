@@ -7,6 +7,12 @@ export interface XOAuthStatus {
   configured: boolean;
   connected: boolean;
   scopes: string[];
+  capabilities?: {
+    read: boolean;
+    reply: boolean;
+    follow: boolean;
+    dm: boolean;
+  };
   expiresAt: string | null;
   updatedAt: string | null;
   refreshable?: boolean;
@@ -183,7 +189,16 @@ function validOAuthStatus(value: unknown): value is XOAuthStatus {
     && value.scopes.every((scope) => typeof scope === 'string' && scope.length <= 80)
     && nullableIso(value.expiresAt)
     && nullableIso(value.updatedAt)
-    && (value.refreshable == null || typeof value.refreshable === 'boolean');
+    && (value.refreshable == null || typeof value.refreshable === 'boolean')
+    && (value.capabilities == null || validXCapabilities(value.capabilities));
+}
+
+function validXCapabilities(value: unknown) {
+  return isRecord(value)
+    && typeof value.read === 'boolean'
+    && typeof value.reply === 'boolean'
+    && typeof value.follow === 'boolean'
+    && typeof value.dm === 'boolean';
 }
 
 function validOwnedSyncResponse(value: unknown): value is XOwnedSyncResponse {

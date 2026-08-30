@@ -1,5 +1,6 @@
 import type { InstagramEngagerSyncResponse } from './instagramAccount';
-import type { AppState, Candidate } from './types';
+import { upsertSocialActions } from './socialAction';
+import type { AppState, Candidate, SocialAction } from './types';
 
 export function applyInstagramEngagers(state: AppState, result: InstagramEngagerSyncResponse): AppState {
   if (!result.enabled) return state;
@@ -269,7 +270,7 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
     })
     .filter((interaction) => !invalidInteractionCandidateIds.has(interaction.candidateId));
 
-  return {
+  const nextState: AppState = {
     ...state,
     candidates: [...additions, ...candidates],
     interactions,
@@ -280,6 +281,46 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
       engagerCount: result.engagers?.length || 0,
     },
   };
+  return ingestInstagramCommentActions(nextState, result.engagers || [], fromCache);
+}
+
+function ingestInstagramCommentActions(
+  state: AppState,
+  engagers: NonNullable<InstagramEngagerSyncResponse['engagers']>,
+  fromCache: boolean,
+): AppState {
+  const incoming: Array<Partial<SocialAction> & Pick<SocialAction, 'platform' | 'candidateId' | 'type' | 'source'>> = [];
+  for (const engager of engagers) {
+    if (!engager.latestCommentId || !engager.mediaId) continue;
+    const incomingStableId = stableInstagramId(engager.id);
+    const username = engager.username.trim().replace(/^@/, '').toLowerCase();
+    const candidate = state.candidates.find((item) => {
+      if (item.platform !== 'instagram') return false;
+      const stableId = stableInstagramId(item.platformUserId);
+      if (incomingStableId && stableId) return stableId === incomingStableId;
+      return item.username.toLowerCase() === username;
+    });
+    if (!candidate) continue;
+    if (candidate.skipped && !isFreshCommentAfterDismissal(candidate, engager.lastCommentAt) && fromCache) continue;
+    if (candidate.skipped && !isFreshCommentAfterDismissal(candidate, engager.lastCommentAt) && !isNewerCommentSignal(candidate, engager.lastCommentAt)) continue;
+
+    incoming.push({
+      platform: 'instagram',
+      candidateId: candidate.id,
+      type: 'comment_reply',
+      source: 'instagram_comment',
+      status: 'ready',
+      externalEventId: engager.latestCommentId,
+      parentContentId: engager.mediaId,
+      targetUrl: engager.latestMediaPermalink || undefined,
+      inboundText: engager.lastCommentText || undefined,
+      observedAt: engager.lastCommentAt || undefined,
+      reason: engager.lastCommentText
+        ? `Instagramに新しいコメントがあります。「${engager.lastCommentText.slice(0, 80)}」`
+        : 'あなたのInstagram投稿に新しいコメントがあります。',
+    });
+  }
+  return incoming.length ? upsertSocialActions(state, incoming) : state;
 }
 
 function stableInstagramId(value?: string | null) {

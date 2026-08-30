@@ -10,6 +10,19 @@
 }
 .x-scope-note strong { color: #bdeede; font-size: 12px; }
 .x-scope-note span { color: #92a2b5; font-size: 10px; line-height: 1.6; }
+.x-capability-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.x-capability-list span {
+  padding: 8px 9px;
+  border: 1px solid rgba(255,255,255,.06);
+  border-radius: 10px;
+  color: #c5d0dc;
+  background: rgba(255,255,255,.03);
+  font-size: 11px;
+}
 .x-connection-details {
   display: grid;
   gap: 7px;

@@ -1,14 +1,16 @@
 # Social Mission / SNS-providers
 
-Mission-driven, mobile-first PWA for growing meaningful social relationships without automating the final social action.
+Mission-driven, mobile-first PWA for growing meaningful social relationships. The product discovers, ranks, drafts and remembers; a social write happens only after one explicit user approval. When an official platform API permits that action, SNS-providers may execute it. Otherwise it uses an explicit HANDOFF to the official app. There is no auto-send and no bulk write.
 
 ## Current v0.1 foundation
 
 - installable mobile PWA shell with 180 / 192 / 512 PNG icons plus SVG fallback
-- 5-tab UX: Today / Discover / Relations / Me / Settings
+- 5-tab UX: Today (Mission Inbox) / Discover / Relations / Me / Settings
 - Mission + Communication DNA settings
 - Mission Match candidate ranking and strategic next-action guidance
-- local-first Daily Queue that mixes connection, conversation, light engagement, self-improvement and follow cleanup
+- SocialAction model for concrete work items, kept separate from Candidate (person/relationship CRM)
+- Mission Inbox that prioritizes inbound DMs/replies/comments, conversation opportunities, relationship maintenance, new connections, light engagement and cleanup
+- local-first Daily Queue fallback that still mixes connection, conversation, light engagement, self-improvement and follow cleanup while SocialActions are rolling out
 - user-configurable daily workload caps for total queue / new connections / conversations / light engagement / cleanup / self-improvement
 - local workload advisor that proposes a practical daily action volume from candidate quality and remaining budget; this is not a platform safety limit
 - Today progress and summary cards are derived from the actual current Daily Queue instead of the raw candidate pool
@@ -20,7 +22,7 @@ Mission-driven, mobile-first PWA for growing meaningful social relationships wit
 - relationship-aware AI ranking receives stage, relationship score, existing reason/strategy and real engagement URL context
 - reply/DM drafts are generated only when relationship/context guards allow them; stale drafts are cleared after reevaluation
 - draft generation can be turned off from Settings (`autoDraftReplies`); when off the AI still ranks/recommends actions but writes no draft text
-- suggested drafts are editable in place before use, with a one-tap revert to the AI's original suggestion; sending still happens manually in the official app
+- suggested drafts are editable in place before use, with a one-tap revert to the AI's original suggestion; sending still requires one explicit user approval and never happens in the background
 - social profile/comment text is treated as untrusted data and never as instructions to the ranking model
 - X/Instagram official profile or real conversation-post handoff; no legacy tweet/follow intent shortcut and no automatic final action
 - one-tap outcome capture after returning to the PWA
@@ -40,6 +42,7 @@ Mission-driven, mobile-first PWA for growing meaningful social relationships wit
 - inbound X followers can be reused as candidate seeds without another X request
 - optional Instagram Professional comment-engager sync using only the official API on the user's own media
 - Instagram commenters can become high-signal `engaged` candidates and retain the related post as the next conversation surface
+- Instagram comment sync preserves latestCommentId, lastCommentText, lastCommentAt, mediaId and latestMediaPermalink for the same latest event, then creates a `comment_reply` SocialAction
 - 12-hour D1 cache for Instagram engager sync
 - local relationship history and relationship stages
 - configurable follow-back review window with Mission-aware keep/cleanup advice
@@ -47,7 +50,7 @@ Mission-driven, mobile-first PWA for growing meaningful social relationships wit
 - self-analysis stays explicitly unmeasured until the first real analysis; no placeholder score is shown
 - X self-profile/recent-post sync automatically feeds the same Me analysis inputs
 - JSON backup/restore for local-first Mission, candidate and relationship state
-- restored JSON state is canonicalized and bounded: Mission, budget, workload, candidates, social URLs, relationship fields, dates, metrics and insights are normalized before use
+- restored JSON state is canonicalized and bounded: Mission, budget, workload, candidates, socialActions, social URLs, relationship fields, dates, metrics and insights are normalized before use
 - optional token-gated D1 snapshot sync for moving state between personal devices
 - D1 downloads pass through the same AppState normalization/validation as JSON backups before becoming live application state
 - optimistic D1 concurrency protection prevents a stale/unknown device from silently overwriting a newer remote snapshot
@@ -59,14 +62,16 @@ Mission-driven, mobile-first PWA for growing meaningful social relationships wit
 - pre-request budget reservations for paid calls to reduce concurrent overspend risk
 - personal/provider Worker JSON responses use `Cache-Control: no-store` plus `X-Content-Type-Options: nosniff`
 - production CSP restricts PWA API traffic to the configured Worker origin; CI verifies the generated binding
-- CI security invariant checks guard provider authentication, conservative budget accounting, read-only X OAuth, relationship-stage reply/DM rules, canonical social handoff, full restored-state normalization, D1 restore validation and optimistic D1 sync
+- CI security invariant checks guard provider authentication, conservative budget accounting, default read-only X OAuth with explicit optional write scopes, relationship-stage reply/DM rules, canonical social handoff, SocialAction restore/execute guards, full restored-state normalization, D1 restore validation and optimistic D1 sync
 - D1 schema for candidates, interactions, Daily Queue, insights, budget ledger, OAuth tokens, pagination, full-cycle follow evidence and personal X/Instagram snapshots
 - GitHub Pages PWA deployment workflow plus subpath-safe manifest / Service Worker
 - CI verifies PWA icon dimensions/references, Service Worker precache coverage, web/Worker typechecking, security invariants and GitHub Pages/CSP builds
 
 ## Product rule
 
-The app may discover, rank, draft, remember and recommend. The final follow/like/reply/DM/unfollow action remains user-initiated in the official social experience. See `docs/ARCHITECTURE.md` for the safety and cost invariants.
+DISCOVER → RANK → DRAFT → APPROVE → EXECUTE.
+
+Only EXECUTE performs a social write. The app may discover, rank, draft, remember and recommend. A social write requires one explicit user approval for one action. When an official platform API permits that action, SNS-providers may execute it in-app. When it does not, the PWA uses an explicit HANDOFF. There is no auto-send, no background bulk action, and no autonomous follow/unfollow/like/reply/DM. See `docs/ARCHITECTURE.md` for the safety and cost invariants.
 
 ## Run the PWA locally
 
@@ -107,7 +112,7 @@ Paid usage is fail-closed. If D1 budget accounting is unavailable, paid provider
 1. In Settings, define the Mission, Communication DNA, monthly API budget and preferred daily workload.
 2. Optionally tap the local workload recommendation; it uses candidate quality and remaining budget only as a productivity guide, not as an X/Instagram enforcement threshold.
 3. Save the personal control key before using Worker-backed budget/provider/social sync features.
-4. Optionally connect X in read-only mode. The PWA never requests follow/post/DM write scopes.
+4. Optionally connect X in read-only mode by default. Write scopes are a separate optional set and are never requested by the default connect button.
 5. Tap `Xデータを同期` to import the connected account's profile/recent posts and budget-permitted follower/following samples. Repeated taps within the cache window reuse D1 data at `$0` application-tracked cost.
 6. Each non-cached X sync is paced from remaining monthly budget and continues followers/following from stored pagination cursors, gradually widening coverage instead of repeatedly buying the first page.
 7. For X candidates already marked as followed, the Worker snapshots the tracked set at the start of a follower cycle and records whether each one is seen across rotated pages. Only a completed cycle can create negative follow-back evidence.
@@ -116,10 +121,10 @@ Paid usage is fail-closed. If D1 budget accounting is unavailable, paid provider
 10. Open Discover and tap `Missionから無料で候補を探す` when Tavily free discovery is configured, or add a profile URL/handle manually. A fresh install starts with no fabricated/demo people.
 11. For arbitrary X candidates, optionally run `X公式情報を補完` if an X bearer token and current User Read rate are explicitly configured.
 12. Run `AIで候補を再評価`. A zero-cost local filter chooses the strongest subset first; the AI then receives relationship context and produces Mission Match, strategy and only context-justified drafts.
-13. Today automatically builds a Daily Queue from Mission Match, relationship state, recommended action, workload caps, self-improvement items and cleanup reviews. Its progress target and summary are based on that actual queue.
-14. Use `明日へ` when a candidate is relevant but not worth handling now; the relationship record stays intact and the candidate returns after the next local-day boundary.
-15. Open the recommended person/post in the official social experience; the user performs the actual social action there.
-16. Return to the PWA and record the result. Genuine interactions conservatively strengthen the CRM relationship stage/score; cleanup keep decisions are tracked without pretending they were social engagement.
+13. Today builds a Mission Inbox from SocialActions when they exist, and still builds a Daily Queue from Mission Match, relationship state, recommended action, workload caps, self-improvement items and cleanup reviews as fallback. Its progress target and summary are based on that actual queue.
+14. Use `明日へ` when an item is relevant but not worth handling now; the relationship record stays intact and the item returns after the snooze window.
+15. Approve one action at a time. If the official API permits it, SNS-providers may later execute that approved action; until a write adapter is enabled, the PWA uses HANDOFF to the official surface.
+16. Return to the PWA and record the result. Genuine interactions conservatively strengthen the CRM relationship stage/score; cleanup keep decisions are tracked without pretending they were social engagement. Completed SocialActions also update Interaction history.
 17. In Relations, review mutual/no-follow-back/unknown state. Cleanup advice never auto-unfollows, and the return sheet explicitly distinguishes `フォローを継続する` from `フォロー解除した`.
 18. In Me, run AI analysis on the synced or manually pasted profile/recent posts to get Mission-based account improvement guidance. Before the first analysis, Mission Score remains unmeasured rather than displaying a fake value.
 19. When moving state between devices, use JSON backup or D1 sync. Both restore paths normalize the complete AppState before it becomes active.

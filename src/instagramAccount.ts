@@ -10,6 +10,8 @@ export interface InstagramEngager {
   mediaCount: number;
   lastCommentText: string;
   lastCommentAt: string | null;
+  latestCommentId: string | null;
+  mediaId: string | null;
   latestMediaPermalink: string | null;
 }
 
@@ -89,7 +91,15 @@ function validEngager(value: unknown): value is InstagramEngager {
     && typeof value.lastCommentText === 'string'
     && value.lastCommentText.length <= 500
     && nullablePastishIso(value.lastCommentAt)
-    && (value.latestMediaPermalink == null || (typeof value.latestMediaPermalink === 'string' && validInstagramMediaUrl(value.latestMediaPermalink)));
+    && (value.latestCommentId == null || (typeof value.latestCommentId === 'string' && /^\d{1,30}$/.test(value.latestCommentId)))
+    && (value.mediaId == null || (typeof value.mediaId === 'string' && /^\d{1,30}$/.test(value.mediaId)))
+    && (value.latestMediaPermalink == null || (typeof value.latestMediaPermalink === 'string' && validInstagramMediaUrl(value.latestMediaPermalink)))
+    && sameLatestCommentEvent(value as InstagramEngager);
+}
+
+function sameLatestCommentEvent(engager: InstagramEngager) {
+  if (engager.latestCommentId == null && engager.mediaId == null) return true;
+  return Boolean(engager.latestCommentId && engager.mediaId);
 }
 
 function uniqueEngagers(engagers: InstagramEngager[]) {
