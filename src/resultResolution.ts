@@ -1,5 +1,5 @@
-import { recordInteraction } from './store';
-import type { AppState, Candidate, Interaction, RecommendedAction } from './types';
+import { completeInboxAction, dismissInboxAction, recordInteraction } from './store';
+import type { AppState, Candidate, Interaction, RecommendedAction, SocialAction } from './types';
 
 export type ResultSheetAction = 'followed' | 'skipped' | 'later' | 'kept';
 
@@ -13,16 +13,18 @@ export function resolveVisibleResult(
   state: AppState,
   visibleCandidate: Candidate,
   action: ResultSheetAction,
+  visibleSocialAction?: SocialAction,
 ): AppState {
   if (action === 'later') return state;
   const current = state.candidates.find((candidate) => candidate.id === visibleCandidate.id);
   if (!current || current.skipped) return state;
-
-  // Candidate IDs are local record IDs, not social-network identity. A handle can be
-  // recycled while a result sheet is open. Only record the visible user's action when the
-  // current record is still provably the same person: equal immutable IDs when available,
-  // or the same platform+handle only while neither side has an immutable ID yet.
   if (!sameVisibleCandidateIdentity(visibleCandidate, current)) return state;
+  if (visibleSocialAction) {
+    const selected = (state.socialActions || []).find((item) => item.id === visibleSocialAction.id);
+    if (!selected || selected.candidateId !== current.id) return state;
+    if (action === 'skipped') return dismissInboxAction(state, selected.id);
+    return completeInboxAction(state, selected.id);
+  }
 
   const visibleCleanup = visibleCandidate.recommendedAction === 'unfollow_review';
   const visibleReview = visibleCandidate.recommendedAction === 'review';

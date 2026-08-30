@@ -5,6 +5,10 @@ const ACTION_TYPES = new Set([
   'reply_inbound', 'reply_outbound', 'comment_reply', 'dm_reply', 'dm_outbound',
   'follow', 'like', 'reconnect', 'relationship_review', 'unfollow_review',
 ]);
+const ACTION_STATUSES = new Set([
+  'pending', 'ready', 'snoozed', 'executing', 'completed', 'dismissed', 'failed', 'expired',
+]);
+const EXECUTABLE_STATUSES = new Set(['pending', 'ready', 'failed']);
 const TERMINAL = new Set(['completed', 'dismissed', 'expired']);
 const EXECUTION_ID = /^[A-Za-z0-9._-]{8,180}$/;
 
@@ -32,7 +36,7 @@ export function assertSingleActionExecute(body: unknown): ExecuteGuardErr | Exec
   if (action.platform !== 'x' && action.platform !== 'instagram') return fail('INVALID_ACTION', 'action.platform is invalid.');
   if (typeof action.candidateId !== 'string' || !action.candidateId.trim()) return fail('INVALID_ACTION', 'action.candidateId is required.');
   if (typeof action.type !== 'string' || !ACTION_TYPES.has(action.type)) return fail('INVALID_ACTION', 'action.type is invalid.');
-  if (typeof action.status !== 'string') return fail('INVALID_ACTION', 'action.status is invalid.');
+  if (typeof action.status !== 'string' || !ACTION_STATUSES.has(action.status)) return fail('INVALID_ACTION', 'action.status is invalid.');
   if (action.executionMode !== 'in_app' && action.executionMode !== 'handoff') return fail('INVALID_ACTION', 'action.executionMode is invalid.');
   if (typeof candidate.id !== 'string' || candidate.id.trim() !== action.candidateId.trim()) {
     return fail('BINDING_MISMATCH', 'Candidate binding does not match the action.');
@@ -75,6 +79,8 @@ export function assertExecutable(
   if (action.status === 'completed') return fail('COMPLETED', 'This social action has already been completed.');
   if (action.status === 'expired') return fail('EXPIRED', 'This social action has expired and cannot be written.');
   if (TERMINAL.has(action.status)) return fail('INVALID_ACTION', 'This social action is no longer executable.');
+  if (action.status === 'executing') return fail('ALREADY_EXECUTED', 'This social action is already being executed.');
+  if (!EXECUTABLE_STATUSES.has(action.status)) return fail('INVALID_ACTION', 'This social action is not in an executable state.');
   if (action.executionMode !== 'in_app') return fail('HANDOFF_NOT_EXECUTABLE', 'HANDOFF actions cannot call a provider write.');
   if (candidate.tags?.includes('identity-conflict')) {
     return fail('IDENTITY_CONFLICT', 'Identity conflict blocks direct social execution.');

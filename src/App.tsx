@@ -3,6 +3,7 @@ import { analyzeSelfProfile, apiConfigured, discoverSocialCandidates, enrichXPro
 import BackupControls from './BackupControls';
 import { getSyncToken } from './controlToken';
 import { buildDailyQueue, queueSummary } from './daily';
+import { buildMissionInbox } from './missionInbox';
 import { mergeDiscoveredProfiles } from './discoveryStore';
 import Manual from './Manual';
 import MissionInbox from './MissionInbox';
@@ -57,7 +58,7 @@ const insightCategoryLabel = {
 function App() {
   const [state, setState] = useState<AppState>(() => loadState());
   const [tab, setTab] = useState<Tab>('today');
-  const [pending, setPending] = useState<Candidate | null>(null);
+  const [pending, setPending] = useState<{ candidate: Candidate; action?: SocialAction } | null>(null);
   const [ranking, setRanking] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [enrichingX, setEnrichingX] = useState(false);
@@ -264,14 +265,16 @@ function App() {
   }, [state.interactions, state.selfProfile.analyzedAt, localDay]);
 
   function onOpen(candidate: Candidate, action?: SocialAction) {
-    setPending(candidate);
+    setPending({ candidate, action });
     if (action) openSocialAction(action, candidate);
     else openCandidate(candidate);
   }
 
   function resolvePending(action: 'followed' | 'skipped' | 'later' | 'kept') {
     if (!pending) return;
-    if (action !== 'later') setState((current) => resolveVisibleResult(current, pending, action));
+    if (action !== 'later') {
+      setState((current) => resolveVisibleResult(current, pending.candidate, action, pending.action));
+    }
     setPending(null);
   }
 
@@ -431,7 +434,7 @@ function App() {
         ))}
       </nav>
 
-      {pending && <ResultSheet candidate={pending} onResolve={resolvePending} />}
+      {pending && <ResultSheet candidate={pending.candidate} action={pending.action} onResolve={resolvePending} />}
       {showOnboarding && <Onboarding onFinish={() => { markOnboardingSeen(); setShowOnboarding(false); }} onOpenManual={() => setShowManual(true)} />}
       {!showOnboarding && showManual && <Manual onClose={() => setShowManual(false)} />}
     </div>
@@ -458,9 +461,21 @@ function Today({ state, onChange, doneToday, onOpen, onTab }: {
   const rawQueue = buildDailyQueue(state);
   const hasCandidates = state.candidates.some((candidate) => !candidate.skipped);
   const queue = hasCandidates ? rawQueue : [];
-  const summary = queueSummary(queue);
+  const inbox = buildMissionInbox(state);
+  const socialCount = inbox.filter((item) => item.kind === 'social').length;
+  const remainingItems = socialCount > 0 ? inbox : queue;
+  const remaining = remainingItems.length;
+  const summary = socialCount > 0
+    ? {
+        connect: inbox.filter((item) => item.category === 'connect').length,
+        engage: inbox.filter((item) => item.category === 'reply' || item.category === 'outreach' || item.category === 'nurture').length,
+        cleanup: inbox.filter((item) => item.category === 'cleanup').length,
+      }
+    : queueSummary(queue);
   const configuredLimit = Math.max(1, state.relationshipPolicy.dailyQueueLimit ?? 30);
-  const plannedTotal = hasCandidates ? Math.min(configuredLimit, doneToday + queue.length) : 0;
+  const plannedTotal = hasCandidates
+    ? (socialCount > 0 ? doneToday + remaining : Math.min(configuredLimit, doneToday + queue.length))
+    : 0;
   const progress = plannedTotal > 0 ? Math.min(100, Math.round((doneToday / plannedTotal) * 100)) : 0;
 
   return <>
@@ -474,7 +489,7 @@ function Today({ state, onChange, doneToday, onOpen, onTab }: {
       <div className="mission-progress-head"><span>今日の進捗</span><strong>{hasCandidates ? `${doneToday} / ${plannedTotal}` : '準備前'}</strong></div>
       <div className="mission-progress" aria-label={`今日の進捗 ${progress}%`}><span style={{ width: `${progress}%` }} /></div>
       <div className="today-summary" aria-label="今日の残り内訳">
-        <span><b>{queue.length}</b>残り</span>
+        <span><b>{remaining}</b>残り</span>
         <span><b>{summary.connect}</b>新規</span>
         <span><b>{summary.engage}</b>交流</span>
         <span><b>{summary.cleanup}</b>整理</span>
@@ -809,13 +824,14 @@ function PageHeading({ eyebrow, title, text }: { eyebrow: string; title: string;
   return <header className="page-heading"><span className="section-kicker">{eyebrow}</span><h1>{title}</h1><p>{text}</p></header>;
 }
 
-function ResultSheet({ candidate, onResolve }: { candidate: Candidate; onResolve: (action: 'followed' | 'skipped' | 'later' | 'kept') => void }) {
-  const cleanup = candidate.recommendedAction === 'unfollow_review';
-  const completion = outcomeForAction(candidate);
+function ResultSheet({ candidate, action, onResolve }: { candidate: Candidate; action?: SocialAction; onResolve: (sheetAction: 'followed' | 'skipped' | 'later' | 'kept') => void }) {
+  const cleanup = action ? action.type === 'unfollow_review' : candidate.recommendedAction === 'unfollow_review';
+  const completion = action ? outcomeForSocialAction(action) : outcomeForAction(candidate);
+  const visibleActionLabel = action ? socialActionResultLabel(action.type) : actionLabel[candidate.recommendedAction];
   return <div className="sheet-backdrop"><section className="result-sheet" role="dialog" aria-modal="true" aria-labelledby="result-title">
     <div className="sheet-handle" />
     <span className="section-kicker">結果を記録</span>
-    <h2 id="result-title">@{candidate.username} への{actionLabel[candidate.recommendedAction]}はどうでしたか？</h2>
+    <h2 id="result-title">@{candidate.username} への{visibleActionLabel}はどうでしたか？</h2>
     <p>{cleanup ? '公式SNSで確認した結果だけ記録します。自動でフォロー解除することはありません。' : '公式SNSでの操作結果だけ記録します。次回のおすすめ精度に使います。'}</p>
     <div className="sheet-actions">{cleanup ? <>
       <button className="sheet-primary" onClick={() => onResolve('kept')}>フォローを継続した</button>
@@ -848,6 +864,42 @@ function outcomeForAction(candidate: Candidate): { label: string; result: 'follo
     case 'reply': return { label: '返信した', result: 'kept' };
     case 'dm': return { label: 'DMした', result: 'kept' };
     default: return { label: '確認・交流した', result: 'kept' };
+  }
+}
+
+function outcomeForSocialAction(action: SocialAction): { label: string; result: 'followed' | 'kept' } {
+  switch (action.type) {
+    case 'follow': return { label: 'フォローした', result: 'followed' };
+    case 'like': return { label: 'いいねした', result: 'kept' };
+    case 'comment_reply':
+    case 'reply_inbound':
+    case 'reply_outbound':
+      return { label: '返信した', result: 'kept' };
+    case 'dm_reply':
+    case 'dm_outbound':
+      return { label: 'DMした', result: 'kept' };
+    case 'unfollow_review':
+      return { label: 'フォローを継続した', result: 'kept' };
+    default:
+      return { label: '確認・交流した', result: 'kept' };
+  }
+}
+
+function socialActionResultLabel(type: SocialAction['type']) {
+  switch (type) {
+    case 'follow': return 'フォロー';
+    case 'like': return 'いいね';
+    case 'comment_reply':
+    case 'reply_inbound':
+    case 'reply_outbound':
+      return '返信';
+    case 'dm_reply':
+    case 'dm_outbound':
+      return 'DM';
+    case 'unfollow_review':
+      return 'フォロー整理';
+    default:
+      return '確認';
   }
 }
 

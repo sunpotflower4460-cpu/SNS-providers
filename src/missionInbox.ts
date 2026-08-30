@@ -32,11 +32,22 @@ export function buildMissionInbox(state: AppState, nowMs = Date.now()): MissionI
     .filter((item): item is MissionInboxItem => item != null && item.kind === 'social');
 
   const covered = new Set<string>();
+  const cover = (action: SocialAction) => {
+    for (const queueAction of queueActionsCoveredBy(action.type)) {
+      covered.add(`${action.candidateId}:${queueAction}`);
+    }
+  };
   for (const item of socialItems) {
-    if (item.candidate && item.action) {
-      for (const queueAction of queueActionsCoveredBy(item.action.type)) {
-        covered.add(`${item.candidate.id}:${queueAction}`);
-      }
+    if (item.action) cover(item.action);
+  }
+  for (const action of state.socialActions || []) {
+    if (action.status === 'snoozed') {
+      const until = action.snoozedUntil ? new Date(action.snoozedUntil).getTime() : 0;
+      if (Number.isFinite(until) && until > nowMs) cover(action);
+      continue;
+    }
+    if (action.status === 'dismissed' || action.status === 'completed' || action.status === 'executing') {
+      cover(action);
     }
   }
 

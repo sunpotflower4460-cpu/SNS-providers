@@ -22,8 +22,11 @@ async function emit(fileName, sourcePath) {
 
 await emit('socialCapabilities.js', new URL('../src/socialCapabilities.ts', import.meta.url));
 await emit('socialAction.js', new URL('../src/socialAction.ts', import.meta.url));
+await emit('daily.js', new URL('../src/daily.ts', import.meta.url));
+await emit('missionInbox.js', new URL('../src/missionInbox.ts', import.meta.url));
 await emit('capabilities.js', new URL('../worker/src/social/capabilities.ts', import.meta.url));
 await emit('executeGuard.js', new URL('../worker/src/social/executeGuard.ts', import.meta.url));
+await emit('execute.js', new URL('../worker/src/social/execute.ts', import.meta.url));
 await emit('inbound.js', new URL('../worker/src/social/instagram/inbound.ts', import.meta.url));
 await emit('xInbound.js', new URL('../worker/src/social/x/inbound.ts', import.meta.url));
 await emit('backup.js', new URL('../src/backup.ts', import.meta.url));
@@ -34,10 +37,13 @@ const {
   failSocialAction,
   normalizeSocialAction,
   normalizeSocialActions,
+  remapSocialActionCandidateIds,
   scoreSocialAction,
   snoozeSocialAction,
   upsertSocialActions,
 } = await import(pathToFileURL(`${outDir}/socialAction.js`).href);
+const { buildMissionInbox } = await import(pathToFileURL(`${outDir}/missionInbox.js`).href);
+const { executionBindingsConflict } = await import(pathToFileURL(`${outDir}/execute.js`).href);
 const { normalizeAppState, validateAppState } = await import(pathToFileURL(`${outDir}/backup.js`).href);
 const { assertExecutable, assertSingleActionExecute } = await import(pathToFileURL(`${outDir}/executeGuard.js`).href);
 const { INSTAGRAM_PROFESSIONAL_CAPABILITIES, xCapabilitiesFromScopes } = await import(pathToFileURL(`${outDir}/capabilities.js`).href);
@@ -62,6 +68,7 @@ const candidate = {
   displayName: 'Alice',
   bio: '',
   profileUrl: 'https://www.instagram.com/alice/',
+  engagementUrl: 'https://www.instagram.com/p/AbCdef12345/',
   kind: 'fan',
   match: 80,
   relationshipScore: 40,
@@ -200,6 +207,15 @@ const blockedCompleted = assertExecutable({ ...parsed, action: { ...parsed.actio
 if (blockedCompleted.ok || blockedCompleted.code !== 'COMPLETED') fail('Completed action was executable.');
 const blockedExpired = assertExecutable({ ...parsed, action: { ...parsed.action, status: 'expired' } }, INSTAGRAM_PROFESSIONAL_CAPABILITIES, { writesEnabled: true, writeCostKnown: true });
 if (blockedExpired.ok || blockedExpired.code !== 'EXPIRED') fail('Expired action was executable.');
+const blockedSnoozed = assertExecutable({ ...parsed, action: { ...parsed.action, status: 'snoozed' } }, INSTAGRAM_PROFESSIONAL_CAPABILITIES, { writesEnabled: true, writeCostKnown: true });
+if (blockedSnoozed.ok || blockedSnoozed.code !== 'INVALID_ACTION') fail('Snoozed action was executable.');
+const blockedExecuting = assertExecutable({ ...parsed, action: { ...parsed.action, status: 'executing' } }, INSTAGRAM_PROFESSIONAL_CAPABILITIES, { writesEnabled: true, writeCostKnown: true });
+if (blockedExecuting.ok || blockedExecuting.code !== 'ALREADY_EXECUTED') fail('Executing action was executable.');
+const garbageStatus = assertSingleActionExecute({
+  ...executeBody,
+  action: { ...executeBody.action, status: 'not-a-status' },
+});
+if (!('ok' in garbageStatus) || garbageStatus.ok !== false) fail('Unknown action status was accepted.');
 const blockedHandoff = assertExecutable({ ...parsed, action: { ...parsed.action, executionMode: 'handoff' } }, INSTAGRAM_PROFESSIONAL_CAPABILITIES, { writesEnabled: true, writeCostKnown: true });
 if (blockedHandoff.ok || blockedHandoff.code !== 'HANDOFF_NOT_EXECUTABLE') fail('HANDOFF action called provider write.');
 const blockedIdentity = assertExecutable(parsed, INSTAGRAM_PROFESSIONAL_CAPABILITIES, { writesEnabled: true, writeCostKnown: true });
@@ -253,4 +269,55 @@ if (xEvents.length !== 1 || xEvents[0].permalink !== 'https://x.com/bob/status/9
 const failed = failSocialAction(first, first.socialActions[0].id, 'provider error', clock);
 if (failed.socialActions[0].status !== 'failed') fail('failSocialAction did not record failure.');
 
-console.log('SocialAction runtime invariants OK: restore defaults, malformed rejection, dedupe, reopen, snooze, complete-once, ranking math, execute guards, Instagram same-event binding, X inbound normalization.');
+const remapped = remapSocialActionCandidateIds(
+  first.socialActions,
+  new Map([['ig-1', 'ig-survivor']]),
+  new Set(['ig-dead']),
+);
+if (remapped.length !== 1 || remapped[0].candidateId !== 'ig-survivor') fail('Identity merge did not remap SocialActions.');
+const droppedOrphans = remapSocialActionCandidateIds(first.socialActions, new Map(), new Set(['ig-1']));
+if (droppedOrphans.length !== 0) fail('Identity reset did not drop orphaned SocialActions.');
+
+const completedFirst = completeSocialAction(secondEvent, secondEvent.socialActions[0].id, {}, clock);
+const historical = Array.from({ length: 498 }, (_, index) => ({
+  ...completedFirst.socialActions[0],
+  id: `sa-hist-${index}`,
+  externalEventId: `hist-${index}`,
+  status: 'completed',
+  observedAt: new Date(now.getTime() - (index + 2) * 60_000).toISOString(),
+}));
+const capped = upsertSocialActions({
+  ...completedFirst,
+  socialActions: [...historical, ...completedFirst.socialActions],
+}, [{
+  platform: 'instagram',
+  candidateId: 'ig-1',
+  type: 'comment_reply',
+  source: 'instagram_comment',
+  externalEventId: 'brand-new',
+  inboundText: 'newest',
+  observedAt: now.toISOString(),
+  reason: 'cap test',
+}], clock);
+if (capped.socialActions.length > 500) fail('SocialAction cap exceeded MAX_ACTIONS.');
+if (!capped.socialActions.some((action) => action.externalEventId === 'brand-new')) {
+  fail('History cap discarded the newest inbound SocialAction.');
+}
+
+const snoozedInbox = snoozeSocialAction(first, first.socialActions[0].id, snoozedUntil, clock);
+const inboxAfterSnooze = buildMissionInbox(snoozedInbox, now.getTime());
+if (inboxAfterSnooze.some((item) => item.kind === 'social')) fail('Snoozed SocialAction stayed in Mission Inbox.');
+if (inboxAfterSnooze.some((item) => item.kind === 'queue' && item.queueItem?.action === 'reply' && item.candidate?.id === 'ig-1')) {
+  fail('Snoozed comment reappeared as Daily Queue fallback.');
+}
+
+if (!executionBindingsConflict(
+  { actionId: 'sa-1', platform: 'instagram', operation: 'instagram_comment_reply' },
+  { ...parsed, action: { ...parsed.action, id: 'sa-other' } },
+)) fail('Reused executionId across different actions was treated as idempotent success.');
+if (executionBindingsConflict(
+  { actionId: 'sa-1', platform: 'instagram', operation: 'instagram_comment_reply' },
+  parsed,
+)) fail('Matching execution recovery was treated as a binding mismatch.');
+
+console.log('SocialAction runtime invariants OK: restore defaults, malformed rejection, dedupe, reopen, snooze, complete-once, ranking math, execute guards, Instagram same-event binding, X inbound normalization, identity remap, history cap, fallback suppression, execution binding.');

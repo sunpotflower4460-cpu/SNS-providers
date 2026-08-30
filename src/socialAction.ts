@@ -202,7 +202,20 @@ export function normalizeSocialActions(raw: unknown, nowMs = Date.now()): Social
   const normalized = raw
     .map((item) => normalizeSocialAction(item, nowMs))
     .filter((action): action is SocialAction => Boolean(action));
-  return dedupeSocialActions(normalized).slice(0, MAX_ACTIONS);
+  return capSocialActions(dedupeSocialActions(normalized));
+}
+
+export function remapSocialActionCandidateIds(
+  actions: SocialAction[],
+  aliases: Map<string, string>,
+  invalidCandidateIds: Set<string>,
+): SocialAction[] {
+  return actions
+    .map((action) => {
+      const mapped = aliases.get(action.candidateId);
+      return mapped && mapped !== action.candidateId ? { ...action, candidateId: mapped } : action;
+    })
+    .filter((action) => !invalidCandidateIds.has(action.candidateId));
 }
 
 export function upsertSocialActions(
@@ -282,7 +295,7 @@ export function upsertSocialActions(
     existing[existingIndex] = mergeExistingAction(previous, normalized, nowIso, nowMs);
   }
 
-  return { ...state, socialActions: existing.slice(0, MAX_ACTIONS) };
+  return { ...state, socialActions: capSocialActions(existing) };
 }
 
 export function snoozeSocialAction(state: AppState, actionId: string, until?: string, clock: SocialActionClock = defaultClock): AppState {
@@ -439,6 +452,20 @@ export function activeSocialActions(state: AppState, nowMs = Date.now()) {
 
 export function isInboundType(type: SocialActionType) {
   return type === 'reply_inbound' || type === 'comment_reply' || type === 'dm_reply';
+}
+
+function capSocialActions(actions: SocialAction[]) {
+  if (actions.length <= MAX_ACTIONS) return actions;
+  return [...actions]
+    .sort((left, right) => {
+      const leftTerminal = TERMINAL_STATUSES.has(left.status) ? 1 : 0;
+      const rightTerminal = TERMINAL_STATUSES.has(right.status) ? 1 : 0;
+      if (leftTerminal !== rightTerminal) return leftTerminal - rightTerminal;
+      const leftObserved = left.observedAt || left.updatedAt || left.createdAt;
+      const rightObserved = right.observedAt || right.updatedAt || right.createdAt;
+      return rightObserved.localeCompare(leftObserved);
+    })
+    .slice(0, MAX_ACTIONS);
 }
 
 function mergeExistingAction(previous: SocialAction, incoming: SocialAction, nowIso: string, nowMs: number): SocialAction {

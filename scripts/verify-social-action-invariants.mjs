@@ -49,6 +49,7 @@ requireAll(socialAction, [
   'export function dismissSocialAction(',
   'export function completeSocialAction(',
   'export function failSocialAction(',
+  'export function remapSocialActionCandidateIds(',
   'socialActionExternalKey',
   'PRIORITY_WEIGHTS',
   'missionRelevance: 0.25',
@@ -58,7 +59,7 @@ requireAll(socialAction, [
   'authenticityRisk: -0.20',
   'dm_reply: 30',
   'comment_reply: 25',
-], 'SocialAction lifecycle, dedupe key, or deterministic ranking math is missing.');
+], 'SocialAction lifecycle, dedupe key, identity remap, or deterministic ranking math is missing.');
 
 requireAll(capabilities, [
   'sendCommentReply: true',
@@ -70,9 +71,10 @@ requireAll(missionInbox, [
   'buildMissionInbox',
   "item.kind === 'social'",
   'buildDailyQueue(state)',
-], 'Mission Inbox no longer prefers SocialActions with Daily Queue fallback.');
+  "action.status === 'dismissed' || action.status === 'completed'",
+], 'Mission Inbox no longer prefers SocialActions with Daily Queue fallback, or snoozed/dismissed work can reappear as fallback.');
 
-requireAll(app, ['<MissionInbox', "label: '今日'"], 'Today was not evolved into Mission Inbox without destroying navigation.');
+requireAll(app, ['<MissionInbox', "label: '今日'", 'pending.action', 'buildMissionInbox(state)'], 'Today was not evolved into Mission Inbox without destroying navigation, or result/progress still ignore the selected SocialAction.');
 requireAll(inboxUi, ['DailyQueue', 'executionMode', '明日へ', '今回は返さない'], 'Mission Inbox cards lost snooze/dismiss/execution-mode UX.');
 requireAll(dailyQueue, ['まず、この1件から', '今日のおすすめは完了です'], 'Candidate-based Daily Queue fallback was destroyed.');
 
@@ -90,7 +92,8 @@ requireAll(instagramOwnedStore, [
   "source: 'instagram_comment'",
   'externalEventId: engager.latestCommentId',
   'parentContentId: engager.mediaId',
-], 'Instagram comments are no longer ingested as exact-event SocialActions.');
+  'remapSocialActionCandidateIds',
+], 'Instagram comments are no longer ingested as exact-event SocialActions, or identity merge orphans them.');
 
 requireAll(instagramAccount, ['latestCommentId', 'mediaId', 'sameLatestCommentEvent'], 'Client Instagram engager validation lost latest-comment identity.');
 
@@ -112,14 +115,17 @@ requireAll(executeGuard, [
   "fail('BINDING_MISMATCH'",
   "fail('WRITE_DISABLED'",
   "fail('WRITE_COST_UNKNOWN'",
+  'ACTION_STATUSES.has(action.status)',
+  'EXECUTABLE_STATUSES',
   'Bulk social writes are not permitted',
-], 'Execute guards no longer cover completed/expired/handoff/identity/binding/cost/bulk cases.');
+], 'Execute guards no longer cover completed/expired/handoff/identity/binding/cost/bulk/status cases.');
 
 requireAll(execute, [
   'idempotency_key',
   "env.SOCIAL_WRITE_MODE === 'test'",
   'Live provider writes are not enabled',
-], 'Execution idempotency or fail-closed live writes are missing.');
+  'executionBindingsConflict',
+], 'Execution idempotency, binding mismatch recovery, or fail-closed live writes are missing.');
 
 requireAll(schema, [
   'CREATE TABLE IF NOT EXISTS social_executions',

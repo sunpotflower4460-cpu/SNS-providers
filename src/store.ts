@@ -540,8 +540,10 @@ export function recordInteraction(state: AppState, candidateId: string, action: 
     return { ...candidate, lastInteractionAt: now };
   });
   const next = refreshRelationshipAdvice({ ...state, interactions, candidates });
+  // Skipping a person dismisses their remaining inbox work. Completing a
+  // candidate-level result must not mark every sibling SocialAction done.
   if (recordedAction === 'skipped') return dismissMatchingSocialActions(next, candidateId);
-  return markSocialActionsCompleted(next, candidateId, recordedAction);
+  return next;
 }
 
 function advanceRelationshipStage(stage: Candidate['stage'], priorEngagements: number, followedAt?: string): Candidate['stage'] {

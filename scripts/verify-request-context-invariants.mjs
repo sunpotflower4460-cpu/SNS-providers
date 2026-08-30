@@ -156,8 +156,8 @@ requireAll(resultResolution, [
   'recordInteraction(contextualState, current.id, recordedAction)',
 ], 'Result-sheet actions can be applied to a replacement identity, reinterpreted by newer recommendations, or inflate engagement from profile-only review.');
 requireAll(app, [
-  'resolveVisibleResult(current, pending, action)',
-  '{pending && <ResultSheet candidate={pending}',
+  'resolveVisibleResult(current, pending.candidate, action, pending.action)',
+  '{pending && <ResultSheet candidate={pending.candidate} action={pending.action}',
 ], 'The result sheet is no longer bound to the candidate context the user actually saw.');
 
 requireAll(discoveryStore, [

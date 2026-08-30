@@ -55,18 +55,7 @@ export async function executeSocialAction(env: SocialExecuteEnv, userId: string,
   }
 
   const existing = await loadExecution(env, userId, parsed.executionId);
-  if (existing) {
-    return {
-      status: 200,
-      body: {
-        ok: true,
-        idempotent: true,
-        executionId: existing.idempotencyKey,
-        status: existing.status,
-        externalResultId: existing.externalResultId,
-      },
-    };
-  }
+  if (existing) return recoverExecution(existing, parsed);
 
   const now = new Date().toISOString();
   const record: ExecutionRecord = {
@@ -85,18 +74,7 @@ export async function executeSocialAction(env: SocialExecuteEnv, userId: string,
   const stored = await persistExecution(env, record);
   if (stored === 'conflict') {
     const raced = await loadExecution(env, userId, parsed.executionId);
-    if (raced) {
-      return {
-        status: 200,
-        body: {
-          ok: true,
-          idempotent: true,
-          executionId: raced.idempotencyKey,
-          status: raced.status,
-          externalResultId: raced.externalResultId,
-        },
-      };
-    }
+    if (raced) return recoverExecution(raced, parsed);
   }
   if (!stored || stored === 'conflict') return { status: 503, body: { ok: false as const, code: 'WRITE_COST_UNKNOWN', reason: 'Execution ledger is unavailable.' } };
 
@@ -115,6 +93,38 @@ export async function executeSocialAction(env: SocialExecuteEnv, userId: string,
       executionId: parsed.executionId,
       status: 'succeeded',
       externalResultId: completed.externalResultId,
+    },
+  };
+}
+
+export function executionBindingsConflict(
+  existing: Pick<ExecutionRecord, 'actionId' | 'platform' | 'operation'>,
+  request: ExecuteRequest,
+) {
+  return existing.actionId !== request.action.id
+    || existing.platform !== request.action.platform
+    || existing.operation !== writeOperation(request);
+}
+
+function recoverExecution(existing: ExecutionRecord, parsed: ExecuteRequest) {
+  if (executionBindingsConflict(existing, parsed)) {
+    return {
+      status: 409,
+      body: {
+        ok: false as const,
+        code: 'BINDING_MISMATCH',
+        reason: 'This executionId is already bound to a different social action.',
+      },
+    };
+  }
+  return {
+    status: 200,
+    body: {
+      ok: true,
+      idempotent: true,
+      executionId: existing.idempotencyKey,
+      status: existing.status,
+      externalResultId: existing.externalResultId,
     },
   };
 }

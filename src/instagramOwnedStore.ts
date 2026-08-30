@@ -1,5 +1,5 @@
 import type { InstagramEngagerSyncResponse } from './instagramAccount';
-import { upsertSocialActions } from './socialAction';
+import { upsertSocialActions, remapSocialActionCandidateIds } from './socialAction';
 import type { AppState, Candidate, SocialAction } from './types';
 
 export function applyInstagramEngagers(state: AppState, result: InstagramEngagerSyncResponse): AppState {
@@ -274,6 +274,11 @@ export function applyInstagramEngagers(state: AppState, result: InstagramEngager
     ...state,
     candidates: [...additions, ...candidates],
     interactions,
+    socialActions: remapSocialActionCandidateIds(
+      state.socialActions || [],
+      legacyIdentityAliases,
+      invalidInteractionCandidateIds,
+    ),
     instagramAccount: {
       lastSyncedAt: syncedAt,
       mediaScanned: result.mediaScanned || 0,
