@@ -29,7 +29,7 @@ export function buildMissionInbox(state: AppState, nowMs = Date.now()): MissionI
         candidate,
       };
     })
-    .filter((item): item is MissionInboxItem => Boolean(item));
+    .filter((item): item is MissionInboxItem => item != null && item.kind === 'social');
 
   const covered = new Set<string>();
   for (const item of socialItems) {

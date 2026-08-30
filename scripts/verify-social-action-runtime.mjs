@@ -14,7 +14,7 @@ async function emit(fileName, sourcePath) {
       moduleResolution: ts.ModuleResolutionKind.Bundler,
       isolatedModules: true,
     },
-    fileName: sourcePath,
+    fileName: typeof sourcePath === 'string' ? sourcePath : sourcePath.pathname,
   });
   const rewritten = outputText.replace(/from ['"]\.\/([^'"]+)['"]/g, "from './$1.js'");
   await writeFile(`${outDir}/${fileName}`, rewritten);
@@ -49,9 +49,10 @@ function fail(message) {
 }
 
 const now = new Date('2026-08-30T12:00:00.000Z');
+let nextId = 0;
 const clock = {
   now: () => now,
-  id: () => 'sa-test-id',
+  id: () => `sa-test-${++nextId}`,
 };
 
 const candidate = {

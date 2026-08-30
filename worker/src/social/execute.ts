@@ -1,5 +1,5 @@
 import { INSTAGRAM_PROFESSIONAL_CAPABILITIES, xCapabilitiesFromScopes } from './capabilities';
-import { assertExecutable, assertSingleActionExecute } from './executeGuard';
+import { assertExecutable, assertSingleActionExecute, type ExecuteGuardErr } from './executeGuard';
 import type { ExecuteRequest } from './types';
 
 export interface SocialExecuteEnv {
@@ -28,7 +28,7 @@ export interface ExecutionRecord {
 
 export async function executeSocialAction(env: SocialExecuteEnv, userId: string, body: unknown, grantedXScopes: string[] = []) {
   const parsed = assertSingleActionExecute(body);
-  if ('ok' in parsed && parsed.ok === false) return { status: 400, body: parsed };
+  if (isExecuteGuardErr(parsed)) return { status: 400, body: parsed };
 
   const capabilities = parsed.action.platform === 'instagram'
     ? INSTAGRAM_PROFESSIONAL_CAPABILITIES
@@ -117,6 +117,10 @@ export async function executeSocialAction(env: SocialExecuteEnv, userId: string,
       externalResultId: completed.externalResultId,
     },
   };
+}
+
+function isExecuteGuardErr(value: ExecuteRequest | ExecuteGuardErr): value is ExecuteGuardErr {
+  return 'ok' in value && value.ok === false;
 }
 
 function writeOperation(request: ExecuteRequest) {

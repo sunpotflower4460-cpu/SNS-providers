@@ -94,10 +94,10 @@ function validEngager(value: unknown): value is InstagramEngager {
     && (value.latestCommentId == null || (typeof value.latestCommentId === 'string' && /^\d{1,30}$/.test(value.latestCommentId)))
     && (value.mediaId == null || (typeof value.mediaId === 'string' && /^\d{1,30}$/.test(value.mediaId)))
     && (value.latestMediaPermalink == null || (typeof value.latestMediaPermalink === 'string' && validInstagramMediaUrl(value.latestMediaPermalink)))
-    && sameLatestCommentEvent(value as InstagramEngager);
+    && sameLatestCommentEvent(value);
 }
 
-function sameLatestCommentEvent(engager: InstagramEngager) {
+function sameLatestCommentEvent(engager: Record<string, unknown>) {
   if (engager.latestCommentId == null && engager.mediaId == null) return true;
   return Boolean(engager.latestCommentId && engager.mediaId);
 }

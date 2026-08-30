@@ -266,12 +266,14 @@ export function upsertSocialActions(
 
     const externalKey = socialActionExternalKey(normalized);
     const existingIndex = (externalKey ? byExternal.get(externalKey) : undefined)
-      ?? (normalized.id ? byId.get(normalized.id) : undefined);
+      ?? (raw.id ? byId.get(raw.id) : undefined);
 
     if (existingIndex == null) {
+      let unique = normalized;
+      while (byId.has(unique.id)) unique = { ...unique, id: clock.id() };
       const index = existing.length;
-      existing.push(normalized);
-      byId.set(normalized.id, index);
+      existing.push(unique);
+      byId.set(unique.id, index);
       if (externalKey) byExternal.set(externalKey, index);
       continue;
     }

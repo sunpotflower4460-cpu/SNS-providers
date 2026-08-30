@@ -39,12 +39,13 @@ export function assertSingleActionExecute(body: unknown): ExecuteGuardErr | Exec
   }
   if (candidate.platform !== action.platform) return fail('BINDING_MISMATCH', 'Candidate platform does not match the action.');
   const draft = typeof body.draft === 'string' ? body.draft.trim().slice(0, 2400) : (typeof action.draft === 'string' ? action.draft.trim().slice(0, 2400) : '');
+  const platform = action.platform;
   return {
     executionId,
     draft,
     action: {
       id: action.id.trim(),
-      platform: action.platform,
+      platform,
       candidateId: action.candidateId.trim(),
       type: action.type as ExecuteRequest['action']['type'],
       status: action.status as ExecuteRequest['action']['status'],
@@ -57,7 +58,7 @@ export function assertSingleActionExecute(body: unknown): ExecuteGuardErr | Exec
     },
     candidate: {
       id: candidate.id.trim(),
-      platform: candidate.platform,
+      platform,
       platformUserId: typeof candidate.platformUserId === 'string' ? candidate.platformUserId : undefined,
       username: typeof candidate.username === 'string' ? candidate.username : '',
       tags: Array.isArray(candidate.tags) ? candidate.tags.filter((tag): tag is string => typeof tag === 'string') : [],

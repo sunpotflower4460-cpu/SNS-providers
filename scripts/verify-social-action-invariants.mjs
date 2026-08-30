@@ -105,13 +105,13 @@ if (router.includes('/api/social/actions/execute-all') && !router.includes('Bulk
 }
 
 requireAll(executeGuard, [
-  "code: 'COMPLETED'",
-  "code: 'EXPIRED'",
-  "code: 'HANDOFF_NOT_EXECUTABLE'",
-  "code: 'IDENTITY_CONFLICT'",
-  "code: 'BINDING_MISMATCH'",
-  "code: 'WRITE_DISABLED'",
-  "code: 'WRITE_COST_UNKNOWN'",
+  "fail('COMPLETED'",
+  "fail('EXPIRED'",
+  "fail('HANDOFF_NOT_EXECUTABLE'",
+  "fail('IDENTITY_CONFLICT'",
+  "fail('BINDING_MISMATCH'",
+  "fail('WRITE_DISABLED'",
+  "fail('WRITE_COST_UNKNOWN'",
   'Bulk social writes are not permitted',
 ], 'Execute guards no longer cover completed/expired/handoff/identity/binding/cost/bulk cases.');
 
