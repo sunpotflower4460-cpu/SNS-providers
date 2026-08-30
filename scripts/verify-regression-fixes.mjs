@@ -22,6 +22,7 @@ const backupControls = await readFile(new URL('../src/BackupControls.tsx', impor
 const workload = await readFile(new URL('../src/WorkloadControls.tsx', import.meta.url), 'utf8');
 const statusPresentation = await readFile(new URL('../src/statusPresentation.ts', import.meta.url), 'utf8');
 const resultResolution = await readFile(new URL('../src/resultResolution.ts', import.meta.url), 'utf8');
+const socialActionSrc = await readFile(new URL('../src/socialAction.ts', import.meta.url), 'utf8');
 const instagramOwnedStore = await readFile(new URL('../src/instagramOwnedStore.ts', import.meta.url), 'utf8');
 
 const expectedGroqModel = 'llama-3.3-70b-versatile';
@@ -211,8 +212,15 @@ if (!resultResolution.includes('if (!sameVisibleCandidateIdentity(visibleCandida
   || !resultResolution.includes('const completedVisibleEngagement =')
   || !resultResolution.includes("engagementUrl: visibleCandidate.recommendedAction === 'like' || visibleCandidate.recommendedAction === 'reply'")
   || !resultResolution.includes("const recordedAction: Interaction['action'] = visibleReview && action === 'kept'")
-  || !resultResolution.includes("? 'review'")) {
+  || !resultResolution.includes("? 'review'")
+  || !resultResolution.includes('completeInboxAction(state, selected.id)')) {
   throw new Error('A result sheet can again record an old visible person onto a replacement identity, replay exact engagement, or count profile review as relationship engagement.');
+}
+
+if (!socialActionSrc.includes('consumeMatchingEngagement(candidate, action)')
+  || !socialActionSrc.includes('sameEngagementSurface(action.targetUrl, candidate.engagementUrl)')
+  || !socialActionSrc.includes("recommendedAction: 'review'")) {
+  throw new Error('Completing a Mission Inbox reply can again leave the same post as the candidate recommendation.');
 }
 
 if (!instagramOwned.includes('existing.latestMediaPermalink = item.permalink || null;')

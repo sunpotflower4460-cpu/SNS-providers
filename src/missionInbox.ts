@@ -1,5 +1,5 @@
 import { buildDailyQueue, type DailyQueueItem } from './daily';
-import { activeSocialActions, isInboundType } from './socialAction';
+import { activeSocialActions, engagementSurfaceKey, isInboundType } from './socialAction';
 import type { AppState, Candidate, SocialAction, SocialActionType } from './types';
 
 export type InboxCategory = 'reply' | 'outreach' | 'connect' | 'nurture' | 'cleanup';
@@ -32,22 +32,32 @@ export function buildMissionInbox(state: AppState, nowMs = Date.now()): MissionI
     .filter((item): item is MissionInboxItem => item != null && item.kind === 'social');
 
   const covered = new Set<string>();
-  const cover = (action: SocialAction) => {
+  const coverFamily = (action: SocialAction) => {
     for (const queueAction of queueActionsCoveredBy(action.type)) {
       covered.add(`${action.candidateId}:${queueAction}`);
     }
   };
+  const coverSurface = (action: SocialAction) => {
+    for (const queueAction of queueActionsCoveredBy(action.type)) {
+      const key = engagementSurfaceKey(action.candidateId, queueAction, action.targetUrl);
+      if (key) covered.add(key);
+    }
+  };
   for (const item of socialItems) {
-    if (item.action) cover(item.action);
+    if (item.action) coverFamily(item.action);
   }
   for (const action of state.socialActions || []) {
     if (action.status === 'snoozed') {
       const until = action.snoozedUntil ? new Date(action.snoozedUntil).getTime() : 0;
-      if (Number.isFinite(until) && until > nowMs) cover(action);
+      if (Number.isFinite(until) && until > nowMs) coverFamily(action);
       continue;
     }
-    if (action.status === 'dismissed' || action.status === 'completed' || action.status === 'executing') {
-      cover(action);
+    if (action.status === 'executing') {
+      coverFamily(action);
+      continue;
+    }
+    if (action.status === 'dismissed' || action.status === 'completed') {
+      coverSurface(action);
     }
   }
 
@@ -55,7 +65,10 @@ export function buildMissionInbox(state: AppState, nowMs = Date.now()): MissionI
     .filter((item) => {
       if (item.kind === 'self') return true;
       if (!item.candidateId) return false;
-      return !covered.has(`${item.candidateId}:${item.action}`);
+      if (covered.has(`${item.candidateId}:${item.action}`)) return false;
+      const candidate = candidateById.get(item.candidateId);
+      const surface = engagementSurfaceKey(item.candidateId, item.action, candidate?.engagementUrl);
+      return !surface || !covered.has(surface);
     })
     .map((item): MissionInboxItem => ({
       id: `queue-${item.id}`,
@@ -70,6 +83,20 @@ export function buildMissionInbox(state: AppState, nowMs = Date.now()): MissionI
     const categoryDelta = categoryRank(left.category) - categoryRank(right.category);
     if (categoryDelta) return categoryDelta;
     return right.priority - left.priority;
+  });
+}
+
+export function fallbackDailyQueue(state: AppState, nowMs = Date.now()): DailyQueueItem[] {
+  return buildMissionInbox(state, nowMs)
+    .filter((item) => item.kind === 'queue' && item.queueItem)
+    .map((item) => item.queueItem!);
+}
+
+export function hasDeferredSocialWork(state: AppState, nowMs = Date.now()): boolean {
+  return (state.socialActions || []).some((action) => {
+    if (action.status !== 'snoozed') return false;
+    const until = action.snoozedUntil ? new Date(action.snoozedUntil).getTime() : 0;
+    return Number.isFinite(until) && until > nowMs;
   });
 }
 

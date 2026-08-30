@@ -51,6 +51,8 @@
   color: #dce5ef;
   font-size: 14px;
   line-height: 1.5;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .inbox-reason {
   margin: 0;

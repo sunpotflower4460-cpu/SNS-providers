@@ -42,7 +42,7 @@ const {
   snoozeSocialAction,
   upsertSocialActions,
 } = await import(pathToFileURL(`${outDir}/socialAction.js`).href);
-const { buildMissionInbox } = await import(pathToFileURL(`${outDir}/missionInbox.js`).href);
+const { buildMissionInbox, fallbackDailyQueue, hasDeferredSocialWork } = await import(pathToFileURL(`${outDir}/missionInbox.js`).href);
 const { executionBindingsConflict } = await import(pathToFileURL(`${outDir}/execute.js`).href);
 const { normalizeAppState, validateAppState } = await import(pathToFileURL(`${outDir}/backup.js`).href);
 const { assertExecutable, assertSingleActionExecute } = await import(pathToFileURL(`${outDir}/executeGuard.js`).href);
@@ -114,6 +114,7 @@ const first = upsertSocialActions(emptyState, [{
   source: 'instagram_comment',
   externalEventId: '111',
   parentContentId: 'media-1',
+  targetUrl: 'https://www.instagram.com/p/AbCdef12345/',
   inboundText: '好きです',
   observedAt: now.toISOString(),
   reason: 'new comment',
@@ -171,6 +172,8 @@ if (dismissed.socialActions[0].status !== 'dismissed') fail('Dismiss failed.');
 
 const completed = completeSocialAction(first, first.socialActions[0].id, { executionId: 'exec-1' }, clock);
 if (completed.socialActions[0].status !== 'completed') fail('Complete failed.');
+if (completed.candidates[0].engagementUrl) fail('Completed reply did not consume the matching post target.');
+if (completed.candidates[0].recommendedAction !== 'review') fail('Completed reply left the candidate recommending the same post.');
 const completedAgain = completeSocialAction(completed, first.socialActions[0].id, { executionId: 'exec-2' }, clock);
 if (completedAgain.interactions.length !== completed.interactions.length) fail('Completed action executed twice.');
 
@@ -310,6 +313,29 @@ if (inboxAfterSnooze.some((item) => item.kind === 'social')) fail('Snoozed Socia
 if (inboxAfterSnooze.some((item) => item.kind === 'queue' && item.queueItem?.action === 'reply' && item.candidate?.id === 'ig-1')) {
   fail('Snoozed comment reappeared as Daily Queue fallback.');
 }
+if (fallbackDailyQueue(snoozedInbox, now.getTime()).some((item) => item.action === 'reply' && item.candidateId === 'ig-1')) {
+  fail('Daily Queue UI fallback still showed the snoozed reply.');
+}
+if (!hasDeferredSocialWork(snoozedInbox, now.getTime())) fail('Snoozed inbox work was not treated as deferred.');
+
+const laterPost = {
+  ...emptyState,
+  candidates: [{
+    ...candidate,
+    recommendedAction: 'reply',
+    engagementUrl: 'https://www.instagram.com/p/NewPost12345/',
+  }],
+  socialActions: [{
+    ...first.socialActions[0],
+    status: 'completed',
+    completedAt: now.toISOString(),
+    targetUrl: 'https://www.instagram.com/p/AbCdef12345/',
+  }],
+};
+const inboxLater = buildMissionInbox(laterPost, now.getTime());
+if (!inboxLater.some((item) => item.kind === 'queue' && item.queueItem?.action === 'reply' && item.candidate?.id === 'ig-1')) {
+  fail('A newer post reply was hidden by a completed comment on a different post.');
+}
 
 if (!executionBindingsConflict(
   { actionId: 'sa-1', platform: 'instagram', operation: 'instagram_comment_reply' },
@@ -320,4 +346,4 @@ if (executionBindingsConflict(
   parsed,
 )) fail('Matching execution recovery was treated as a binding mismatch.');
 
-console.log('SocialAction runtime invariants OK: restore defaults, malformed rejection, dedupe, reopen, snooze, complete-once, ranking math, execute guards, Instagram same-event binding, X inbound normalization, identity remap, history cap, fallback suppression, execution binding.');
+console.log('SocialAction runtime invariants OK: restore defaults, malformed rejection, dedupe, reopen, snooze, complete-once, ranking math, execute guards, Instagram same-event binding, X inbound normalization, identity remap, history cap, fallback suppression, later-post reopen, engagement consume, execution binding.');

@@ -377,7 +377,7 @@ export function completeSocialAction(
 
   const candidates = state.candidates.map((item) => {
     if (item.id !== candidate.id) return item;
-    return applyCompletedActionToCandidate(item, action.type, recordedAction, priorEngagements, nowIso);
+    return applyCompletedActionToCandidate(item, action, recordedAction, priorEngagements, nowIso);
   });
 
   return {
@@ -547,11 +547,12 @@ function updateAction(state: AppState, actionId: string, updater: (action: Socia
 
 function applyCompletedActionToCandidate(
   candidate: Candidate,
-  type: SocialActionType,
+  action: SocialAction,
   recordedAction: Interaction['action'],
   priorEngagements: number,
   nowIso: string,
 ): Candidate {
+  const type = action.type;
   if (recordedAction === 'followed') {
     const stage = candidate.stage === 'discovered' || candidate.stage === 'interested' ? 'following' as const : candidate.stage;
     return {
@@ -567,6 +568,7 @@ function applyCompletedActionToCandidate(
     const increment = type === 'dm_reply' || type === 'dm_outbound' ? 10 : type === 'comment_reply' || type === 'reply_inbound' ? 8 : 6;
     return {
       ...candidate,
+      ...consumeMatchingEngagement(candidate, action),
       stage: conservativeAdvance(candidate.stage, priorEngagements, candidate.followedAt, type),
       relationshipScore: addRelationshipScore(candidate.relationshipScore, increment),
       lastInteractionAt: nowIso,
@@ -581,6 +583,37 @@ function applyCompletedActionToCandidate(
     };
   }
   return { ...candidate, lastInteractionAt: nowIso };
+}
+
+function consumeMatchingEngagement(candidate: Candidate, action: SocialAction): Partial<Candidate> {
+  const consumesTarget = action.type === 'comment_reply'
+    || action.type === 'reply_inbound'
+    || action.type === 'reply_outbound'
+    || action.type === 'like';
+  if (!consumesTarget || !sameEngagementSurface(action.targetUrl, candidate.engagementUrl)) return {};
+  if (candidate.recommendedAction === 'reply' || candidate.recommendedAction === 'like') {
+    return {
+      recommendedAction: 'review',
+      draft: undefined,
+      engagementUrl: undefined,
+    };
+  }
+  return { engagementUrl: undefined, draft: undefined };
+}
+
+export function sameEngagementSurface(left?: string, right?: string) {
+  const a = normalizeEngagementUrl(left);
+  const b = normalizeEngagementUrl(right);
+  return Boolean(a && b && a === b);
+}
+
+export function engagementSurfaceKey(candidateId: string, queueAction: string, url?: string) {
+  const normalized = normalizeEngagementUrl(url);
+  return normalized ? `${candidateId}:${queueAction}:${normalized}` : '';
+}
+
+function normalizeEngagementUrl(value?: string) {
+  return (value || '').trim().replace(/\/+$/, '').toLowerCase();
 }
 
 function conservativeAdvance(

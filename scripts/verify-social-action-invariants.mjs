@@ -48,6 +48,9 @@ requireAll(socialAction, [
   'export function snoozeSocialAction(',
   'export function dismissSocialAction(',
   'export function completeSocialAction(',
+  'consumeMatchingEngagement',
+  'sameEngagementSurface',
+  'engagementSurfaceKey',
   'export function failSocialAction(',
   'export function remapSocialActionCandidateIds(',
   'socialActionExternalKey',
@@ -71,12 +74,15 @@ requireAll(missionInbox, [
   'buildMissionInbox',
   "item.kind === 'social'",
   'buildDailyQueue(state)',
+  'fallbackDailyQueue',
+  'hasDeferredSocialWork',
+  'engagementSurfaceKey',
   "action.status === 'dismissed' || action.status === 'completed'",
 ], 'Mission Inbox no longer prefers SocialActions with Daily Queue fallback, or snoozed/dismissed work can reappear as fallback.');
 
 requireAll(app, ['<MissionInbox', "label: '今日'", 'pending.action', 'buildMissionInbox(state)'], 'Today was not evolved into Mission Inbox without destroying navigation, or result/progress still ignore the selected SocialAction.');
 requireAll(inboxUi, ['DailyQueue', 'executionMode', '明日へ', '今回は返さない'], 'Mission Inbox cards lost snooze/dismiss/execution-mode UX.');
-requireAll(dailyQueue, ['まず、この1件から', '今日のおすすめは完了です'], 'Candidate-based Daily Queue fallback was destroyed.');
+requireAll(dailyQueue, ['まず、この1件から', '今日のおすすめは完了です', 'fallbackDailyQueue', '受信した交流は明日へ送りました'], 'Candidate-based Daily Queue fallback was destroyed or no longer honors SocialAction coverage.');
 
 requireAll(instagramOwned, [
   'existing.latestCommentId = comment.id',

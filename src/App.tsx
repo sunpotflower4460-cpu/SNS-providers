@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { analyzeSelfProfile, apiConfigured, discoverSocialCandidates, enrichXProfiles, fetchBudget, rankCandidates } from './api';
 import BackupControls from './BackupControls';
 import { getSyncToken } from './controlToken';
-import { buildDailyQueue, queueSummary } from './daily';
+import { buildDailyQueue } from './daily';
 import { buildMissionInbox } from './missionInbox';
 import { mergeDiscoveredProfiles } from './discoveryStore';
 import Manual from './Manual';
@@ -458,24 +458,16 @@ function Today({ state, onChange, doneToday, onOpen, onTab }: {
   onOpen: (c: Candidate, action?: SocialAction) => void;
   onTab: (tab: Tab) => void;
 }) {
-  const rawQueue = buildDailyQueue(state);
   const hasCandidates = state.candidates.some((candidate) => !candidate.skipped);
-  const queue = hasCandidates ? rawQueue : [];
-  const inbox = buildMissionInbox(state);
-  const socialCount = inbox.filter((item) => item.kind === 'social').length;
-  const remainingItems = socialCount > 0 ? inbox : queue;
+  const inbox = hasCandidates ? buildMissionInbox(state) : [];
+  const remainingItems = inbox;
   const remaining = remainingItems.length;
-  const summary = socialCount > 0
-    ? {
-        connect: inbox.filter((item) => item.category === 'connect').length,
-        engage: inbox.filter((item) => item.category === 'reply' || item.category === 'outreach' || item.category === 'nurture').length,
-        cleanup: inbox.filter((item) => item.category === 'cleanup').length,
-      }
-    : queueSummary(queue);
-  const configuredLimit = Math.max(1, state.relationshipPolicy.dailyQueueLimit ?? 30);
-  const plannedTotal = hasCandidates
-    ? (socialCount > 0 ? doneToday + remaining : Math.min(configuredLimit, doneToday + queue.length))
-    : 0;
+  const summary = {
+    connect: remainingItems.filter((item) => item.category === 'connect').length,
+    engage: remainingItems.filter((item) => item.category === 'reply' || item.category === 'outreach' || item.category === 'nurture').length,
+    cleanup: remainingItems.filter((item) => item.category === 'cleanup').length,
+  };
+  const plannedTotal = hasCandidates ? doneToday + remaining : 0;
   const progress = plannedTotal > 0 ? Math.min(100, Math.round((doneToday / plannedTotal) * 100)) : 0;
 
   return <>
