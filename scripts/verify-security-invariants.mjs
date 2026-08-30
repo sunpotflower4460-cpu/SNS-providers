@@ -319,7 +319,7 @@ if (!xOAuth.includes('validateGrantedScopes(token.scope, {')
   || !xOAuth.includes("token.token_type || '').trim().toLowerCase() !== 'bearer'")) {
   throw new Error('X OAuth no longer fail-closes on token type or requested/granted scope boundaries.');
 }
-if (!xOAuth.includes('persistTokenResponse(env, userId, refreshed, row.refresh_token_enc, row.scope)')) {
+if (!xOAuth.includes('persistTokenResponse(env, userId, refreshed, row.refresh_token_enc, row.scope, undefined, row.x_user_id)')) {
   throw new Error('X OAuth refresh can no longer reuse only the previously verified scope when scope metadata is omitted.');
 }
 if (!xOAuth.includes('invalidateStoredConnectionAfterRefreshPersistenceFailure(env, userId)')

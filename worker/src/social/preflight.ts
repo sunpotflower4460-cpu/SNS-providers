@@ -80,7 +80,7 @@ export async function buildProductionPreflight(env: PreflightEnv, userId: string
   checks.push(flagCheck('X like write', capabilities.x.like, scopes.includes('like.write'), env.X_LIKE_WRITE_ENABLED === 'true', 'like.write', 'Settings → X → いいね権限を追加'));
   checks.push(scopes.includes('like.read') && scopes.includes('like.write')
     ? ok('X like.read', 'like.read is present for official liked-state reconciliation.')
-    : warn('X like.read', 'いいね reconcilation needs like.read + like.write.', 'Settings → X → いいね権限を追加 (requests like.read and like.write together).'));
+    : warn('X like.read', 'いいね reconciliation needs like.read + like.write.', 'Settings → X → いいね権限を追加 (requests like.read and like.write together).'));
   checks.push(flagCheck('X DM read', capabilities.x.readDm, scopes.includes('dm.read'), env.X_DM_READ_ENABLED === 'true' || env.X_DM_WRITE_ENABLED === 'true', 'dm.read', 'Settings → X → DM権限を追加'));
   checks.push(flagCheck('X DM write', capabilities.x.sendDm, scopes.includes('dm.write'), env.X_DM_WRITE_ENABLED === 'true', 'dm.write', 'Settings → X → DM権限を追加'));
 

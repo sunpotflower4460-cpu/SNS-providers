@@ -498,7 +498,7 @@ async function performProviderWrite(
     certainty: 'failure',
     retryable: false,
     errorCode: 'HANDOFF_NOT_EXECUTABLE',
-    reason: 'Live provider writes are not enabled for this operation yet.',
+    reason: 'Live provider writes are not enabled for this action type; it stays HANDOFF.',
   };
 }
 

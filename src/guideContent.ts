@@ -22,7 +22,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
     title: 'Social Missionって何？',
     paragraphs: [
       'あなたが決めた目的（Mission）に近づくために「誰と、どうつながるか」をAIと一緒に考える個人用アシスタントです。',
-      'DISCOVER（探す）→ RANK（評価）→ DRAFT（下書き）→ APPROVE（あなたが承認）→ EXECUTE（1件だけ実行）という流れです。AIが勝手にフォロー・返信・DMすることはありません。公式APIが許可する操作だけ、承認後にアプリ内で実行できます。許可されない操作は公式SNSへのHANDOFFです。',
+      'DISCOVER（探す）→ COLLECT（集める）→ PRIORITIZE（優先）→ DRAFT（下書き）→ HUMAN APPROVAL（あなたが承認）→ EXECUTE（1件だけ実行）→ RECORD / RECONCILE（結果を記録）という流れです。AIが勝手にフォロー・返信・DMすることはありません。公式APIが許可する操作だけ、承認後にアプリ内で実行できます。許可されない操作は公式SNSへのHANDOFFです。',
       'インストール直後は候補もつながりも空の状態から始まります。まずはSettingsでMissionを設定するところから始めてください。',
     ],
   },
