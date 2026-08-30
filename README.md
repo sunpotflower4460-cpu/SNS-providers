@@ -4,7 +4,7 @@ Mission-driven, mobile-first PWA for growing meaningful social relationships. Th
 
 ## Current v0.1 foundation
 
-- installable mobile PWA shell with 180 / 192 / 512 PNG icons plus SVG fallback
+- installable mobile PWA shell with 180 / 192 / 512 / 1024 truecolor sRGB PNG icons plus SVG fallback
 - 5-tab UX: Today (Mission Inbox) / Discover / Relations / Me / Settings
 - Mission + Communication DNA settings
 - Mission Match candidate ranking and strategic next-action guidance

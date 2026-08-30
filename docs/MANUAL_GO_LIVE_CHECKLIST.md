@@ -74,7 +74,7 @@ Use Mission Inbox. One user approval per write. Never batch.
 
 ## Real-device checks
 
-29. iPhone PWA install, keyboard, safe-area, offline note, snooze/dismiss, unknown-result “結果を再確認”
+29. iPhone PWA install, keyboard, safe-area, offline note, snooze/dismiss, unknown-result “結果を再確認”. Home-screen icons are 8-bit sRGB (180/192/512/1024). Regenerate on macOS only with `swift scripts/generate-pwa-icons.swift`.
 30. Desktop Settings capability upgrade buttons and 本番準備チェック copy (red/yellow/green also have words)
 
 If a write is blocked, the preflight reason names the exact Settings button or secret to fix. Do not bypass HANDOFF for Instagram follow / arbitrary like; those are provider limitations, not unfinished code.

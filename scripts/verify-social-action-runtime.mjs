@@ -23,7 +23,7 @@ async function emit(fileName, sourcePath) {
 await emit('socialCapabilities.js', new URL('../src/socialCapabilities.ts', import.meta.url));
 await emit('socialAction.js', new URL('../src/socialAction.ts', import.meta.url));
 await emit('daily.js', new URL('../src/daily.ts', import.meta.url));
-await emit('missionInbox.js', new URL('../src/missionInbox.ts', import.meta.url));
+await emit('missionInbox.js', new URL('../src/missionInboxModel.ts', import.meta.url));
 await emit('capabilities.js', new URL('../worker/src/social/capabilities.ts', import.meta.url));
 await emit('executeGuard.js', new URL('../worker/src/social/executeGuard.ts', import.meta.url));
 await emit('inbound.js', new URL('../worker/src/social/instagram/inbound.ts', import.meta.url));

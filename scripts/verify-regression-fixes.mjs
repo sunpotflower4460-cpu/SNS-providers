@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 
 const providerApi = await readFile(new URL('../worker/src/index.ts', import.meta.url), 'utf8');
 const wrangler = await readFile(new URL('../worker/wrangler.jsonc', import.meta.url), 'utf8');
@@ -351,6 +351,19 @@ if (pkg.scripts.postinstall !== 'node scripts/workers-ci-build.mjs'
   || !pagesWorkflow.includes('enablement: true')
   || !workerDeploy.includes("secrets.CLOUDFLARE_API_TOKEN != ''")) {
   throw new Error('Workers Builds no longer builds ./dist during Cloudflare install, Vite/wrangler are omit-dev-fragile, dist is fully gitignored, GitHub Pages cannot self-enable, or Worker deploy still fails closed without secrets.');
+}
+
+const srcNames = await readdir(new URL('../src/', import.meta.url));
+const srcByLower = new Map();
+for (const name of srcNames) {
+  const key = name.toLowerCase();
+  if (srcByLower.has(key)) {
+    throw new Error(`Case-colliding src files break macOS APFS imports: ${srcByLower.get(key)} vs ${name}`);
+  }
+  srcByLower.set(key, name);
+}
+if (!srcNames.includes('missionInboxModel.ts') || !srcNames.includes('onboardingState.ts')) {
+  throw new Error('Mission Inbox / onboarding modules lost Mac-safe filenames.');
 }
 
 console.log('Regression fixes OK: provider defaults are aligned, manual and automatic candidate operations are serialized, Today completion ignores profile-only reviews and counts one aggregate self-analysis action, auto refill keeps self-work quota stable and continues multi-batch free ranking, automatic discovery guards reject future poison, slow cloud restores cannot erase newer local work, cross-device discovery retry and first-party sync leases are enforced, reserved social paths and future sync versions fail closed, X/Instagram immutable identity changes and handle renames cannot inherit or split old CRM/evidence, mixed stable/unbound restores and manual re-adds stay quarantined until identity proof, stale X enrichment cannot rewrite identity, visible result sheets are identity-bound, cleanup accounting stays distinct from profile review, exact engagement is consumed, Instagram binds the newest comment to its own concrete post target, repairs handle-renamed legacy duplicates without reactivating stale dismissals, X OAuth validates refresh-token usability, paid LLM cost stays within reservation, inbound followers stay below DM-ready, reply/like require concrete targets, CRM progression stays follow-gated, follow-back negatives require current following evidence, D1 restore reconciles live budget totals, cached follow evidence is not replayed, unbound identity conflicts stay quarantined, Today reopens on newer same-day signals, paid X username lookups keep reserved cost, JSON restore reconciles live budget, cache/complete snapshots cannot wipe post-boundary follows or invent negatives, concurrent restore guards abort on newer local edits, same-response handle transfers preserve CRM, and cache cannot rewind immutable identity.');

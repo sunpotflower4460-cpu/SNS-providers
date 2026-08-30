@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 const types = await readFile(new URL('../src/types.ts', import.meta.url), 'utf8');
 const socialAction = await readFile(new URL('../src/socialAction.ts', import.meta.url), 'utf8');
 const capabilities = await readFile(new URL('../src/socialCapabilities.ts', import.meta.url), 'utf8');
-const missionInbox = await readFile(new URL('../src/missionInbox.ts', import.meta.url), 'utf8');
+const missionInbox = await readFile(new URL('../src/missionInboxModel.ts', import.meta.url), 'utf8');
 const backup = await readFile(new URL('../src/backup.ts', import.meta.url), 'utf8');
 const store = await readFile(new URL('../src/store.ts', import.meta.url), 'utf8');
 const app = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8');

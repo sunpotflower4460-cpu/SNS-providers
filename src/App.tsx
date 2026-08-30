@@ -3,12 +3,12 @@ import { analyzeSelfProfile, apiConfigured, discoverSocialCandidates, enrichXPro
 import BackupControls from './BackupControls';
 import { getSyncToken } from './controlToken';
 import { buildDailyQueue } from './daily';
-import { buildMissionInbox } from './missionInbox';
+import { buildMissionInbox } from './missionInboxModel';
 import { mergeDiscoveredProfiles } from './discoveryStore';
 import Manual from './Manual';
 import MissionInbox from './MissionInbox';
 import Onboarding from './Onboarding';
-import { hasSeenOnboarding, markOnboardingSeen } from './onboarding';
+import { hasSeenOnboarding, markOnboardingSeen } from './onboardingState';
 import { resolveVisibleResult } from './resultResolution';
 import { addCandidateFromReference, applyRankResults, applySelfAnalysis, applyXProfiles, loadState, saveState, setFollowBackStatus, syncBudget, updateCandidateDraft, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
 import { copyDraft, openCandidate, openSocialAction, platformLabel } from './social';

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiConfigured, dismissSocialActionRequest, executeSocialActionRequest, prepareSocialActionRequest, reconcileSocialExecutionRequest, snoozeSocialActionRequest } from './api';
 import DailyQueue from './DailyQueue';
-import { buildMissionInbox, inboxSummary, type MissionInboxItem } from './missionInbox';
+import { buildMissionInbox, inboxSummary, type MissionInboxItem } from './missionInboxModel';
 import { copyDraft, platformLabel } from './social';
 import { capabilitiesForPlatform, executionModeForAction, getLiveSocialCapabilities } from './socialCapabilities';
 import { completeInboxAction, dismissInboxAction, snoozeInboxAction, updateSocialActionDraft } from './store';
