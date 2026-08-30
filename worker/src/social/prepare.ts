@@ -1,9 +1,10 @@
-import { readActiveMonthUsage, reserveActiveMonthBudget } from '../budgetIntegrity';
+import { readActiveMonthUsage, reserveActiveMonthBudget, voidBudgetReservation } from '../budgetIntegrity';
+import { resolveEffectiveBudgetLimit } from './budgetCeiling';
 import { executionModeForAction, liveXCapabilities } from './capabilities';
 import { xFollowActionId, xLikeActionId, xUnfollowActionId, X_TWEET_ID, X_USER_ID } from './ids';
 import { extractXTweetId } from './x/like';
 import { lookupXAuthenticatedUser, lookupXTweet, lookupXUserById, lookupXUserByUsername } from './x/lookup';
-import { upsertProviderSocialAction } from './repository';
+import { loadActionsForCandidate, upsertProviderSocialAction } from './repository';
 import type { CanonicalSocialAction, SocialActionType } from './types';
 import { getValidXAccessToken, xOAuthStatus, type XOAuthEnv } from '../xOAuth';
 
@@ -78,20 +79,29 @@ export async function prepareSocialAction(env: PrepareEnv, userId: string, body:
   if (!usage.available) {
     return { status: 403, body: { ok: false as const, code: 'WRITE_COST_UNKNOWN', reason: 'Budget ledger is unavailable.' } };
   }
-  const limit = Number(env.DEFAULT_MONTHLY_BUDGET_USD);
+  const budget = await resolveEffectiveBudgetLimit(env, userId);
+  const reservationId = crypto.randomUUID();
   const reserved = price === 0 ? true : await reserveActiveMonthBudget(env.DB, {
-    id: crypto.randomUUID(),
+    id: reservationId,
     userId,
     provider: 'x',
     operation: 'x_lookup_read',
     amountUsd: price,
-    effectiveLimit: Number.isFinite(limit) && limit >= 0 ? limit : 0,
+    effectiveLimit: budget.effectiveLimitUsd,
     occurredAt: new Date().toISOString(),
   });
   if (!reserved) {
     return { status: 403, body: { ok: false as const, code: 'WRITE_COST_UNKNOWN', reason: 'Lookup was blocked by the monthly HARD LIMIT.' } };
   }
 
+  const existingActions = await loadActionsForCandidate(env.DB, userId, intent.candidateId);
+  const boundIdentity = existingActions.find((action) => action.platformUserId && X_USER_ID.test(action.platformUserId));
+  if (boundIdentity?.platformUserId && intent.platformUserId && intent.platformUserId !== boundIdentity.platformUserId) {
+    await voidBudgetReservation(env.DB, { id: reservationId, userId });
+    return { status: 400, body: { ok: false as const, code: 'BINDING_MISMATCH', reason: 'Known immutable candidate ID cannot be rebound to a different provider ID.' } };
+  }
+
+  let providerCallStarted = false;
   try {
     const accessToken = await getValidXAccessToken(env, userId);
     const oauth = await xOAuthStatus(env, userId);
@@ -99,6 +109,7 @@ export async function prepareSocialAction(env: PrepareEnv, userId: string, body:
     if (intent.type === 'like') {
       const tweetId = extractXTweetId(intent.engagementUrl || '');
       if (!tweetId) {
+        await voidBudgetReservation(env.DB, { id: reservationId, userId });
         return {
           status: 200,
           body: {
@@ -110,8 +121,10 @@ export async function prepareSocialAction(env: PrepareEnv, userId: string, body:
         };
       }
       if (intent.clientTweetId && intent.clientTweetId !== tweetId) {
+        await voidBudgetReservation(env.DB, { id: reservationId, userId });
         return { status: 400, body: { ok: false as const, code: 'BINDING_MISMATCH', reason: 'Client-supplied tweet IDs cannot choose the like target.' } };
       }
+      providerCallStarted = true;
       const tweet = await lookupXTweet(accessToken, tweetId);
       if (!tweet) {
         return {
@@ -148,8 +161,10 @@ export async function prepareSocialAction(env: PrepareEnv, userId: string, body:
 
     const me = await lookupXAuthenticatedUser(accessToken);
     if (!me) {
+      await voidBudgetReservation(env.DB, { id: reservationId, userId });
       return { status: 400, body: { ok: false as const, code: 'CAPABILITY_DENIED', reason: 'Authenticated X user ID could not be resolved from the server token.' } };
     }
+    providerCallStarted = true;
     let target = intent.platformUserId && X_USER_ID.test(intent.platformUserId)
       ? await lookupXUserById(accessToken, intent.platformUserId)
       : null;
@@ -169,6 +184,18 @@ export async function prepareSocialAction(env: PrepareEnv, userId: string, body:
     }
     if (intent.platformUserId && intent.platformUserId !== target.id) {
       return { status: 400, body: { ok: false as const, code: 'BINDING_MISMATCH', reason: 'Client-supplied X user ID does not match official lookup.' } };
+    }
+    if (boundIdentity?.platformUserId && boundIdentity.platformUserId !== target.id) {
+      return {
+        status: 200,
+        body: {
+          ok: true as const,
+          executionMode: 'handoff' as const,
+          reason: 'Candidate already has a different immutable provider ID. Identity conflict stays HANDOFF.',
+          action: null,
+          identityConflict: true,
+        },
+      };
     }
     if (target.id === me.id) {
       return { status: 400, body: { ok: false as const, code: 'INVALID_ACTION', reason: 'Cannot target the authenticated account.' } };
@@ -194,6 +221,7 @@ export async function prepareSocialAction(env: PrepareEnv, userId: string, body:
     });
     return { status: 200, body: { ok: true as const, executionMode: action.executionMode, action } };
   } catch (error) {
+    if (!providerCallStarted && price > 0) await voidBudgetReservation(env.DB, { id: reservationId, userId });
     const message = error instanceof Error ? error.message : 'Prepare failed';
     return { status: 400, body: { ok: false as const, code: 'INVALID_ACTION', reason: message } };
   }

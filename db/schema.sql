@@ -105,7 +105,9 @@ CREATE TABLE IF NOT EXISTS x_oauth_sessions (
   state TEXT PRIMARY KEY,
   code_verifier TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  requested_scopes_json TEXT NOT NULL DEFAULT '["tweet.read","users.read","follows.read","offline.access"]'
+  requested_scopes_json TEXT NOT NULL DEFAULT '["tweet.read","users.read","follows.read","offline.access"]',
+  intent TEXT NOT NULL DEFAULT 'read',
+  expected_x_user_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS x_oauth_tokens (
@@ -114,7 +116,8 @@ CREATE TABLE IF NOT EXISTS x_oauth_tokens (
   refresh_token_enc TEXT,
   expires_at TEXT NOT NULL,
   scope TEXT NOT NULL DEFAULT '',
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  x_user_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS x_owned_snapshots (
@@ -171,6 +174,7 @@ CREATE TABLE IF NOT EXISTS social_executions (
   completed_at TEXT,
   reservation_id TEXT,
   result_metadata_json TEXT NOT NULL DEFAULT '{}',
+  fingerprint_json TEXT NOT NULL DEFAULT '{}',
   UNIQUE(user_id, idempotency_key)
 );
 
@@ -221,6 +225,28 @@ CREATE TABLE IF NOT EXISTS instagram_permission_probes (
   permissions_verified INTEGER NOT NULL DEFAULT 0 CHECK(permissions_verified IN (0,1))
 );
 
+CREATE TABLE IF NOT EXISTS social_sync_checkpoints (
+  user_id TEXT NOT NULL,
+  source TEXT NOT NULL CHECK(source IN (
+    'x_mentions',
+    'x_dm',
+    'instagram_comments_poll',
+    'instagram_dm'
+  )),
+  newest_seen_id TEXT,
+  continuation_cursor TEXT,
+  extra_json TEXT NOT NULL DEFAULT '{}',
+  committed_at TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(user_id, source)
+);
+
+CREATE TABLE IF NOT EXISTS user_runtime_settings (
+  user_id TEXT PRIMARY KEY,
+  monthly_budget_ceiling_usd REAL NOT NULL CHECK(monthly_budget_ceiling_usd >= 0),
+  updated_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_candidates_user_match ON candidates(user_id, mission_match DESC);
 CREATE INDEX IF NOT EXISTS idx_candidates_stage ON candidates(user_id, stage);
 CREATE INDEX IF NOT EXISTS idx_interactions_candidate ON interactions(candidate_id, occurred_at DESC);
@@ -235,3 +261,5 @@ CREATE INDEX IF NOT EXISTS idx_social_actions_user ON social_actions(user_id, up
 CREATE INDEX IF NOT EXISTS idx_social_actions_event ON social_actions(user_id, platform, external_event_id);
 CREATE INDEX IF NOT EXISTS idx_social_actions_status ON social_actions(user_id, status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_executions_reservation ON social_executions(user_id, reservation_id);
+CREATE INDEX IF NOT EXISTS idx_x_oauth_sessions_intent ON x_oauth_sessions(intent, created_at);
+CREATE INDEX IF NOT EXISTS idx_social_sync_checkpoints_updated ON social_sync_checkpoints(user_id, updated_at DESC);

@@ -25,7 +25,11 @@ Personal-control Bearer token required unless otherwise noted:
 - `POST /api/instagram/engagers/sync`
 - `POST /api/social/actions/:id/execute` — user-approved single-action execute boundary. The Worker loads the canonical SocialAction and SocialEvent; the client may send only `executionId` and the approved `draft`.
 - `GET /api/social/capabilities` — live Instagram/X write capability snapshot
+- `POST /api/social/inbox/sync` — isolated X mentions, X DM, Instagram comments, Instagram DM ingest (partial failure does not abort other sources)
 - `POST /api/x/inbound/sync` — optional official X mention/reply ingest into SocialEvents / Mission Inbox
+- `POST /api/x/dm/sync` — optional official X DM ingest
+- `POST /api/instagram/dm/sync` — optional Instagram Professional DM ingest
+- `GET|PUT /api/settings/runtime` — persisted user budget ceiling (`min(HARD LIMIT, user ceiling)`)
 - `GET /api/sync/state?userId=local-user`
 - `PUT /api/sync/state`
 
@@ -78,7 +82,7 @@ X OAuth uses Authorization Code with PKCE. The default connect request is fixed 
 - `follows.read`
 - `offline.access`
 
-`tweet.write`, `follows.write`, `dm.read` and `dm.write` exist as a separate optional write set. They are not requested by the default connection. `POST /api/x/oauth/start` with `{ "intent": "reply" }` starts an explicit upgrade that adds only `tweet.write`. The session stores `requested_scopes_json`; the callback validates the grant against that session set. CI fails if the default authorize URL starts requesting the full optional write set, and also fails if a write-capable scope is added to `READ_ONLY_SCOPES`. Grant validation compares the token to the requested set, so extra write scopes cannot silently appear. Refresh may omit unchanged scope metadata and then reuses the already-verified stored grant, including `tweet.write` after an upgrade. Follow/DM live writes stay disabled.
+`tweet.write`, `follows.write`, `like.read`, `like.write`, `dm.read` and `dm.write` exist as a separate optional write set. They are not requested by the default connection. `POST /api/x/oauth/start` with `{ "intent": "reply" | "relationship" | "engagement" | "dm" }` starts an explicit **cumulative** upgrade: currently verified optional scopes plus the matching intent. Engagement requests `like.read` and `like.write`. The session stores `requested_scopes_json` and `expected_x_user_id`; the callback fail-closes on extra/missing scopes and refuses to store tokens when the granted X user id differs from the connected account. Refresh may omit unchanged scope metadata and then reuses the already-verified stored grant, including previously added write scopes. Follow/DM/like live writes still require the matching production flags.
 
 Required Worker configuration:
 
@@ -167,7 +171,7 @@ For a larger production deployment, comment webhooks are preferable to frequent 
 
 Instagram comment reply is the first live provider write. It is enabled only when `SOCIAL_WRITE_ENABLED=true`, `INSTAGRAM_COMMENT_REPLY_ENABLED=true`, Instagram credentials are configured, and `INSTAGRAM_COMMENT_REPLY_USD` is set explicitly. Meta Graph comment replies are not billed in this product's USD ledger, so `INSTAGRAM_COMMENT_REPLY_USD=0` is the documented non-billable value; a missing price still fail-closes.
 
-X tweet reply uses the same execute boundary. It is enabled only when the connected token has `tweet.write`, `SOCIAL_WRITE_ENABLED=true`, `X_REPLY_WRITE_ENABLED=true`, and a **positive** `X_REPLY_WRITE_USD` is configured. A missing or zero X reply price fail-closes. Live follow and DM adapters stay disabled.
+X tweet reply uses the same execute boundary. It is enabled only when the connected token has `tweet.write`, `SOCIAL_WRITE_ENABLED=true`, `X_REPLY_WRITE_ENABLED=true`, and a **positive** `X_REPLY_WRITE_USD` is configured. A missing or zero X reply price fail-closes. X follow/unfollow/like/DM use the same boundary with their matching scopes, flags, and prices. Like reconciliation additionally requires `like.read`. Instagram follow and arbitrary like stay HANDOFF because the official Professional management API does not provide those writes.
 
 `SOCIAL_WRITE_MODE=test` can record an idempotent fake success for invariant tests. A repeated `executionId` recovers the prior `social_executions` row instead of posting twice. If the provider response is lost after the request is sent, the execution stays `unknown` and must be reconciled with the same id.
 
@@ -234,7 +238,7 @@ The separate `POST /api/x/enrich` route requires the personal control key and ba
 - When a paid X sync fails after network work may already have happened, the conservative reservation is intentionally kept rather than under-counting possible spend.
 - Instagram Professional comment sync is treated as a `$0` application-cost source but remains bounded/cached for Meta rate-limit discipline.
 - When free providers are unavailable or a paid LLM call is blocked, ranking falls back to local heuristic scoring instead of breaking the product.
-- `DEFAULT_MONTHLY_BUDGET_USD` is a server ceiling; a client may request a lower ceiling but cannot raise the server ceiling.
+- `DEFAULT_MONTHLY_BUDGET_USD` is the server HARD LIMIT. Settings persist a user ceiling in D1; effective spend cap is `min(HARD LIMIT, user ceiling)`. A request body cannot raise the server HARD LIMIT.
 
 Provider prices, Owned Read eligibility, Meta permission requirements and free-tier rules can change. Verify current official provider information before enabling integrations; rates and API versions are configuration rather than hard-coded product truth.
 
@@ -243,7 +247,7 @@ Provider prices, Owned Read eligibility, Meta permission requirements and free-t
 The root `npm run security:check` is executed in CI and verifies important source-level boundaries:
 
 - provider/quota-bearing routes stay behind the personal-control gate
-- X OAuth default connect stays read-only; `{ "intent": "reply" }` is the only write upgrade and adds `tweet.write` only
+- X OAuth default connect stays read-only; write intents are cumulative same-account upgrades (`tweet.write`, `follows.write`, `like.read`+`like.write`, `dm.read`+`dm.write`)
 - SocialAction restore, dedupe, Mission Inbox fallback, execute auth/idempotency and untrusted social prompt policy
 - optimistic D1 state-sync protection remains present
 

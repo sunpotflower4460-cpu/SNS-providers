@@ -1,0 +1,77 @@
+export interface ExecutionFingerprint {
+  normalizedTextSha256: string | null;
+  canonicalTargetId: string;
+  conversationId?: string;
+  parentContentId?: string;
+  actorId?: string;
+  operation: string;
+  preparedAt: string;
+}
+
+export function normalizeApprovedText(value: string) {
+  return value.trim().replace(/\s+/g, ' ').slice(0, 2400);
+}
+
+export async function hashNormalizedText(value: string) {
+  const normalized = normalizeApprovedText(value);
+  if (!normalized) return null;
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalized));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+export async function buildExecutionFingerprint(input: {
+  draft?: string;
+  canonicalTargetId: string;
+  conversationId?: string;
+  parentContentId?: string;
+  actorId?: string;
+  operation: string;
+  preparedAt?: string;
+}): Promise<ExecutionFingerprint> {
+  const textHash = input.draft != null && input.draft.trim()
+    ? await hashNormalizedText(input.draft)
+    : null;
+  return {
+    normalizedTextSha256: textHash,
+    canonicalTargetId: input.canonicalTargetId,
+    conversationId: input.conversationId,
+    parentContentId: input.parentContentId,
+    actorId: input.actorId,
+    operation: input.operation,
+    preparedAt: input.preparedAt || new Date().toISOString(),
+  };
+}
+
+export function parseExecutionFingerprint(raw: string | null | undefined): ExecutionFingerprint | null {
+  if (!raw?.trim() || raw.trim() === '{}') return null;
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const canonicalTargetId = typeof parsed.canonicalTargetId === 'string' ? parsed.canonicalTargetId : '';
+    const operation = typeof parsed.operation === 'string' ? parsed.operation : '';
+    const preparedAt = typeof parsed.preparedAt === 'string' ? parsed.preparedAt : '';
+    if (!canonicalTargetId || !operation || !preparedAt) return null;
+    return {
+      normalizedTextSha256: typeof parsed.normalizedTextSha256 === 'string' ? parsed.normalizedTextSha256 : null,
+      canonicalTargetId,
+      conversationId: typeof parsed.conversationId === 'string' ? parsed.conversationId : undefined,
+      parentContentId: typeof parsed.parentContentId === 'string' ? parsed.parentContentId : undefined,
+      actorId: typeof parsed.actorId === 'string' ? parsed.actorId : undefined,
+      operation,
+      preparedAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function providerTextMatchesFingerprint(fingerprint: ExecutionFingerprint | null, text: string | undefined) {
+  if (!fingerprint?.normalizedTextSha256) return false;
+  if (typeof text !== 'string') return false;
+  const hashed = await hashNormalizedText(text);
+  return hashed === fingerprint.normalizedTextSha256;
+}
+
+export function exactReconcileDecision(matchCount: number): 'success' | 'unknown' {
+  return matchCount === 1 ? 'success' : 'unknown';
+}

@@ -25,6 +25,21 @@ export async function loadCanonicalAction(db: D1Database, userId: string, action
   }
 }
 
+export async function loadActionsForCandidate(db: D1Database, userId: string, candidateId: string) {
+  try {
+    const rows = await db.prepare(
+      `SELECT id, user_id, platform, candidate_id, action_type, status, execution_mode, source,
+              external_event_id, conversation_id, parent_content_id, target_url, observed_at,
+              created_at, updated_at, completed_at, platform_user_id, username, identity_conflict,
+              retryable, snoozed_until, result_metadata_json
+       FROM social_actions WHERE user_id = ? AND candidate_id = ?`,
+    ).bind(userId, candidateId).all<Record<string, string | number | null>>();
+    return (rows.results || []).map(mapAction);
+  } catch {
+    return [];
+  }
+}
+
 export async function loadCanonicalEvent(
   db: D1Database,
   userId: string,
@@ -78,12 +93,23 @@ export async function upsertProviderSocialAction(db: D1Database, action: Canonic
        candidate_id = excluded.candidate_id,
        parent_content_id = excluded.parent_content_id,
        target_url = excluded.target_url,
-       conversation_id = excluded.conversation_id,
+       conversation_id = COALESCE(excluded.conversation_id, social_actions.conversation_id),
        observed_at = excluded.observed_at,
        platform_user_id = excluded.platform_user_id,
        username = excluded.username,
        identity_conflict = excluded.identity_conflict,
-       execution_mode = excluded.execution_mode,
+       execution_mode = CASE
+         WHEN excluded.conversation_id IS NOT NULL THEN excluded.execution_mode
+         ELSE social_actions.execution_mode
+       END,
+       retryable = CASE
+         WHEN excluded.conversation_id IS NOT NULL THEN excluded.retryable
+         ELSE social_actions.retryable
+       END,
+       result_metadata_json = CASE
+         WHEN excluded.conversation_id IS NOT NULL THEN excluded.result_metadata_json
+         ELSE social_actions.result_metadata_json
+       END,
        updated_at = excluded.updated_at
      WHERE social_actions.status NOT IN ('completed', 'executing', 'dismissed', 'expired')`
   ).bind(

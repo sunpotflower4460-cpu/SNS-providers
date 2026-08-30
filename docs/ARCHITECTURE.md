@@ -2,7 +2,7 @@
 
 ## Product principle
 
-The product is a mobile-first PWA that helps a user grow meaningful social relationships toward a stated Mission. It does not automate follows, likes, replies, DMs, or unfollows. The loop is DISCOVER → RANK → DRAFT → APPROVE → EXECUTE. Only EXECUTE performs a social write, and only after one explicit user approval for one action. When an official platform API permits that action, SNS-providers may execute it. When it does not, the PWA uses an explicit HANDOFF. There is no auto-send and no bulk write.
+The product is a mobile-first PWA that helps a user grow meaningful social relationships toward a stated Mission. It does not automate follows, likes, replies, DMs, or unfollows. The loop is DISCOVER → COLLECT → PRIORITIZE → DRAFT → HUMAN APPROVAL → EXECUTE → RECORD / RECONCILE. Only EXECUTE performs a social write, and only after one explicit user approval for one action. When an official platform API permits that action, SNS-providers may execute it. When it does not, the PWA uses an explicit HANDOFF. There is no auto-send and no bulk write.
 
 ## Core loop
 
@@ -71,11 +71,13 @@ Implemented server responsibilities:
 - pre-request budget reservations for paid calls
 - token-gated state snapshots for personal multi-device transfer
 - optimistic state-snapshot concurrency checks to prevent stale-device overwrites
-- user-approved social execute boundary with D1 canonical SocialAction/SocialEvent resolution and idempotency
+- user-approved social execute boundary with D1 canonical SocialAction/SocialEvent resolution, execution fingerprints, and exact-match reconciliation
+- isolated inbox ingest for X mentions, X DM, Instagram comments, and Instagram DM with durable checkpoints (a page cap never commits newest-seen)
 - Instagram comment reply and Instagram Professional DM adapters behind explicit production write flags and runtime permission probes
 - X reply, follow, unfollow, like, and DM adapters behind explicit OAuth upgrades and production write flags
-- Instagram webhook verification/signature receiver with polling fallback
+- Instagram webhook verification/signature receiver with polling fallback; comment/live_comment and messaging webhooks persist events without treating recipient.id as a conversation id
 - versioned D1 migrations (`db/migrations/`) and production preflight diagnostics
+- persisted user budget ceiling (`user_runtime_settings`) under the server HARD LIMIT
 
 Manual-only remaining work is listed in `docs/MANUAL_GO_LIVE_CHECKLIST.md`. Instagram follow and arbitrary like stay HANDOFF because the official Professional management API does not provide those writes.
 
@@ -106,7 +108,7 @@ The OAuth scopes requested by the default connect flow are fixed to:
 - `follows.read`
 - `offline.access`
 
-`tweet.write`, `follows.write`, `like.write`, `dm.read` and `dm.write` exist as separate optional write sets. They are not requested by the default connection. Settings starts a second OAuth session per intent (`reply`, `relationship`, `engagement`, `dm`) and validates the grant against session-stored `requested_scopes_json`.
+`tweet.write`, `follows.write`, `like.read`, `like.write`, `dm.read` and `dm.write` exist as separate optional write sets. They are not requested by the default connection. Settings starts a second OAuth session per intent (`reply`, `relationship`, `engagement`, `dm`) that **adds** the matching scopes to currently verified grants on the same X account. The session stores `requested_scopes_json` and `expected_x_user_id`; the callback fail-closes on extra/missing scopes and does not replace tokens when the granted user id differs. Like write requires `like.write`; like reconciliation also requires `like.read`.
 
 A CI security invariant parses the default read-only list and fails when a write-capable X scope is added there, and also fails if the default authorize URL starts requesting the optional write set.
 
@@ -139,10 +141,10 @@ The Instagram owned-engager adapter is intentionally narrow.
 - It reads a bounded set of media owned by that account and a bounded set of comments on those media through the official API.
 - It extracts commenter identity/username, latest comment ID, comment text, media ID and the related media permalink for the same latest comment event.
 - It does not crawl arbitrary Instagram profiles or enumerate consumer accounts.
-- It does not request or perform follow/like/DM automation.
+- It does not request or perform follow/like automation. Comment reply and Professional DM writes stay behind explicit flags and one user approval.
 - The personal control key protects the sync route.
 - The access token stays Worker-side and is never returned to the PWA or backup JSON.
-- A 12-hour D1 cache is checked before another Meta read.
+- A 12-hour D1 cache is checked before another Meta read for the engager snapshot path. Production inbox comment catch-up always reads latest media and pages comments; it does not skip unread comments via that cache.
 
 The Meta app/token must hold the permissions required by the selected current Instagram Login setup. Permission names and review requirements can change, so the implementation keeps token/version configuration outside source code and the deployment checklist must verify Meta's current requirements before enabling production use.
 
@@ -172,11 +174,13 @@ The personal control key gates:
 
 - budget status
 - AI ranking and self-analysis
+- runtime settings / user budget ceiling
 - Tavily discovery
 - optional X public-profile enrichment
 - D1 state sync
 - X OAuth management and owned-account sync
 - Instagram Professional engager sync
+- user-approved social execute, inbox sync, and live capability lookup
 
 The Worker stores only `SYNC_TOKEN_SHA256`; the raw key remains on the user's device. A CI security invariant verifies that the provider/quota-bearing route set continues to pass through `authorizeSync()`.
 
@@ -197,8 +201,8 @@ A candidate may be moved to `snoozedUntil` the next local midnight. Snoozing rem
 
 ## Budget invariant
 
-- Server ceiling defaults to `$3` but may be configured lower or higher.
-- Client may request a lower ceiling but cannot raise the server ceiling.
+- Server HARD LIMIT defaults to `$3` (`DEFAULT_MONTHLY_BUDGET_USD`) and may be configured lower or higher by Worker vars.
+- Settings persist a user ceiling in `user_runtime_settings`. Effective limit is `min(HARD LIMIT, user ceiling, requested)`. The client cannot raise the server HARD LIMIT.
 - Paid providers fail closed when current rates are not explicitly configured.
 - Paid X/LLM work fails closed when the D1 ledger cannot be trusted.
 - Every paid call reserves a conservative estimated amount before the network request and reconciles it afterward.
@@ -275,7 +279,7 @@ Mission Inbox ranks SocialActions with deterministic application math:
 
 plus bounded inbound boosts. Relationship value and urgency are derived from CRM/timestamps; the model may supply other component scores but not the sort order itself.
 
-Execution mode comes from a **live** capability matrix returned by the Worker, not from `platform === instagram` in the UI. Instagram follow stays HANDOFF. Instagram comment reply becomes in-app only when Instagram is configured, the write adapter is present, and `SOCIAL_WRITE_ENABLED` plus `INSTAGRAM_COMMENT_REPLY_ENABLED` are on. X reply becomes in-app only when the connected token has `tweet.write`, the write adapter is present, and `SOCIAL_WRITE_ENABLED` plus `X_REPLY_WRITE_ENABLED` are on. Live follow/DM stay off even if those OAuth scopes were somehow granted. The execute route loads canonical rows from `social_actions` and provider evidence from `social_events`. Client JSON cannot retarget the write.
+Execution mode comes from a **live** capability matrix returned by the Worker, not from `platform === instagram` in the UI. Instagram follow and arbitrary like stay HANDOFF because the official Professional management API does not provide those writes. Instagram comment reply becomes in-app only when Instagram is configured, the write adapter is present, and `SOCIAL_WRITE_ENABLED` plus `INSTAGRAM_COMMENT_REPLY_ENABLED` are on. X reply/follow/unfollow/like/DM become in-app only when the connected token has the matching scopes, the write adapter is present, and the matching production write flags are on. The execute route loads canonical rows from `social_actions` and provider evidence from `social_events`. Client JSON cannot retarget the write.
 
 That execute route requires personal-control auth, server-side action/candidate/event resolution, HANDOFF rejection, identity-conflict rejection, expiry/completion/snooze/executing rejection, single-action bodies only, execution idempotency via `social_executions`, and fail-closed write costing. There is no bulk write route. A lost provider response is `unknown`, not a guessed success, and retries must reuse the same `executionId`.
 
@@ -286,7 +290,7 @@ That execute route requires personal-control auth, server-side action/candidate/
 - No collection of social-account passwords.
 - No automatic bulk follow/unfollow behavior.
 - No follower-churn recommendation logic.
-- No write scope in the default X OAuth connection used for account analysis; optional write scopes require an explicit reconnect. The reply upgrade requests `tweet.write` only.
+- No write scope in the default X OAuth connection used for account analysis; optional write scopes require an explicit same-account cumulative upgrade. The reply upgrade adds `tweet.write` without dropping previously granted optional scopes.
 - Instagram integration reads only explicitly configured, permitted first-party Professional-account surfaces.
 - No social write without an explicit single-action user approval. HANDOFF actions cannot call a provider write. Completed, expired, identity-conflict, or mis-bound actions cannot write.
 - Discovery/ranking may optimize relevance and relationship value, not evasion of platform enforcement.

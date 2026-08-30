@@ -21,17 +21,26 @@ interface XTokenResponse {
 interface StoredTokenRow {
   access_token_enc: string;
   refresh_token_enc: string | null;
-  expires_at: string | null;
+  expires_at: string;
   scope: string;
   updated_at: string;
+  x_user_id?: string | null;
+}
+
+interface OAuthSessionRow {
+  code_verifier: string;
+  created_at: string;
+  requested_scopes_json: string;
+  intent: string;
+  expected_x_user_id: string | null;
 }
 
 export const READ_ONLY_SCOPES = ['tweet.read', 'users.read', 'follows.read', 'offline.access'] as const;
-export const OPTIONAL_WRITE_SCOPES = ['tweet.write', 'follows.write', 'like.write', 'dm.read', 'dm.write'] as const;
-export const REPLY_UPGRADE_SCOPES = [...READ_ONLY_SCOPES, 'tweet.write'] as const;
-export const RELATIONSHIP_UPGRADE_SCOPES = [...READ_ONLY_SCOPES, 'follows.write'] as const;
-export const ENGAGEMENT_UPGRADE_SCOPES = [...READ_ONLY_SCOPES, 'like.write'] as const;
-export const DM_UPGRADE_SCOPES = [...READ_ONLY_SCOPES, 'dm.read', 'dm.write'] as const;
+export const OPTIONAL_WRITE_SCOPES = ['tweet.write', 'follows.write', 'like.read', 'like.write', 'dm.read', 'dm.write'] as const;
+export const REPLY_ADDED_SCOPES = ['tweet.write'] as const;
+export const RELATIONSHIP_ADDED_SCOPES = ['follows.write'] as const;
+export const ENGAGEMENT_ADDED_SCOPES = ['like.read', 'like.write'] as const;
+export const DM_ADDED_SCOPES = ['dm.read', 'dm.write'] as const;
 const READ_ONLY_SCOPE_SET = new Set<string>(READ_ONLY_SCOPES);
 const OPTIONAL_WRITE_SCOPE_SET = new Set<string>(OPTIONAL_WRITE_SCOPES);
 const KNOWN_SCOPE_SET = new Set<string>([...READ_ONLY_SCOPES, ...OPTIONAL_WRITE_SCOPES]);
@@ -57,60 +66,66 @@ export function parseOAuthIntent(value: unknown): XOAuthIntent {
   throw new Error('Unsupported X OAuth intent. Use read, reply, relationship, engagement, or dm.');
 }
 
-export function scopesForOAuthIntent(intent: XOAuthIntent): readonly string[] {
+export function addedScopesForIntent(intent: XOAuthIntent): readonly string[] {
+  if (intent === 'reply') return REPLY_ADDED_SCOPES;
+  if (intent === 'relationship') return RELATIONSHIP_ADDED_SCOPES;
+  if (intent === 'engagement') return ENGAGEMENT_ADDED_SCOPES;
+  if (intent === 'dm') return DM_ADDED_SCOPES;
+  return [];
+}
+
+export function cumulativeScopesForIntent(intent: XOAuthIntent, verifiedScopes: readonly string[] = []): string[] {
   if (OPTIONAL_WRITE_SCOPES.some((scope) => READ_ONLY_SCOPE_SET.has(scope))) {
     throw new Error('Optional X write scopes must stay separate from the default read-only connection.');
   }
-  if (intent === 'reply') return REPLY_UPGRADE_SCOPES;
-  if (intent === 'relationship') return RELATIONSHIP_UPGRADE_SCOPES;
-  if (intent === 'engagement') return ENGAGEMENT_UPGRADE_SCOPES;
-  if (intent === 'dm') return DM_UPGRADE_SCOPES;
-  return READ_ONLY_SCOPES;
+  if (intent === 'read') return [...READ_ONLY_SCOPES];
+  const verifiedOptional = [...new Set(verifiedScopes.filter((scope) => OPTIONAL_WRITE_SCOPE_SET.has(scope)))];
+  const requested = new Set<string>([...READ_ONLY_SCOPES, ...verifiedOptional, ...addedScopesForIntent(intent)]);
+  return [...READ_ONLY_SCOPES, ...OPTIONAL_WRITE_SCOPES.filter((scope) => requested.has(scope))];
+}
+
+export function scopesForOAuthIntent(intent: XOAuthIntent, verifiedScopes: readonly string[] = []): readonly string[] {
+  return cumulativeScopesForIntent(intent, verifiedScopes);
 }
 
 export function serializeRequestedScopesJson(scopes: readonly string[]) {
   return JSON.stringify([...scopes]);
 }
 
-export async function startXOAuth(env: XOAuthEnv, intent: XOAuthIntent = 'read') {
+export async function startXOAuth(env: XOAuthEnv, intent: XOAuthIntent = 'read', userId = 'local-user') {
   assertConfigured(env);
-  const requested = scopesForOAuthIntent(intent);
-  if (intent === 'read' && requested.some((scope) => OPTIONAL_WRITE_SCOPE_SET.has(scope))) {
-    throw new Error('Default X OAuth connect must not request write scopes.');
+  if (intent === 'read') {
+    const requested = scopesForOAuthIntent('read');
+    if (requested.some((scope) => OPTIONAL_WRITE_SCOPE_SET.has(scope))) {
+      throw new Error('Default X OAuth connect must not request write scopes.');
+    }
+    const session = await persistOAuthSession(env, {
+      intent,
+      requested,
+      expectedXUserId: null,
+    });
+    return authorizeUrl(env, session, requested);
   }
-  if (intent === 'reply' && (requested.includes('follows.write') || requested.includes('like.write') || requested.includes('dm.write') || requested.includes('dm.read'))) {
-    throw new Error('X reply upgrade must not request follow or DM scopes.');
-  }
-  if (intent === 'relationship' && requested.some((scope) => scope === 'tweet.write' || scope === 'like.write' || scope === 'dm.write' || scope === 'dm.read')) {
-    throw new Error('X relationship upgrade must request follows.write only.');
-  }
-  if (intent === 'engagement' && requested.some((scope) => scope === 'tweet.write' || scope === 'follows.write' || scope === 'dm.write' || scope === 'dm.read')) {
-    throw new Error('X engagement upgrade must request like.write only.');
-  }
-  if (intent === 'dm' && requested.some((scope) => scope === 'tweet.write' || scope === 'follows.write' || scope === 'like.write')) {
-    throw new Error('X DM upgrade must not request reply, follow, or like scopes.');
-  }
-  await pruneOAuthSessions(env);
 
-  const state = randomBase64Url(32);
-  const verifier = randomBase64Url(64);
-  const challenge = await sha256Base64Url(verifier);
-  const createdAt = new Date().toISOString();
-  await env.DB.prepare(
-    'INSERT INTO x_oauth_sessions (state, code_verifier, created_at, requested_scopes_json) VALUES (?, ?, ?, ?)'
-  ).bind(state, verifier, createdAt, serializeRequestedScopesJson(requested)).run();
-
-  const params = new URLSearchParams({
-    response_type: 'code',
-    client_id: env.X_CLIENT_ID!.trim(),
-    redirect_uri: env.X_OAUTH_CALLBACK_URL!.trim(),
-    scope: requested.join(' '),
-    state,
-    code_challenge: challenge,
-    code_challenge_method: 'S256',
+  const row = await loadStoredToken(env, userId);
+  if (!row) throw new Error('X permission upgrade requires an existing connected account.');
+  const verified = validateGrantedScopes(row.scope, { allowStoredOptionalWrites: true });
+  const expectedXUserId = await resolveConnectedXUserId(env, userId, row);
+  if (!expectedXUserId) throw new Error('Could not resolve the currently connected X user ID before upgrade.');
+  const requested = cumulativeScopesForIntent(intent, verified);
+  const added = addedScopesForIntent(intent);
+  if (added.some((scope) => !requested.includes(scope))) {
+    throw new Error('X permission upgrade lost the requested intent scope.');
+  }
+  if (verified.filter((scope) => OPTIONAL_WRITE_SCOPE_SET.has(scope)).some((scope) => !requested.includes(scope))) {
+    throw new Error('X permission upgrade must not drop previously granted scopes.');
+  }
+  const state = await persistOAuthSession(env, {
+    intent,
+    requested,
+    expectedXUserId,
   });
-
-  return `https://x.com/i/oauth2/authorize?${params.toString()}`;
+  return authorizeUrl(env, state, requested);
 }
 
 export async function completeXOAuth(env: XOAuthEnv, requestUrl: URL, userId = 'local-user') {
@@ -118,28 +133,42 @@ export async function completeXOAuth(env: XOAuthEnv, requestUrl: URL, userId = '
   const oauthError = requestUrl.searchParams.get('error');
   if (oauthError) return returnUrl(env, `x_oauth=${encodeURIComponent(oauthError)}`);
 
-  // Account replacement and owned-data sync share one lease. Without this boundary an
-  // old-account sync can finish after a new OAuth callback clears derived rows and then
-  // recreate the old account's cache/paging under the newly connected identity.
+  const code = requestUrl.searchParams.get('code') || '';
+  const state = requestUrl.searchParams.get('state') || '';
+  if (!code || !state) throw new Error('Missing OAuth code or state');
+
+  const session = await loadOAuthSession(env, state);
+  await env.DB.prepare('DELETE FROM x_oauth_sessions WHERE state = ?').bind(state).run();
+  if (!session) throw new Error('OAuth session not found or already used');
+  const createdMs = new Date(session.created_at).getTime();
+  const sessionAgeMs = Date.now() - createdMs;
+  if (!Number.isFinite(createdMs) || sessionAgeMs < 0 || sessionAgeMs > SESSION_TTL_MS) throw new Error('OAuth session expired or malformed');
+  const requestedScopes = parseRequestedScopesJson(session.requested_scopes_json);
+  const intent = parseOAuthIntent(session.intent || 'read');
+  const expectedXUserId = session.expected_x_user_id?.trim() || null;
+
+  const token = await exchangeAuthorizationCode(env, code, session.code_verifier);
+  const newAccess = token.access_token?.trim() || '';
+  if (!newAccess) throw new Error('X token response did not include access_token');
+  validateGrantedScopes(token.scope, {
+    requestedScopes,
+    allowStoredOptionalWrites: requestedScopes.some((scope) => OPTIONAL_WRITE_SCOPE_SET.has(scope)),
+  });
+  const grantedUser = await lookupXUserMe(newAccess);
+
+  if (expectedXUserId) {
+    if (!grantedUser || grantedUser.id !== expectedXUserId) {
+      return returnUrl(env, 'x_oauth=account_mismatch');
+    }
+    await persistTokenResponse(env, userId, token, undefined, undefined, requestedScopes, expectedXUserId);
+    return returnUrl(env, 'x_oauth=upgraded');
+  }
+
   const leaseResult = await reserveSyncLease(env.DB, userId, 'x_owned_sync', X_IDENTITY_LEASE_MS);
   if (!leaseResult.ok) throw new Error('Xの情報更新中です。完了後にX接続をもう一度お試しください。');
-
   try {
-    const code = requestUrl.searchParams.get('code') || '';
-    const state = requestUrl.searchParams.get('state') || '';
-    if (!code || !state) throw new Error('Missing OAuth code or state');
-
-    const session = await loadOAuthSession(env, state);
-    await env.DB.prepare('DELETE FROM x_oauth_sessions WHERE state = ?').bind(state).run();
-    if (!session) throw new Error('OAuth session not found or already used');
-    const createdMs = new Date(session.created_at).getTime();
-    const sessionAgeMs = Date.now() - createdMs;
-    if (!Number.isFinite(createdMs) || sessionAgeMs < 0 || sessionAgeMs > SESSION_TTL_MS) throw new Error('OAuth session expired or malformed');
-    const requestedScopes = parseRequestedScopesJson(session.requested_scopes_json);
-
-    const token = await exchangeAuthorizationCode(env, code, session.code_verifier);
     await clearOwnedXDerivedState(env, userId);
-    await persistTokenResponse(env, userId, token, undefined, undefined, requestedScopes);
+    await persistTokenResponse(env, userId, token, undefined, undefined, requestedScopes, grantedUser?.id || null);
     return returnUrl(env, 'x_oauth=connected');
   } finally {
     await releaseSyncLease(env.DB, leaseResult.lease);
@@ -148,10 +177,10 @@ export async function completeXOAuth(env: XOAuthEnv, requestUrl: URL, userId = '
 
 export async function xOAuthStatus(env: XOAuthEnv, userId = 'local-user') {
   if (!xOAuthConfigured(env)) {
-    return { configured: false, connected: false, scopes: [], capabilities: xWriteCapabilities([]), expiresAt: null, updatedAt: null, refreshable: false };
+    return { configured: false, connected: false, scopes: [], capabilities: xWriteCapabilities([]), expiresAt: null, updatedAt: null, refreshable: false, xUserId: null };
   }
   const row = await loadStoredToken(env, userId);
-  if (!row) return { configured: true, connected: false, scopes: [], capabilities: xWriteCapabilities([]), expiresAt: null, updatedAt: null, refreshable: false };
+  if (!row) return { configured: true, connected: false, scopes: [], capabilities: xWriteCapabilities([]), expiresAt: null, updatedAt: null, refreshable: false, xUserId: null };
 
   try {
     const scopes = validateGrantedScopes(row.scope, { allowStoredOptionalWrites: true });
@@ -161,9 +190,6 @@ export async function xOAuthStatus(env: XOAuthEnv, userId = 'local-user') {
     let refreshable = false;
     if (row.refresh_token_enc) {
       try {
-        // A non-empty encrypted refresh token is not enough to claim the connection can
-        // be maintained. Verify its ciphertext now so an expired access token with a
-        // corrupt refresh row does not appear connected until the first real sync fails.
         await decryptToken(env, row.refresh_token_enc);
         refreshable = true;
       } catch {
@@ -179,11 +205,10 @@ export async function xOAuthStatus(env: XOAuthEnv, userId = 'local-user') {
       expiresAt: usable ? row.expires_at : null,
       updatedAt: usable && validIso(row.updated_at) ? row.updated_at : null,
       refreshable: usable && refreshable,
+      xUserId: usable ? (row.x_user_id || null) : null,
     };
   } catch {
-    // A malformed/undecryptable access-token row is not a usable connection. Keep
-    // configuration true so the UI offers a fresh OAuth connection that can replace it.
-    return { configured: true, connected: false, scopes: [], capabilities: xWriteCapabilities([]), expiresAt: null, updatedAt: null, refreshable: false };
+    return { configured: true, connected: false, scopes: [], capabilities: xWriteCapabilities([]), expiresAt: null, updatedAt: null, refreshable: false, xUserId: null };
   }
 }
 
@@ -200,7 +225,7 @@ export async function getValidXAccessToken(env: XOAuthEnv, userId = 'local-user'
   const refreshToken = await decryptToken(env, row.refresh_token_enc);
   const refreshed = await refreshAccessToken(env, refreshToken);
   try {
-    await persistTokenResponse(env, userId, refreshed, row.refresh_token_enc, row.scope);
+    await persistTokenResponse(env, userId, refreshed, row.refresh_token_enc, row.scope, undefined, row.x_user_id);
   } catch {
     // OAuth providers may rotate/invalidate the old refresh token as soon as a refresh
     // succeeds. 古い資格情報を再利用しないため、the stale D1 row is invalidated
@@ -213,15 +238,10 @@ export async function getValidXAccessToken(env: XOAuthEnv, userId = 'local-user'
 }
 
 export async function disconnectXOAuth(env: XOAuthEnv, userId = 'local-user') {
-  // A cross-tab disconnect must not race an owned read. Otherwise the old read can write
-  // derived cache/paging after token deletion and leave it waiting for a later reconnect.
   const leaseResult = await reserveSyncLease(env.DB, userId, 'x_owned_sync', X_IDENTITY_LEASE_MS);
   if (!leaseResult.ok) throw new Error('Xの情報更新中です。完了後に接続解除をもう一度お試しください。');
 
   try {
-    // Token deletion is the authoritative disconnect. Derived-cache cleanup is hygiene only:
-    // owned-cache reads now require a connected token record, so a cleanup failure must not
-    // report "disconnect failed" after the credential has already been removed.
     await env.DB.prepare('DELETE FROM x_oauth_tokens WHERE user_id = ?').bind(userId).run();
     try {
       await clearOwnedXDerivedState(env, userId);
@@ -238,8 +258,7 @@ async function invalidateStoredConnectionAfterRefreshPersistenceFailure(env: XOA
   try {
     await env.DB.prepare('DELETE FROM x_oauth_tokens WHERE user_id = ?').bind(userId).run();
   } catch {
-    // The original persistence failure may be a wider D1 outage. The caller still aborts
-    // before the paid reservation/provider boundary, so no X owned-read starts in this run.
+    // The original persistence failure may be a wider D1 outage.
   }
   try {
     await clearOwnedXDerivedState(env, userId);
@@ -254,15 +273,59 @@ async function clearOwnedXDerivedState(env: XOAuthEnv, userId: string) {
   await env.DB.prepare('DELETE FROM x_follow_cycle_targets WHERE user_id = ?').bind(userId).run();
 }
 
-async function loadOAuthSession(env: XOAuthEnv, state: string) {
+async function persistOAuthSession(env: XOAuthEnv, input: {
+  intent: XOAuthIntent;
+  requested: readonly string[];
+  expectedXUserId: string | null;
+}) {
+  await pruneOAuthSessions(env);
+  const state = randomBase64Url(32);
+  const verifier = randomBase64Url(64);
+  const createdAt = new Date().toISOString();
+  try {
+    await env.DB.prepare(
+      'INSERT INTO x_oauth_sessions (state, code_verifier, created_at, requested_scopes_json, intent, expected_x_user_id) VALUES (?, ?, ?, ?, ?, ?)',
+    ).bind(state, verifier, createdAt, serializeRequestedScopesJson(input.requested), input.intent, input.expectedXUserId).run();
+  } catch {
+    await env.DB.prepare(
+      'INSERT INTO x_oauth_sessions (state, code_verifier, created_at, requested_scopes_json) VALUES (?, ?, ?, ?)',
+    ).bind(state, verifier, createdAt, serializeRequestedScopesJson(input.requested)).run();
+  }
+  const challenge = await sha256Base64Url(verifier);
+  return { state, challenge };
+}
+
+function authorizeUrl(env: XOAuthEnv, session: { state: string; challenge: string }, requested: readonly string[]) {
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: env.X_CLIENT_ID!.trim(),
+    redirect_uri: env.X_OAUTH_CALLBACK_URL!.trim(),
+    scope: requested.join(' '),
+    state: session.state,
+    code_challenge: session.challenge,
+    code_challenge_method: 'S256',
+  });
+  return `https://x.com/i/oauth2/authorize?${params.toString()}`;
+}
+
+async function loadOAuthSession(env: XOAuthEnv, state: string): Promise<OAuthSessionRow | null> {
   try {
     const row = await env.DB.prepare(
-      'SELECT code_verifier, created_at, requested_scopes_json FROM x_oauth_sessions WHERE state = ?'
-    ).bind(state).first<{ code_verifier: string; created_at: string; requested_scopes_json: string }>();
+      'SELECT code_verifier, created_at, requested_scopes_json, intent, expected_x_user_id FROM x_oauth_sessions WHERE state = ?',
+    ).bind(state).first<OAuthSessionRow>();
     if (row) return row;
   } catch {
-    // Existing D1 databases may not yet have requested_scopes_json. Fail closed to
-    // the default read-only set rather than inventing a write upgrade.
+    // Existing D1 databases may not yet have identity columns.
+  }
+  try {
+    const mid = await env.DB.prepare(
+      'SELECT code_verifier, created_at, requested_scopes_json FROM x_oauth_sessions WHERE state = ?',
+    ).bind(state).first<{ code_verifier: string; created_at: string; requested_scopes_json: string }>();
+    if (mid) {
+      return { ...mid, intent: 'read', expected_x_user_id: null };
+    }
+  } catch {
+    // Fall through to the original three-column session.
   }
   const legacy = await env.DB.prepare('SELECT code_verifier, created_at FROM x_oauth_sessions WHERE state = ?')
     .bind(state)
@@ -271,6 +334,8 @@ async function loadOAuthSession(env: XOAuthEnv, state: string) {
   return {
     ...legacy,
     requested_scopes_json: serializeRequestedScopesJson(READ_ONLY_SCOPES),
+    intent: 'read',
+    expected_x_user_id: null,
   };
 }
 
@@ -281,6 +346,14 @@ function sameScopeSet(left: readonly string[], right: readonly string[]) {
 }
 
 async function loadStoredToken(env: XOAuthEnv, userId: string) {
+  try {
+    const row = await env.DB.prepare(
+      'SELECT access_token_enc, refresh_token_enc, expires_at, scope, updated_at, x_user_id FROM x_oauth_tokens WHERE user_id = ?',
+    ).bind(userId).first<StoredTokenRow>();
+    if (row) return row;
+  } catch {
+    // Pre-0004 D1 rows have no x_user_id column.
+  }
   return env.DB.prepare('SELECT access_token_enc, refresh_token_enc, expires_at, scope, updated_at FROM x_oauth_tokens WHERE user_id = ?')
     .bind(userId)
     .first<StoredTokenRow>();
@@ -293,6 +366,7 @@ async function persistTokenResponse(
   existingRefreshTokenEnc?: string | null,
   existingGrantedScope?: string,
   requestedScopes?: readonly string[],
+  xUserId?: string | null,
 ) {
   if (!token.access_token) throw new Error('X token response did not include access_token');
   if ((token.token_type || '').trim().toLowerCase() !== 'bearer') throw new Error('X token response did not include a Bearer token type');
@@ -312,16 +386,30 @@ async function persistTokenResponse(
   const expiresAt = new Date(Date.now() + token.expires_in * 1000).toISOString();
   const updatedAt = new Date().toISOString();
 
-  await env.DB.prepare(
-    `INSERT INTO x_oauth_tokens (user_id, access_token_enc, refresh_token_enc, expires_at, scope, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?)
-     ON CONFLICT(user_id) DO UPDATE SET
-       access_token_enc = excluded.access_token_enc,
-       refresh_token_enc = excluded.refresh_token_enc,
-       expires_at = excluded.expires_at,
-       scope = excluded.scope,
-       updated_at = excluded.updated_at`
-  ).bind(userId, accessTokenEnc, refreshTokenEnc, expiresAt, grantedScopes.join(' '), updatedAt).run();
+  try {
+    await env.DB.prepare(
+      `INSERT INTO x_oauth_tokens (user_id, access_token_enc, refresh_token_enc, expires_at, scope, updated_at, x_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET
+         access_token_enc = excluded.access_token_enc,
+         refresh_token_enc = excluded.refresh_token_enc,
+         expires_at = excluded.expires_at,
+         scope = excluded.scope,
+         updated_at = excluded.updated_at,
+         x_user_id = COALESCE(excluded.x_user_id, x_oauth_tokens.x_user_id)`,
+    ).bind(userId, accessTokenEnc, refreshTokenEnc, expiresAt, grantedScopes.join(' '), updatedAt, xUserId || null).run();
+  } catch {
+    await env.DB.prepare(
+      `INSERT INTO x_oauth_tokens (user_id, access_token_enc, refresh_token_enc, expires_at, scope, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET
+         access_token_enc = excluded.access_token_enc,
+         refresh_token_enc = excluded.refresh_token_enc,
+         expires_at = excluded.expires_at,
+         scope = excluded.scope,
+         updated_at = excluded.updated_at`,
+    ).bind(userId, accessTokenEnc, refreshTokenEnc, expiresAt, grantedScopes.join(' '), updatedAt).run();
+  }
 }
 
 export function parseRequestedScopesJson(raw: string | null | undefined) {
@@ -336,16 +424,14 @@ export function parseRequestedScopesJson(raw: string | null | undefined) {
     throw new Error('OAuth session requested scopes are malformed');
   }
   const scopes = [...new Set(parsed.map((scope) => String(scope).trim()))];
-  const allowed = [
-    scopesForOAuthIntent('read'),
-    scopesForOAuthIntent('reply'),
-    scopesForOAuthIntent('relationship'),
-    scopesForOAuthIntent('engagement'),
-    scopesForOAuthIntent('dm'),
-  ];
-  const match = allowed.find((set) => sameScopeSet(scopes, set));
-  if (!match) throw new Error('OAuth session requested an unsupported scope set.');
-  return [...match];
+  const unknown = scopes.filter((scope) => !KNOWN_SCOPE_SET.has(scope));
+  if (unknown.length) throw new Error('OAuth session requested an unsupported scope set.');
+  const missingRead = READ_ONLY_SCOPES.filter((scope) => !scopes.includes(scope));
+  if (missingRead.length) throw new Error('OAuth session requested an unsupported scope set.');
+  const optional = OPTIONAL_WRITE_SCOPES.filter((scope) => scopes.includes(scope));
+  const canonical = [...READ_ONLY_SCOPES, ...optional];
+  if (!sameScopeSet(scopes, canonical)) throw new Error('OAuth session requested an unsupported scope set.');
+  return canonical;
 }
 
 export function validateGrantedScopes(scopeValue?: string, options: {
@@ -354,11 +440,6 @@ export function validateGrantedScopes(scopeValue?: string, options: {
   allowRefreshOmission?: boolean;
   allowStoredOptionalWrites?: boolean;
 } = {}) {
-  // Authorization-code responses must prove the granted scopes against the exact
-  // session-requested set. A refresh response may omit an unchanged scope; in that
-  // one case only, reuse the already-validated stored scope. Default connect still
-  // requests READ_ONLY_SCOPES only. tweet.write may appear only after an explicit
-  // reply upgrade session. Follow/DM scopes are never requested.
   const rawScope = scopeValue?.trim()
     || (options.allowRefreshOmission ? options.verifiedFallbackScope?.trim() : '');
   if (!rawScope) throw new Error('X OAuth response is missing granted scope metadata');
@@ -400,8 +481,35 @@ function xWriteCapabilities(scopes: readonly string[]) {
     reply: granted.has('tweet.write'),
     follow: granted.has('follows.write'),
     like: granted.has('like.write'),
+    likeRead: granted.has('like.read'),
+    likeReconcile: granted.has('like.read') && granted.has('like.write'),
     dm: granted.has('dm.read') && granted.has('dm.write'),
   };
+}
+
+async function resolveConnectedXUserId(env: XOAuthEnv, userId: string, row: StoredTokenRow) {
+  try {
+    const accessToken = await getValidXAccessToken(env, userId);
+    const me = await lookupXUserMe(accessToken);
+    if (me?.id) return me.id;
+  } catch {
+    // Fall back to the stored identity only if the live lookup cannot run.
+  }
+  return row.x_user_id?.trim() || null;
+}
+
+async function lookupXUserMe(accessToken: string) {
+  const response = await fetchWithTimeout('https://api.x.com/2/users/me?user.fields=id,username,name', {
+    headers: {
+      authorization: `Bearer ${accessToken}`,
+      accept: 'application/json',
+    },
+  }, 20_000, 'X users/me');
+  const body = await response.json().catch(() => null) as { data?: { id?: unknown; username?: unknown } } | null;
+  if (!response.ok || !body || typeof body !== 'object') return null;
+  const id = typeof body.data?.id === 'string' ? body.data.id : '';
+  if (!/^\d{1,30}$/.test(id)) return null;
+  return { id, username: typeof body.data?.username === 'string' ? body.data.username : '' };
 }
 
 async function exchangeAuthorizationCode(env: XOAuthEnv, code: string, verifier: string) {

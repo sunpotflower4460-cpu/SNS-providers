@@ -33,7 +33,7 @@ Do not turn production writes on until the matching official permission, price, 
 12. Keep default user connect read-only. Grant write scopes only through the in-app upgrade buttons:
     - 返信権限 → `tweet.write`
     - フォロー権限 → `follows.write`
-    - いいね権限 → `like.write`
+    - いいね権限 → `like.read` + `like.write`
     - DM権限 → `dm.read` + `dm.write`
 13. Complete each OAuth consent in the official X dialog.
 14. Enter current official X API prices into Worker vars. Missing prices stay fail-closed. Do not set `$0` unless the operation is confirmed free.
