@@ -57,17 +57,18 @@ export default function MissionInbox({ state, onChange, onOpenCandidate, onOpenM
   return <section className="daily-queue mission-inbox">
     <div className="daily-queue-head">
       <div>
-        <span className="section-kicker">Mission Inbox</span>
+        <span className="section-kicker">今日の交流</span>
         <h2>今、向き合う交流</h2>
       </div>
       <span className="queue-count">残り {items.length}件</span>
     </div>
     <div className="inbox-summary" aria-label="今日の交流内訳">
-      <span><b>{summary.reply}</b>返す</span>
-      <span><b>{summary.outreach}</b>会いに行く</span>
-      <span><b>{summary.connect}</b>つながる</span>
-      <span><b>{summary.nurture}</b>育てる</span>
-      <span><b>{summary.cleanup}</b>整える</span>
+      {summary.reply > 0 && <span><b>{summary.reply}</b>返す</span>}
+      {summary.outreach > 0 && <span><b>{summary.outreach}</b>会いに行く</span>}
+      {summary.connect > 0 && <span><b>{summary.connect}</b>つながる</span>}
+      {summary.nurture > 0 && <span><b>{summary.nurture}</b>育てる</span>}
+      {summary.cleanup > 0 && <span><b>{summary.cleanup}</b>整える</span>}
+      {summary.reply + summary.outreach + summary.connect + summary.nurture + summary.cleanup === 0 && <span><b>{items.length}</b>件</span>}
     </div>
     {first.action && first.candidate && (
       <SocialActionCard
@@ -336,7 +337,7 @@ function SocialActionCard({
         <span>@{candidate.username}</span>
       </div>
       <em className={inAppWrite ? 'exec-mode in-app' : 'exec-mode handoff'}>
-        {inAppWrite ? 'IN_APP' : 'HANDOFF'}
+        {inAppWrite ? 'アプリ内' : '公式アプリ'}
       </em>
     </div>
     {action.inboundText && <p className="inbox-inbound">「{action.inboundText}」</p>}

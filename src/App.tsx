@@ -25,7 +25,7 @@ type Tab = 'today' | 'discover' | 'relations' | 'me' | 'settings';
 
 const tabs: { id: Tab; icon: string; label: string }[] = [
   { id: 'today', icon: '⌂', label: '今日' },
-  { id: 'discover', icon: '＋', label: '探す' },
+  { id: 'discover', icon: '⌕', label: '探す' },
   { id: 'relations', icon: '◎', label: '関係' },
   { id: 'me', icon: '◐', label: '自分' },
   { id: 'settings', icon: '⚙', label: '設定' },
@@ -526,7 +526,7 @@ function App() {
 
       <main className="page">
         {tab === 'today' && <Today state={state} onChange={setState} doneToday={doneToday} onOpen={onOpen} onTab={setTab} capabilityEpoch={capabilityEpoch} />}
-        {tab === 'discover' && <Discover state={state} candidates={active} onOpen={onOpen} onChange={setState} onDiscover={discoverCandidates} onRerank={rerankCandidates} onEnrichX={enrichXCandidates} discovering={discovering} ranking={ranking} enrichingX={enrichingX} apiNote={statusNote} />}
+        {tab === 'discover' && <Discover state={state} candidates={active} onOpen={onOpen} onChange={setState} onDiscover={discoverCandidates} onRerank={rerankCandidates} onEnrichX={enrichXCandidates} discovering={discovering} ranking={ranking} enrichingX={enrichingX} />}
         {tab === 'relations' && <Relations state={state} onOpen={onOpen} onChange={setState} />}
         {tab === 'me' && <Me state={state} onAnalyze={analyzeMe} analyzing={analyzingSelf} />}
         {tab === 'settings' && <Settings state={state} onChange={setState} onOpenManual={() => setShowManual(true)} />}
@@ -576,36 +576,45 @@ function Today({ state, onChange, doneToday, onOpen, onTab, capabilityEpoch }: {
   };
   const plannedTotal = hasCandidates ? doneToday + remaining : 0;
   const progress = plannedTotal > 0 ? Math.min(100, Math.round((doneToday / plannedTotal) * 100)) : 0;
+  const extraGoals = state.mission.secondaryGoals.map((goal) => goal.trim()).filter(Boolean);
+  const missionNote = state.mission.text.trim();
 
   return <>
-    <section className="mission-card">
+    <section className={hasCandidates ? 'mission-card' : 'mission-card mission-card-compact'}>
       <div className="mission-topline">
         <span className="section-kicker">今日のゴール</span>
         <button className="text-button" onClick={() => onTab('settings')}>目的を編集</button>
       </div>
       <h1>{state.mission.primaryGoal}</h1>
-      {state.mission.secondaryGoals.filter((goal) => goal.trim()).length > 0 && (
-        <ul className="mission-destinations" aria-label="ほかの目的地">
-          {state.mission.secondaryGoals.map((goal, index) => {
-            const label = goal.trim();
-            return label ? <li key={`${index}:${label}`}>{label}</li> : null;
-          })}
-        </ul>
+      {extraGoals.length > 0 && (
+        <details className="mission-more">
+          <summary>ほか {extraGoals.length}件の目的地</summary>
+          <ul className="mission-destinations" aria-label="ほかの目的地">
+            {extraGoals.map((label, index) => <li key={`${index}:${label}`}>{label}</li>)}
+          </ul>
+        </details>
       )}
-      <p>{state.mission.text}</p>
-      <div className="mission-progress-head"><span>今日の進捗</span><strong>{hasCandidates ? `${doneToday} / ${plannedTotal}` : '準備前'}</strong></div>
-      <div className="mission-progress" aria-label={`今日の進捗 ${progress}%`}><span style={{ width: `${progress}%` }} /></div>
-      <div className="today-summary" aria-label="今日の残り内訳">
-        <span><b>{remaining}</b>残り</span>
-        <span><b>{summary.connect}</b>新規</span>
-        <span><b>{summary.engage}</b>交流</span>
-        <span><b>{summary.cleanup}</b>整理</span>
+      {missionNote && (
+        <details className="mission-more">
+          <summary>詳しく</summary>
+          <p>{missionNote}</p>
+        </details>
+      )}
+      <div className={hasCandidates ? 'mission-meter' : 'mission-meter is-idle'}>
+        <div className="mission-progress-head"><span>今日の進捗</span><strong>{hasCandidates ? `${doneToday} / ${plannedTotal}` : '準備前'}</strong></div>
+        <div className="mission-progress" aria-label={`今日の進捗 ${progress}%`}><span style={{ width: `${progress}%` }} /></div>
+        <div className={hasCandidates ? 'today-summary' : 'today-summary is-idle'} aria-label="今日の残り内訳">
+          <span><b>{remaining}</b>残り</span>
+          <span><b>{summary.connect}</b>新規</span>
+          <span><b>{summary.engage}</b>交流</span>
+          <span><b>{summary.cleanup}</b>整理</span>
+        </div>
       </div>
     </section>
 
     <MissionInbox state={state} onChange={onChange} onOpenCandidate={onOpen} onOpenMe={() => onTab('me')} onOpenDiscover={() => onTab('discover')} capabilityEpoch={capabilityEpoch} />
 
-    {state.insights[0] && <section className="coach-card">
+    {hasCandidates && state.insights[0] && <section className="coach-card">
       <div className="coach-icon">✦</div>
       <div><span className="section-kicker">AIからのヒント</span><h3>{state.insights[0].title}</h3><p>{state.insights[0].body}</p></div>
       <button onClick={() => onTab('me')}>詳しく</button>
@@ -613,7 +622,7 @@ function Today({ state, onChange, doneToday, onOpen, onTab, capabilityEpoch }: {
   </>;
 }
 
-function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, onEnrichX, discovering, ranking, enrichingX, apiNote }: {
+function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, onEnrichX, discovering, ranking, enrichingX }: {
   state: AppState;
   candidates: Candidate[];
   onOpen: (c: Candidate) => void;
@@ -624,7 +633,6 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
   discovering: boolean;
   ranking: boolean;
   enrichingX: boolean;
-  apiNote: string;
 }) {
   const [filter, setFilter] = useState<'all' | 'x' | 'instagram'>('all');
   const [platform, setPlatform] = useState<Platform>('instagram');
@@ -674,20 +682,19 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
   }
 
   return <>
-    <PageHeading eyebrow="探す" title="つながる相手を見つける" text="基本は自動探索だけでOKです。見つかった候補はMissionとの相性順に並びます。" />
+    <PageHeading eyebrow="探す" title="つながる相手を見つける" text="まずは下のボタンから。見つかった人は目的との相性順に並びます。" />
 
     <section className="discover-primary-card">
       <div className="discover-primary-copy">
         <span className="section-kicker">おすすめ</span>
         <h2>Missionから自動で探す</h2>
-        <p>XとInstagramの公開情報から、今の目的に合う相手を探します。最終的なフォローや返信は、あなたが1件ずつ承認してから実行します。</p>
+        <p>今の目的に合う相手を公開情報から探します。フォローや返信は、あなたが1件ずつ承認してからです。</p>
       </div>
       <button className="discovery-button" disabled={candidateOperationBusy} onClick={onDiscover}>
         <span>✦</span>
         <strong>{discovering ? '候補を探しています…' : '新しい候補を探す'}</strong>
         <small>無料探索を優先 · X / Instagram</small>
       </button>
-      <div className="operation-status"><span aria-hidden="true" />{apiNote}</div>
     </section>
 
     <div className="discover-tools">
@@ -789,7 +796,7 @@ function Relations({ state, onOpen, onChange }: { state: AppState; onOpen: (c: C
     });
   const cleanup = following.filter((candidate) => candidate.recommendedAction === 'unfollow_review');
   return <>
-    <PageHeading eyebrow="関係" title="つながった後を育てる" text="フォロー数ではなく、今どのくらい関係が深まっているかを記録します。" />
+    <PageHeading eyebrow="関係" title="つながった後を育てる" text="フォロー数ではなく、関係の深さを記録します。" />
     <div className="relation-summary">
       <div><strong>{following.length}</strong><span>関係を記録中</span></div>
       <div><strong>{following.filter((c) => c.followBack === true).length}</strong><span>相互フォロー</span></div>
@@ -823,7 +830,7 @@ function Me({ state, onAnalyze, analyzing }: { state: AppState; onAnalyze: (prof
   }, [state.selfProfile.profileText, state.selfProfile.recentPostsText]);
 
   return <>
-    <PageHeading eyebrow="自分" title="自分の発信も整える" text="相手探しだけでなく、プロフィールと最近の投稿がMissionに合っているかも確認できます。" />
+    <PageHeading eyebrow="自分" title="自分の発信も整える" text="プロフィールと最近の投稿が、今の目的に合っているかを確認できます。" />
     <section className="score-card"><div><span>Missionとの一致度</span><strong>{score == null ? '—' : score}</strong>{score != null && <small>/100</small>}</div><p>{state.selfProfile.summary || 'まだ分析していません。プロフィールか最近の投稿を入れると、今の状態と優先して直す場所を整理します。'}</p></section>
     <section className="form-card self-analysis-card">
       <div className="form-intro"><strong>まず現在の発信を入れる</strong><p>片方だけでも分析できます。X同期済みなら自動で入っている場合があります。</p></div>
@@ -894,16 +901,16 @@ function Settings({ state, onChange, onOpenManual }: { state: AppState; onChange
   }
 
   return <>
-    <PageHeading eyebrow="設定" title="AIの判断軸を決める" text="普段触るのはここだけで十分です。接続や細かい調整は下の詳細設定へまとめています。" />
+    <PageHeading eyebrow="設定" title="目的を決める" text="ここだけ決めれば使えます。接続や細かい調整は下にまとめています。" />
     <button className="text-button" onClick={onOpenManual}>使い方ガイドを見る</button>
     <section className="form-card settings-primary-card">
-      <div className="form-intro"><strong>目的と話し方</strong><p>目的地は複数持てます。最優先の1件がTodayの見出しになり、ほかの目的地も候補選びと評価に使います。</p></div>
+      <div className="form-intro"><strong>目的と話し方</strong><p>最優先の1件がTodayの見出し。追加した目的地も候補選びと評価に使います。</p></div>
       <label>このアプリに任せたいこと<textarea value={missionText} onChange={(event) => { setMissionText(event.target.value); markEdited(); }} /></label>
       <div className="destination-field">
         <span>目的地</span>
         <div className="destination-list">
           {destinations.map((goal, index) => (
-            <div className="destination-row" key={index}>
+            <div className={index === 0 ? 'destination-row is-primary' : 'destination-row'} key={index}>
               <label>
                 {index === 0 ? '最優先の目的地' : `目的地 ${index + 1}`}
                 <input
@@ -915,7 +922,7 @@ function Settings({ state, onChange, onOpenManual }: { state: AppState; onChange
               </label>
               {(index > 0 || destinations.length > 1) && (
                 <div className="destination-row-actions">
-                  {index > 0 && <button type="button" className="secondary-button" onClick={() => promoteDestination(index)}>最優先にする</button>}
+                  {index > 0 && <button type="button" className="text-button" onClick={() => promoteDestination(index)}>最優先にする</button>}
                   {destinations.length > 1 && <button type="button" className="text-button" onClick={() => removeDestination(index)}>削除</button>}
                 </div>
               )}

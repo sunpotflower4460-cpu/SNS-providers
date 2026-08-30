@@ -33,7 +33,7 @@
   background: rgba(255,255,255,.035);
 }
 .daily-queue.empty h3 { margin: 4px 0 2px; font-size: 17px; }
-.daily-queue.empty p { max-width: 42ch; margin: 0; color: #8796a8; font-size: 11px; line-height: 1.6; }
+.daily-queue.empty p { max-width: 36ch; margin: 0; color: #8796a8; font-size: 13px; line-height: 1.6; }
 .empty-action { min-width: min(280px, 100%); margin-top: 9px; }
 .daily-queue-head { display: flex; justify-content: space-between; align-items: end; gap: 12px; }
 .daily-queue-head h2 { margin: 4px 0 0; font-size: 19px; letter-spacing: -.025em; }

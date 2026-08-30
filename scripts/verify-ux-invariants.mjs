@@ -233,7 +233,7 @@ for (const [name, source] of [
 
 requireAll(backup, ['<PreflightControls'], 'Settings no longer includes the production preflight check.');
 requireAll(preflightUi, ['本番準備チェック', '問題なし', '注意', '停止', '色だけでなく文章でも'], 'Preflight UI lost color-independent severity labels.');
-requireAll(inboxUi, ['育てる', '結果を再確認', '送信結果を確認しています', '明日へ', '今回は返さない', '今日やる理由', 'もう一度送る操作はありません'], 'Mission Inbox lost nurture coverage, unknown-result recovery, why-this-action, or snooze/dismiss labels.');
+requireAll(inboxUi, ['育てる', '結果を再確認', '送信結果を確認しています', '明日へ', '今回は返さない', '今日やる理由', 'もう一度送る操作はありません', '今日の交流'], 'Mission Inbox lost nurture coverage, unknown-result recovery, why-this-action, or snooze/dismiss labels.');
 if (/<button[^>]*>[\s\S]{0,80}もう一度送る/.test(inboxUi)) {
   throw new Error('Unknown-result UX offers resend as a primary action.');
 }
