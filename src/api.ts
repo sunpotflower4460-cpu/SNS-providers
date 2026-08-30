@@ -481,21 +481,28 @@ export async function fetchProductionPreflight(userId = 'local-user') {
   return apiFetch<Record<string, unknown>>(`/api/preflight?userId=${encodeURIComponent(userId)}`, undefined, undefined, 30_000);
 }
 
-export async function syncSocialInbox(userId = 'local-user', monthlyLimitUsd = 3) {
+export async function putRuntimeSettings(monthlyBudgetCeilingUsd: number, userId = 'local-user') {
+  return apiFetch<{ monthlyBudgetCeilingUsd: number; effectiveLimitUsd: number }>('/api/settings/runtime', {
+    method: 'PUT',
+    body: JSON.stringify({ userId, monthlyBudgetCeilingUsd }),
+  });
+}
+
+export async function syncSocialInbox(userId = 'local-user', monthlyLimitUsd: number) {
   return apiFetch<Record<string, unknown>>('/api/social/inbox/sync', {
     method: 'POST',
     body: JSON.stringify({ userId, monthlyLimitUsd }),
   }, undefined, 90_000);
 }
 
-export async function syncXDirectMessages(userId = 'local-user', monthlyLimitUsd = 3) {
+export async function syncXDirectMessages(userId = 'local-user', monthlyLimitUsd?: number) {
   return apiFetch<{ enabled: boolean; events?: unknown[]; reason?: string; costUsd?: number }>('/api/x/dm/sync', {
     method: 'POST',
     body: JSON.stringify({ userId, monthlyLimitUsd }),
   }, undefined, 60_000);
 }
 
-export async function syncInstagramDirectMessages(userId = 'local-user', monthlyLimitUsd = 3) {
+export async function syncInstagramDirectMessages(userId = 'local-user', monthlyLimitUsd?: number) {
   return apiFetch<{ enabled: boolean; events?: unknown[]; reason?: string; costUsd?: number }>('/api/instagram/dm/sync', {
     method: 'POST',
     body: JSON.stringify({ userId, monthlyLimitUsd }),
@@ -561,7 +568,7 @@ export interface XInboundSyncResponse {
   events: XInboundEventResult[];
 }
 
-export async function syncXInbound(userId = 'local-user', monthlyLimitUsd = 3) {
+export async function syncXInbound(userId = 'local-user', monthlyLimitUsd?: number) {
   const result = await apiFetch<unknown>('/api/x/inbound/sync', {
     method: 'POST',
     body: JSON.stringify({ userId, monthlyLimitUsd, maxResults: 20 }),

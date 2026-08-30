@@ -1,10 +1,14 @@
 import { readActiveMonthUsage, reserveActiveMonthBudget, voidBudgetReservation } from '../budgetIntegrity';
 import { fetchWithTimeout } from '../fetchWithTimeout';
+import { resolveEffectiveBudgetLimit } from './budgetCeiling';
+import { parseExecutionFingerprint, providerTextMatchesFingerprint, exactReconcileDecision, type ExecutionFingerprint } from './fingerprint';
 import { finalizeActionStatus, loadCanonicalAction, loadCanonicalEvent } from './repository';
 import { instagramMessagingWindowOpen } from './instagram/dm';
 import { extractXTweetId } from './x/like';
+import { lookupXFollowRelationship, interpretFollowRelationship } from './x/followReconcile';
+import { interpretLikeState, likeReconciliationReady, lookupXLikedState } from './x/likeReconcile';
 import { lookupXAuthenticatedUser } from './x/lookup';
-import { getValidXAccessToken, type XOAuthEnv } from '../xOAuth';
+import { getValidXAccessToken, xOAuthStatus, type XOAuthEnv } from '../xOAuth';
 import type { CanonicalSocialAction, CanonicalSocialEvent } from './types';
 
 export interface ReconcileEnv extends XOAuthEnv {
@@ -30,6 +34,7 @@ export interface ExecutionRecord {
   completedAt: string | null;
   reservationId: string | null;
   resultMetadataJson?: string | null;
+  fingerprintJson?: string | null;
 }
 
 const RECONCILE_WINDOW_MS = 30 * 60 * 1000;
@@ -71,65 +76,79 @@ export async function reconcileExecution(env: ReconcileEnv, userId: string, exec
   if (price == null) {
     return stillUnknown(existing, 'Reconciliation reads fail closed until SOCIAL_RECONCILE_READ_USD is set.');
   }
+  let reservationId: string | null = null;
+  let providerCallStarted = false;
   if (price > 0) {
     const usage = await readActiveMonthUsage(env.DB, userId);
     if (!usage.available) return stillUnknown(existing, 'Budget ledger is unavailable for reconciliation reads.');
-    const limit = Number(env.DEFAULT_MONTHLY_BUDGET_USD);
+    const budget = await resolveEffectiveBudgetLimit(env, userId);
+    reservationId = crypto.randomUUID();
     const reserved = await reserveActiveMonthBudget(env.DB, {
-      id: crypto.randomUUID(),
+      id: reservationId,
       userId,
       provider: action.platform,
       operation: 'social_reconcile_read',
       amountUsd: price,
-      effectiveLimit: Number.isFinite(limit) && limit >= 0 ? limit : 0,
+      effectiveLimit: budget.effectiveLimitUsd,
       occurredAt: new Date().toISOString(),
     });
     if (!reserved) return stillUnknown(existing, 'Reconciliation read was blocked by the monthly HARD LIMIT.');
   }
 
-  const event = action.externalEventId
-    ? await loadBoundEvent(env.DB, userId, action)
-    : null;
-  const match = await readProviderMatch(env, action, existing, event);
-  if (match === 'success') {
-    const completedAt = new Date().toISOString();
-    await completeExecution(env, {
-      ...existing,
-      status: 'succeeded',
-      errorCode: null,
-      completedAt,
-    });
-    await finalizeActionStatus(env.DB, userId, action.id, 'completed', { completedAt, nowIso: completedAt });
-    return {
-      status: 200,
-      body: {
-        ok: true as const,
-        idempotent: false,
-        executionId,
+  try {
+    const event = action.externalEventId
+      ? await loadBoundEvent(env.DB, userId, action)
+      : null;
+    const fingerprint = parseExecutionFingerprint(existing.fingerprintJson)
+      || parseExecutionFingerprint(existing.resultMetadataJson);
+    providerCallStarted = true;
+    const match = await readProviderMatch(env, action, existing, event, fingerprint);
+    if (match === 'success') {
+      const completedAt = new Date().toISOString();
+      await completeExecution(env, {
+        ...existing,
         status: 'succeeded',
-        certainty: 'success',
-        reservationRetained: Boolean(existing.reservationId),
-      },
-    };
+        errorCode: null,
+        completedAt,
+      });
+      await finalizeActionStatus(env.DB, userId, action.id, 'completed', { completedAt, nowIso: completedAt });
+      return {
+        status: 200,
+        body: {
+          ok: true as const,
+          idempotent: false,
+          executionId,
+          status: 'succeeded',
+          certainty: 'success',
+          reservationRetained: Boolean(existing.reservationId),
+        },
+      };
+    }
+    if (match === 'failure') {
+      const completedAt = new Date().toISOString();
+      await completeExecution(env, { ...existing, status: 'failed', errorCode: 'INVALID_ACTION', completedAt });
+      await finalizeActionStatus(env.DB, userId, action.id, 'failed', { retryable: true, nowIso: completedAt });
+      if (existing.reservationId) await voidBudgetReservation(env.DB, { id: existing.reservationId, userId });
+      return {
+        status: 200,
+        body: {
+          ok: true as const,
+          executionId,
+          status: 'failed',
+          certainty: 'failure',
+          reservationRetained: false,
+          reservationReleased: Boolean(existing.reservationId),
+        },
+      };
+    }
+    return stillUnknown(existing, 'Provider evidence is missing or ambiguous. This execution stays UNKNOWN and must not be resent with a new executionId.');
+  } catch (error) {
+    if (!providerCallStarted && reservationId) {
+      await voidBudgetReservation(env.DB, { id: reservationId, userId });
+    }
+    const message = error instanceof Error ? error.message : 'Reconciliation failed';
+    return stillUnknown(existing, message);
   }
-  if (match === 'failure') {
-    const completedAt = new Date().toISOString();
-    await completeExecution(env, { ...existing, status: 'failed', errorCode: 'INVALID_ACTION', completedAt });
-    await finalizeActionStatus(env.DB, userId, action.id, 'failed', { retryable: true, nowIso: completedAt });
-    if (existing.reservationId) await voidBudgetReservation(env.DB, { id: existing.reservationId, userId });
-    return {
-      status: 200,
-      body: {
-        ok: true as const,
-        executionId,
-        status: 'failed',
-        certainty: 'failure',
-        reservationRetained: false,
-        reservationReleased: Boolean(existing.reservationId),
-      },
-    };
-  }
-  return stillUnknown(existing, 'Provider evidence is missing or ambiguous. This execution stays UNKNOWN and must not be resent with a new executionId.');
 }
 
 export async function recoverUnknownIfNeeded(env: ReconcileEnv, userId: string, execution: ExecutionRecord) {
@@ -146,19 +165,20 @@ async function readProviderMatch(
   action: CanonicalSocialAction,
   execution: ExecutionRecord,
   event: CanonicalSocialEvent | null,
+  fingerprint: ExecutionFingerprint | null,
 ): Promise<'success' | 'failure' | 'unknown'> {
   try {
     if (action.platform === 'instagram' && action.type === 'comment_reply') {
-      return reconcileInstagramComment(env, action, execution, event);
+      return reconcileInstagramComment(env, action, execution, event, fingerprint);
     }
     if (action.platform === 'instagram' && (action.type === 'dm_reply' || action.type === 'dm_outbound')) {
-      return reconcileInstagramDm(env, action, execution, event);
+      return reconcileInstagramDm(env, action, execution, event, fingerprint);
     }
     if (action.platform === 'x' && (action.type === 'reply_inbound' || action.type === 'reply_outbound')) {
-      return reconcileXReply(env, action, execution, event);
+      return reconcileXReply(env, action, execution, event, fingerprint);
     }
     if (action.platform === 'x' && (action.type === 'dm_reply' || action.type === 'dm_outbound')) {
-      return reconcileXDm(env, action, execution, event);
+      return reconcileXDm(env, action, execution, event, fingerprint);
     }
     if (action.platform === 'x' && action.type === 'like') {
       return reconcileXLike(env, action, execution);
@@ -172,31 +192,37 @@ async function readProviderMatch(
   }
 }
 
+function inReconcileWindow(createdIso: string, occurredMs: number) {
+  return Number.isFinite(occurredMs) && Math.abs(occurredMs - new Date(createdIso).getTime()) <= RECONCILE_WINDOW_MS;
+}
+
 async function reconcileInstagramComment(
   env: ReconcileEnv,
   action: CanonicalSocialAction,
   execution: ExecutionRecord,
   event: CanonicalSocialEvent | null,
+  fingerprint: ExecutionFingerprint | null,
 ): Promise<'success' | 'failure' | 'unknown'> {
   const commentId = event?.externalEventId || action.externalEventId || '';
   const version = env.INSTAGRAM_API_VERSION?.trim() || '';
   const token = env.INSTAGRAM_ACCESS_TOKEN?.trim() || '';
   const ownId = env.INSTAGRAM_USER_ID?.trim() || '';
   if (!/^\d{1,30}$/.test(commentId) || !token || !/^v\d+\.\d+$/.test(version) || !ownId) return 'unknown';
+  if (!fingerprint?.normalizedTextSha256) return 'unknown';
+  if (fingerprint.canonicalTargetId && fingerprint.canonicalTargetId !== commentId) return 'unknown';
   const url = `https://graph.instagram.com/${version}/${encodeURIComponent(commentId)}/replies?fields=id,text,timestamp,from,parent`;
   const payload = await igGet<{ data?: Array<Record<string, unknown>> }>(url, token, 'Instagram reply reconcile');
-  const matches = (payload.data || []).filter((row) => {
+  const matches = [];
+  for (const row of payload.data || []) {
     const fromId = isRecord(row.from) && typeof row.from.id === 'string' ? row.from.id : '';
     const parentId = isRecord(row.parent) && typeof row.parent.id === 'string' ? row.parent.id : commentId;
     const created = typeof row.timestamp === 'string' ? new Date(row.timestamp).getTime() : Number.NaN;
-    const text = typeof row.text === 'string' ? normalizeText(row.text) : '';
-    const draft = normalizeText(String(execution.resultMetadataJson || ''));
-    const timeOk = Number.isFinite(created)
-      && Math.abs(created - new Date(execution.createdAt).getTime()) <= RECONCILE_WINDOW_MS;
-    return fromId === ownId && parentId === commentId && timeOk && (!draft || text === draft || !text);
-  });
-  if (matches.length === 1) return 'success';
-  return 'unknown';
+    const textOk = await providerTextMatchesFingerprint(fingerprint, typeof row.text === 'string' ? row.text : undefined);
+    if (fromId === ownId && parentId === commentId && inReconcileWindow(execution.createdAt, created) && textOk) {
+      matches.push(row);
+    }
+  }
+  return exactReconcileDecision(matches.length);
 }
 
 async function reconcileInstagramDm(
@@ -204,21 +230,26 @@ async function reconcileInstagramDm(
   action: CanonicalSocialAction,
   execution: ExecutionRecord,
   event: CanonicalSocialEvent | null,
+  fingerprint: ExecutionFingerprint | null,
 ): Promise<'success' | 'failure' | 'unknown'> {
   const conversationId = action.conversationId || (typeof event?.payload.conversationId === 'string' ? event.payload.conversationId : '');
   const version = env.INSTAGRAM_API_VERSION?.trim() || '';
   const token = env.INSTAGRAM_ACCESS_TOKEN?.trim() || '';
   const ownId = env.INSTAGRAM_USER_ID?.trim() || '';
   if (!conversationId || !token || !ownId || !instagramMessagingWindowOpen(event?.occurredAt || action.observedAt)) return 'unknown';
+  if (!fingerprint?.normalizedTextSha256) return 'unknown';
+  if (fingerprint.conversationId && fingerprint.conversationId !== conversationId) return 'unknown';
   const url = `https://graph.instagram.com/${version}/${encodeURIComponent(conversationId)}?fields=messages{id,created_time,from,message}`;
   const payload = await igGet<{ messages?: { data?: Array<Record<string, unknown>> } }>(url, token, 'Instagram DM reconcile');
-  const matches = (payload.messages?.data || []).filter((row) => {
+  const matches = [];
+  for (const row of payload.messages?.data || []) {
     const fromId = isRecord(row.from) && typeof row.from.id === 'string' ? row.from.id : '';
     const created = typeof row.created_time === 'string' ? new Date(row.created_time).getTime() : Number.NaN;
-    return fromId === ownId && Number.isFinite(created) && Math.abs(created - new Date(execution.createdAt).getTime()) <= RECONCILE_WINDOW_MS;
-  });
-  if (matches.length === 1) return 'success';
-  return 'unknown';
+    const text = typeof row.message === 'string' ? row.message : typeof row.text === 'string' ? row.text : undefined;
+    const textOk = await providerTextMatchesFingerprint(fingerprint, text);
+    if (fromId === ownId && inReconcileWindow(execution.createdAt, created) && textOk) matches.push(row);
+  }
+  return exactReconcileDecision(matches.length);
 }
 
 async function reconcileXReply(
@@ -226,25 +257,30 @@ async function reconcileXReply(
   action: CanonicalSocialAction,
   execution: ExecutionRecord,
   event: CanonicalSocialEvent | null,
+  fingerprint: ExecutionFingerprint | null,
 ): Promise<'success' | 'failure' | 'unknown'> {
   const tweetId = event?.externalEventId || action.externalEventId || '';
   if (!/^\d{1,30}$/.test(tweetId)) return 'unknown';
+  if (!fingerprint?.normalizedTextSha256) return 'unknown';
+  if (fingerprint.canonicalTargetId && fingerprint.canonicalTargetId !== tweetId) return 'unknown';
+  if (fingerprint.parentContentId && fingerprint.parentContentId !== tweetId) return 'unknown';
   const accessToken = await getValidXAccessToken(env, action.userId);
   const me = await lookupXAuthenticatedUser(accessToken);
   if (!me) return 'unknown';
+  if (fingerprint.actorId && fingerprint.actorId !== me.id) return 'unknown';
   const url = `https://api.x.com/2/users/${encodeURIComponent(me.id)}/tweets?max_results=20&tweet.fields=created_at,text,conversation_id&expansions=referenced_tweets.id`;
   const payload = await xGet<{
     data?: Array<Record<string, unknown>>;
-    includes?: { tweets?: Array<{ id?: string }> };
   }>(url, accessToken, 'X reply reconcile');
-  const matches = (payload.data || []).filter((row) => {
+  const matches = [];
+  for (const row of payload.data || []) {
     const referenced = Array.isArray(row.referenced_tweets) ? row.referenced_tweets : [];
     const repliesTo = referenced.some((item) => isRecord(item) && item.type === 'replied_to' && item.id === tweetId);
     const created = typeof row.created_at === 'string' ? new Date(row.created_at).getTime() : Number.NaN;
-    return repliesTo && Number.isFinite(created) && Math.abs(created - new Date(execution.createdAt).getTime()) <= RECONCILE_WINDOW_MS;
-  });
-  if (matches.length === 1) return 'success';
-  return 'unknown';
+    const textOk = await providerTextMatchesFingerprint(fingerprint, typeof row.text === 'string' ? row.text : undefined);
+    if (repliesTo && inReconcileWindow(execution.createdAt, created) && textOk) matches.push(row);
+  }
+  return exactReconcileDecision(matches.length);
 }
 
 async function reconcileXDm(
@@ -252,42 +288,44 @@ async function reconcileXDm(
   action: CanonicalSocialAction,
   execution: ExecutionRecord,
   event: CanonicalSocialEvent | null,
+  fingerprint: ExecutionFingerprint | null,
 ): Promise<'success' | 'failure' | 'unknown'> {
   const conversationId = action.conversationId || (typeof event?.payload.conversationId === 'string' ? event.payload.conversationId : '');
   if (!conversationId) return 'unknown';
+  if (!fingerprint?.normalizedTextSha256) return 'unknown';
+  if (fingerprint.conversationId && fingerprint.conversationId !== conversationId) return 'unknown';
   const accessToken = await getValidXAccessToken(env, action.userId);
   const me = await lookupXAuthenticatedUser(accessToken);
   if (!me) return 'unknown';
   const url = 'https://api.x.com/2/dm_events?max_results=50&dm_event.fields=id,text,event_type,dm_conversation_id,sender_id,created_at&event_types=MessageCreate';
   const payload = await xGet<{ data?: Array<Record<string, unknown>> }>(url, accessToken, 'X DM reconcile');
-  const matches = (payload.data || []).filter((row) => {
+  const matches = [];
+  for (const row of payload.data || []) {
     const sender = typeof row.sender_id === 'string' ? row.sender_id : '';
     const conversation = typeof row.dm_conversation_id === 'string' ? row.dm_conversation_id : '';
     const created = typeof row.created_at === 'string' ? new Date(row.created_at).getTime() : Number.NaN;
-    return sender === me.id
-      && conversation === conversationId
-      && Number.isFinite(created)
-      && Math.abs(created - new Date(execution.createdAt).getTime()) <= RECONCILE_WINDOW_MS;
-  });
-  if (matches.length === 1) return 'success';
-  return 'unknown';
+    const textOk = await providerTextMatchesFingerprint(fingerprint, typeof row.text === 'string' ? row.text : undefined);
+    if (sender === me.id && conversation === conversationId && inReconcileWindow(execution.createdAt, created) && textOk) {
+      matches.push(row);
+    }
+  }
+  return exactReconcileDecision(matches.length);
 }
 
 async function reconcileXLike(
   env: ReconcileEnv,
   action: CanonicalSocialAction,
-  execution: ExecutionRecord,
+  _execution: ExecutionRecord,
 ): Promise<'success' | 'failure' | 'unknown'> {
   const tweetId = action.externalEventId || extractXTweetId(action.targetUrl || '');
   if (!/^\d{1,30}$/.test(tweetId)) return 'unknown';
+  const oauth = await xOAuthStatus(env, action.userId);
+  if (!likeReconciliationReady(oauth.scopes || [])) return 'unknown';
   const accessToken = await getValidXAccessToken(env, action.userId);
   const me = await lookupXAuthenticatedUser(accessToken);
   if (!me) return 'unknown';
-  const url = `https://api.x.com/2/users/${encodeURIComponent(me.id)}/liked_tweets?max_results=20`;
-  const payload = await xGet<{ data?: Array<{ id?: string }> }>(url, accessToken, 'X like reconcile');
-  const matches = (payload.data || []).filter((row) => row.id === tweetId);
-  if (matches.length === 1) return 'success';
-  return 'unknown';
+  const state = await lookupXLikedState({ sourceUserId: me.id, tweetId, accessToken });
+  return interpretLikeState(state);
 }
 
 async function reconcileXFollow(
@@ -300,15 +338,12 @@ async function reconcileXFollow(
   const accessToken = await getValidXAccessToken(env, action.userId);
   const me = await lookupXAuthenticatedUser(accessToken);
   if (!me) return 'unknown';
-  const url = `https://api.x.com/2/users/${encodeURIComponent(me.id)}/following/${encodeURIComponent(target)}`;
-  try {
-    const payload = await xGet<{ data?: { following?: unknown; pending_follow?: unknown } }>(url, accessToken, 'X follow reconcile');
-    if (action.type === 'follow' && (payload.data?.following === true || payload.data?.pending_follow === true)) return 'success';
-    if (action.type === 'unfollow_review' && payload.data?.following === false) return 'success';
-    return 'unknown';
-  } catch {
-    return 'unknown';
-  }
+  const relationship = await lookupXFollowRelationship({
+    sourceUserId: me.id,
+    targetUserId: target,
+    accessToken,
+  });
+  return interpretFollowRelationship(action.type === 'unfollow_review' ? 'unfollow_review' : 'follow', relationship);
 }
 
 function stillUnknown(existing: ExecutionRecord, reason: string) {
@@ -348,6 +383,14 @@ async function loadBoundEvent(db: D1Database, userId: string, action: CanonicalS
 export async function loadExecution(env: { DB: D1Database }, userId: string, executionId: string): Promise<ExecutionRecord | null> {
   try {
     const row = await env.DB.prepare(
+      'SELECT id, user_id, action_id, platform, operation, idempotency_key, external_result_id, status, error_code, created_at, completed_at, reservation_id, result_metadata_json, fingerprint_json FROM social_executions WHERE user_id = ? AND idempotency_key = ?',
+    ).bind(userId, executionId).first<Record<string, string | null>>();
+    if (row) return mapExecution(row);
+  } catch {
+    // fingerprint_json may not exist yet.
+  }
+  try {
+    const row = await env.DB.prepare(
       'SELECT id, user_id, action_id, platform, operation, idempotency_key, external_result_id, status, error_code, created_at, completed_at, reservation_id, result_metadata_json FROM social_executions WHERE user_id = ? AND idempotency_key = ?',
     ).bind(userId, executionId).first<Record<string, string | null>>();
     if (!row) return mapLegacyExecution(env, userId, executionId);
@@ -383,6 +426,7 @@ function mapExecution(row: Record<string, string | null>): ExecutionRecord {
     completedAt: row.completed_at,
     reservationId: row.reservation_id || null,
     resultMetadataJson: row.result_metadata_json || null,
+    fingerprintJson: row.fingerprint_json || null,
   };
 }
 
@@ -429,10 +473,6 @@ async function xGet<T>(url: string, accessToken: string, label: string): Promise
   const body = await response.json().catch(() => null) as T | null;
   if (!response.ok || !body || typeof body !== 'object') throw new Error(`${label} returned ${response.status}`);
   return body;
-}
-
-function normalizeText(value: string) {
-  return value.trim().replace(/\s+/g, ' ').slice(0, 2400);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

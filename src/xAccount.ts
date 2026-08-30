@@ -117,19 +117,24 @@ export async function startXOAuth(intent: 'read' | 'reply' | 'relationship' | 'e
     throw new Error('X認可URLを取得できませんでした');
   }
   const scope = new URL(result.authorizeUrl).searchParams.get('scope') || '';
-  if (intent === 'read' && (/\btweet\.write\b/.test(scope) || /\bfollows\.write\b/.test(scope) || /\blike\.write\b/.test(scope) || /\bdm\.write\b/.test(scope))) {
+  const granted = new Set(scope.split(/\s+/).filter(Boolean));
+  const requiredRead = ['tweet.read', 'users.read', 'follows.read', 'offline.access'];
+  if (requiredRead.some((item) => !granted.has(item))) {
+    throw new Error('X認可URLが必須の読み取り権限を含んでいません');
+  }
+  if (intent === 'read' && (granted.has('tweet.write') || granted.has('follows.write') || granted.has('like.write') || granted.has('like.read') || granted.has('dm.write') || granted.has('dm.read'))) {
     throw new Error('既定のX接続が書き込み権限を要求しています');
   }
-  if (intent === 'reply' && (!/\btweet\.write\b/.test(scope) || /\bfollows\.write\b/.test(scope) || /\blike\.write\b/.test(scope) || /\bdm\.write\b/.test(scope))) {
+  if (intent === 'reply' && !granted.has('tweet.write')) {
     throw new Error('X返信権限の追加要求が不正です');
   }
-  if (intent === 'relationship' && (!/\bfollows\.write\b/.test(scope) || /\btweet\.write\b/.test(scope) || /\blike\.write\b/.test(scope) || /\bdm\.write\b/.test(scope))) {
+  if (intent === 'relationship' && !granted.has('follows.write')) {
     throw new Error('Xフォロー権限の追加要求が不正です');
   }
-  if (intent === 'engagement' && (!/\blike\.write\b/.test(scope) || /\btweet\.write\b/.test(scope) || /\bfollows\.write\b/.test(scope) || /\bdm\.write\b/.test(scope))) {
+  if (intent === 'engagement' && (!granted.has('like.write') || !granted.has('like.read'))) {
     throw new Error('Xいいね権限の追加要求が不正です');
   }
-  if (intent === 'dm' && (!/\bdm\.read\b/.test(scope) || !/\bdm\.write\b/.test(scope) || /\btweet\.write\b/.test(scope) || /\bfollows\.write\b/.test(scope) || /\blike\.write\b/.test(scope))) {
+  if (intent === 'dm' && (!granted.has('dm.read') || !granted.has('dm.write'))) {
     throw new Error('X DM権限の追加要求が不正です');
   }
   window.location.assign(result.authorizeUrl);

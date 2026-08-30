@@ -25,6 +25,7 @@ async function emit(destRel, sourceUrl) {
 }
 
 await emit('fetchWithTimeout.js', new URL('../worker/src/fetchWithTimeout.ts', import.meta.url));
+await emit('social/query.js', new URL('../worker/src/social/query.ts', import.meta.url));
 await emit('social/httpStatus.js', new URL('../worker/src/social/httpStatus.ts', import.meta.url));
 await emit('social/ids.js', new URL('../worker/src/social/ids.ts', import.meta.url));
 await emit('social/x/follow.js', new URL('../worker/src/social/x/follow.ts', import.meta.url));
@@ -66,9 +67,17 @@ let fetchImpl = async () => jsonResponse(201, { data: { following: true } });
 globalThis.fetch = (...args) => fetchImpl(...args);
 
 try {
-  fetchImpl = async () => jsonResponse(201, { data: { following: true, pending_follow: false } });
+  let lastRequest = { method: 'GET', url: '', body: '' };
+  fetchImpl = async (url, init = {}) => {
+    lastRequest = { method: init.method || 'GET', url: String(url), body: init.body || '' };
+    return jsonResponse(201, { data: { following: true, pending_follow: false } });
+  };
   const success = await followXUser({ sourceUserId: '1', targetUserId: '2', accessToken: 'tok' });
   if (success.certainty !== 'success' || success.metadata.pendingFollow) fail('Follow success was not following.');
+  if (lastRequest.method !== 'POST' || !lastRequest.url.includes('/2/users/1/following') || lastRequest.url.includes('/following/2')) {
+    fail(`Follow used unofficial path ${lastRequest.method} ${lastRequest.url}`);
+  }
+  if (JSON.parse(lastRequest.body).target_user_id !== '2') fail('Follow POST body did not send target_user_id.');
 
   fetchImpl = async () => jsonResponse(201, { data: { following: false, pending_follow: true } });
   const pending = await followXUser({ sourceUserId: '1', targetUserId: '2', accessToken: 'tok' });

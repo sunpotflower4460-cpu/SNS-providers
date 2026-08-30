@@ -20,11 +20,15 @@ export interface NormalizedInstagramDmEvent {
   type: 'dm';
   externalEventId: string;
   externalUserId?: string;
-  conversationId: string;
+  conversationId?: string;
+  conversationUnresolved?: boolean;
+  username?: string;
+  displayName?: string;
   text?: string;
   occurredAt: string;
   receivedAt: string;
   ownMessage: boolean;
+  recipientProfessionalId?: string;
 }
 
 export function instagramMessagingWindowOpen(lastInboundAt: string | undefined, nowMs = Date.now()) {
@@ -147,12 +151,13 @@ export function normalizeInstagramDmMessages(
   messages: unknown,
   ownUserId: string,
   receivedAt: string,
+  participant?: { id?: string; username?: string; name?: string },
 ): NormalizedInstagramDmEvent[] {
   if (!OBJECT_ID.test(conversationId) || !Array.isArray(messages)) return [];
   const events: NormalizedInstagramDmEvent[] = [];
   const seen = new Set<string>();
   for (const message of messages) {
-    const item = normalizeOne(conversationId, message, ownUserId, receivedAt);
+    const item = normalizeOne(conversationId, message, ownUserId, receivedAt, participant);
     if (!item || seen.has(item.externalEventId)) continue;
     seen.add(item.externalEventId);
     events.push(item);
@@ -165,6 +170,7 @@ function normalizeOne(
   message: unknown,
   ownUserId: string,
   receivedAt: string,
+  participant?: { id?: string; username?: string; name?: string },
 ): NormalizedInstagramDmEvent | null {
   if (!isRecord(message)) return null;
   const id = typeof message.id === 'string' && message.id.trim() ? message.id.trim() : '';
@@ -186,6 +192,9 @@ function normalizeOne(
     externalEventId: id,
     externalUserId: ownMessage ? undefined : (from || undefined),
     conversationId,
+    conversationUnresolved: false,
+    username: !ownMessage && participant?.username ? participant.username : undefined,
+    displayName: !ownMessage && participant?.name ? participant.name : undefined,
     text: text || undefined,
     occurredAt: created,
     receivedAt,
