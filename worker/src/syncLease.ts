@@ -16,17 +16,18 @@ const MAX_LEASE_CLOCK_SKEW_MS = 5 * 60 * 1000;
  * a unique owner token. A stale lease may be atomically taken over, but the old request
  * cannot later delete the new owner's lease because release checks both ID and owner.
  */
+export type SourceSyncLeaseOperation =
+  | 'x_owned_sync'
+  | 'instagram_owned_sync'
+  | 'x_mentions_sync'
+  | 'x_dm_sync'
+  | 'instagram_comments_sync'
+  | 'instagram_dm_sync';
+
 export async function reserveSyncLease(
   db: D1Database,
   userId: string,
-  operation:
-    | 'x_owned_sync'
-    | 'instagram_owned_sync'
-    | 'x_inbound_sync'
-    | 'x_dm_sync'
-    | 'instagram_dm_sync'
-    | 'inbox_sync'
-    | 'scheduled_inbox_sync',
+  operation: SourceSyncLeaseOperation,
   ttlMs: number,
 ): Promise<SyncLeaseResult> {
   const normalizedTtl = Math.max(60_000, Math.min(15 * 60_000, Math.round(ttlMs)));
@@ -68,5 +69,31 @@ export async function releaseSyncLease(db: D1Database, lease: SyncLease) {
   } catch {
     // The lease expires naturally. Never delete by ID alone because a newer owner may
     // already have taken over an expired lease.
+  }
+}
+
+export async function runWithSourceLease<T>(
+  db: D1Database,
+  userId: string,
+  operation: SourceSyncLeaseOperation,
+  ttlMs: number,
+  work: () => Promise<T>,
+): Promise<T | { enabled: false; source: 'disabled'; status: 'disabled'; costUsd: 0; events: []; reason: string; skippedDueToLock: true }> {
+  const leaseResult = await reserveSyncLease(db, userId, operation, ttlMs);
+  if (!leaseResult.ok) {
+    return {
+      enabled: false,
+      source: 'disabled',
+      status: 'disabled',
+      costUsd: 0,
+      events: [],
+      reason: leaseResult.reason,
+      skippedDueToLock: true,
+    };
+  }
+  try {
+    return await work();
+  } finally {
+    await releaseSyncLease(db, leaseResult.lease);
   }
 }

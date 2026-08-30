@@ -482,10 +482,11 @@ export async function fetchProductionPreflight(userId = 'local-user') {
 }
 
 export async function putRuntimeSettings(monthlyBudgetCeilingUsd: number, userId = 'local-user') {
-  return apiFetch<{ monthlyBudgetCeilingUsd: number; effectiveLimitUsd: number }>('/api/settings/runtime', {
+  const result = await apiFetch<unknown>('/api/settings/runtime', {
     method: 'PUT',
     body: JSON.stringify({ userId, monthlyBudgetCeilingUsd }),
   });
+  return result;
 }
 
 export async function syncSocialInbox(userId = 'local-user', monthlyLimitUsd: number) {

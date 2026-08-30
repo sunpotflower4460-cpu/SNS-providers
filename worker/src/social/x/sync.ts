@@ -7,6 +7,7 @@ import { normalizeXInboundEvents } from './inbound';
 import { executionModeForAction, liveXCapabilities } from '../capabilities';
 import { queryRecord } from '../query';
 import { commitSyncCheckpoint, loadSyncCheckpoint, saveSyncContinuation } from '../syncCheckpoints';
+import { isNewerNumericProviderId } from '../providerIds';
 
 export interface XInboundEnv extends XOAuthEnv {
   X_INBOUND_SYNC_ENABLED?: string;
@@ -79,7 +80,7 @@ export async function paginateXMentions(input: {
     const pageEvents = normalizeXInboundEvents(payload.data || [], payload.includes?.users || [], input.receivedAt);
     allEvents.push(...pageEvents);
     for (const event of pageEvents) {
-      if (!newestId || event.externalEventId > newestId) newestId = event.externalEventId;
+      if (!newestId || isNewerNumericProviderId(event.externalEventId, newestId)) newestId = event.externalEventId;
     }
     const next = typeof payload.meta?.next_token === 'string' ? payload.meta.next_token : '';
     if (!next) {
@@ -135,7 +136,20 @@ export async function syncXInboundMentions(env: XInboundEnv, body: XInboundSyncR
     const accountId = typeof me.data?.id === 'string' && /^\d{1,30}$/.test(me.data.id) ? me.data.id : '';
     if (!accountId) throw new Error('X /2/users/me did not return a valid user id.');
 
-    const checkpoint = await loadSyncCheckpoint(env.DB, userId, 'x_mentions');
+    const loaded = await loadSyncCheckpoint(env.DB, userId, 'x_mentions');
+    if (!loaded.available) {
+      await voidBudgetReservation(env.DB, { id: reservationId, userId });
+      return {
+        enabled: false,
+        source: 'error',
+        status: 'error' as const,
+        costUsd: 0,
+        events: [],
+        reason: loaded.reason,
+        checkpointComplete: false,
+      };
+    }
+    const checkpoint = loaded.checkpoint;
     const maxResults = clampInt(body.maxResults, 20, 5, 100);
     const sinceId = checkpoint?.newestSeenId && /^\d{1,30}$/.test(checkpoint.newestSeenId)
       ? checkpoint.newestSeenId
@@ -158,13 +172,61 @@ export async function syncXInboundMentions(env: XInboundEnv, body: XInboundSyncR
     const executionMode = executionModeForAction('reply_inbound', liveXCapabilities(env, oauthStatus.scopes || []));
     await persistXInboundEvidence(env.DB, userId, paged.events, executionMode);
     if (paged.complete) {
-      await commitSyncCheckpoint(env.DB, userId, 'x_mentions', paged.newestId || sinceId || null, { pages: paged.pages });
+      const persisted = await commitSyncCheckpoint(env.DB, userId, 'x_mentions', paged.newestId || sinceId || null, { pages: paged.pages });
+      if (!persisted.ok) {
+        return {
+          enabled: false,
+          source: 'error',
+          status: 'error' as const,
+          costUsd: price,
+          syncedAt: receivedAt,
+          checkpointComplete: false,
+          events: paged.events.map((event) => ({
+            id: event.id,
+            actionId: `sa-x-${event.type}-${event.externalEventId}`,
+            type: event.type,
+            externalEventId: event.externalEventId,
+            externalUserId: event.externalUserId,
+            username: event.username,
+            text: event.text,
+            conversationId: event.conversationId,
+            permalink: event.permalink,
+            occurredAt: event.occurredAt,
+          })),
+          reason: persisted.reason,
+          reservationRetained: true,
+        };
+      }
     } else {
-      await saveSyncContinuation(env.DB, userId, 'x_mentions', paged.continuation, {
+      const persisted = await saveSyncContinuation(env.DB, userId, 'x_mentions', paged.continuation, {
         pages: paged.pages,
         budgetStop: paged.pages >= MAX_PAGES,
         pendingNewestId: paged.newestId || pendingNewestId || null,
       });
+      if (!persisted.ok) {
+        return {
+          enabled: false,
+          source: 'error',
+          status: 'error' as const,
+          costUsd: price,
+          syncedAt: receivedAt,
+          checkpointComplete: false,
+          events: paged.events.map((event) => ({
+            id: event.id,
+            actionId: `sa-x-${event.type}-${event.externalEventId}`,
+            type: event.type,
+            externalEventId: event.externalEventId,
+            externalUserId: event.externalUserId,
+            username: event.username,
+            text: event.text,
+            conversationId: event.conversationId,
+            permalink: event.permalink,
+            occurredAt: event.occurredAt,
+          })),
+          reason: persisted.reason,
+          reservationRetained: true,
+        };
+      }
     }
     const allEvents = paged.events;
     const complete = paged.complete;

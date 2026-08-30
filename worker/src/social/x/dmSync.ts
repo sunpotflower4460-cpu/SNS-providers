@@ -57,7 +57,20 @@ export async function syncXDirectMessages(env: XDmSyncEnv, body: { userId?: stri
     const accessToken = await getValidXAccessToken(env, userId);
     const me = await lookupXAuthenticatedUser(accessToken);
     if (!me) throw new Error('X /2/users/me did not return a valid user id.');
-    const checkpoint = await loadSyncCheckpoint(env.DB, userId, 'x_dm');
+    const loaded = await loadSyncCheckpoint(env.DB, userId, 'x_dm');
+    if (!loaded.available) {
+      if ((price || 0) > 0) await voidBudgetReservation(env.DB, { id: reservationId, userId });
+      return {
+        enabled: false,
+        source: 'error',
+        status: 'error' as const,
+        costUsd: 0,
+        events: [],
+        reason: loaded.reason,
+        checkpointComplete: false,
+      };
+    }
+    const checkpoint = loaded.checkpoint;
     const knownNewest = checkpoint?.newestSeenId || '';
     const pendingNewestId = typeof checkpoint?.extra?.pendingNewestId === 'string' ? checkpoint.extra.pendingNewestId : undefined;
     const receivedAt = new Date().toISOString();
@@ -75,13 +88,61 @@ export async function syncXDirectMessages(env: XDmSyncEnv, body: { userId?: stri
     const executionMode = executionModeForAction('dm_reply', liveXCapabilities(env, oauth.scopes || [], oauth.connected));
     await persistXDmEvidence(env.DB, userId, inbound, executionMode);
     if (paged.complete) {
-      await commitSyncCheckpoint(env.DB, userId, 'x_dm', paged.newestId || knownNewest || null, { pages: paged.pages });
+      const persisted = await commitSyncCheckpoint(env.DB, userId, 'x_dm', paged.newestId || knownNewest || null, { pages: paged.pages });
+      if (!persisted.ok) {
+        return {
+          enabled: false,
+          source: 'error',
+          status: 'error' as const,
+          costUsd: price || 0,
+          syncedAt: receivedAt,
+          checkpointComplete: false,
+          events: inbound.map((event) => ({
+            id: event.id,
+            actionId: `sa-x-dm-${event.externalEventId}`,
+            type: 'dm' as const,
+            externalEventId: event.externalEventId,
+            externalUserId: event.externalUserId,
+            username: event.username,
+            displayName: event.displayName,
+            conversationId: event.conversationId,
+            text: event.text,
+            occurredAt: event.occurredAt,
+          })),
+          reason: persisted.reason,
+          reservationRetained: true,
+        };
+      }
     } else {
-      await saveSyncContinuation(env.DB, userId, 'x_dm', paged.continuation, {
+      const persisted = await saveSyncContinuation(env.DB, userId, 'x_dm', paged.continuation, {
         pages: paged.pages,
         budgetStop: true,
         pendingNewestId: paged.newestId || pendingNewestId || null,
       });
+      if (!persisted.ok) {
+        return {
+          enabled: false,
+          source: 'error',
+          status: 'error' as const,
+          costUsd: price || 0,
+          syncedAt: receivedAt,
+          checkpointComplete: false,
+          events: inbound.map((event) => ({
+            id: event.id,
+            actionId: `sa-x-dm-${event.externalEventId}`,
+            type: 'dm' as const,
+            externalEventId: event.externalEventId,
+            externalUserId: event.externalUserId,
+            username: event.username,
+            displayName: event.displayName,
+            conversationId: event.conversationId,
+            text: event.text,
+            occurredAt: event.occurredAt,
+          })),
+          reason: persisted.reason,
+          reservationRetained: true,
+        };
+      }
     }
     return {
       enabled: true,

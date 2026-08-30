@@ -42,6 +42,7 @@ const files = [
   ['social/query.js', '../worker/src/social/query.ts'],
   ['social/budgetCeiling.js', '../worker/src/social/budgetCeiling.ts'],
   ['social/fingerprint.js', '../worker/src/social/fingerprint.ts'],
+  ['social/providerIds.js', '../worker/src/social/providerIds.ts'],
   ['social/x/followReconcile.js', '../worker/src/social/x/followReconcile.ts'],
   ['social/x/likeReconcile.js', '../worker/src/social/x/likeReconcile.ts'],
   ['social/instagram/execute.js', '../worker/src/social/instagram/execute.ts'],
@@ -208,6 +209,12 @@ function createMemoryD1() {
                 row.status = params[0];
                 row.retryable = params[1];
                 row.updated_at = params[2];
+                return { meta: { changes: 1 } };
+              }
+              if (normalized.includes('SET fingerprint_json')) {
+                const row = executions.get(execKey(params[1], params[2]));
+                if (!row || row.status !== 'pending') return { meta: { changes: 0 } };
+                row.fingerprint_json = params[0];
                 return { meta: { changes: 1 } };
               }
               if (normalized.includes("SET error_code = 'SENDING'")) {

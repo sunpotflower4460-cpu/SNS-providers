@@ -34,6 +34,7 @@ await emit('social/repository.js', new URL('../worker/src/social/repository.ts',
 await emit('social/query.js', new URL('../worker/src/social/query.ts', import.meta.url));
 await emit('social/budgetCeiling.js', new URL('../worker/src/social/budgetCeiling.ts', import.meta.url));
 await emit('social/fingerprint.js', new URL('../worker/src/social/fingerprint.ts', import.meta.url));
+await emit('social/providerIds.js', new URL('../worker/src/social/providerIds.ts', import.meta.url));
 await emit('social/execute.js', new URL('../worker/src/social/execute.ts', import.meta.url));
 await emit('social/instagram/inbound.js', new URL('../worker/src/social/instagram/inbound.ts', import.meta.url));
 await emit('social/instagram/execute.js', new URL('../worker/src/social/instagram/execute.ts', import.meta.url));
@@ -176,6 +177,12 @@ function createMemoryD1() {
                 row.status = params[0];
                 row.retryable = params[1];
                 row.updated_at = params[2];
+                return { meta: { changes: 1 } };
+              }
+              if (normalized.includes('SET fingerprint_json')) {
+                const row = executions.get(execKey(params[1], params[2]));
+                if (!row || row.status !== 'pending') return { meta: { changes: 0 } };
+                row.fingerprint_json = params[0];
                 return { meta: { changes: 1 } };
               }
               if (normalized.includes("SET error_code = 'SENDING'")) {
@@ -623,28 +630,39 @@ async function seedX(db, executionMode = 'in_app') {
     xCalls.push(input);
     return { certainty: 'success', externalResultId: '888', providerStatus: '201' };
   };
-  const result = await executeSocialAction(env, 'local-user', 'sa-x-mention-555', {
-    executionId: 'exec-x-01',
-    draft: 'ありがとう',
-    action: { platform: 'instagram', candidateId: 'evil', externalEventId: '111', type: 'follow' },
-  }, {
-    replyToXTweet: fakeX,
-    xGrantedScopes: xWriteScopes,
-    getXAccessToken: async () => 'x-user-token',
-  });
-  if (result.status !== 200 || result.body.certainty !== 'success') fail(`Live X execute failed: ${JSON.stringify(result.body)}`);
-  if (xCalls.length !== 1 || xCalls[0].tweetId !== '555') fail('X write did not target the canonical tweet id.');
-  if (xCalls[0].message !== 'ありがとう' || xCalls[0].accessToken !== 'x-user-token') fail('X write did not use the user-approved draft or connected token.');
-  const retry = await executeSocialAction(env, 'local-user', 'sa-x-mention-555', {
-    executionId: 'exec-x-01',
-    draft: '別の文',
-  }, {
-    replyToXTweet: fakeX,
-    xGrantedScopes: xWriteScopes,
-    getXAccessToken: async () => 'x-user-token',
-  });
-  if (xCalls.length !== 1) fail('X network retry duplicated the provider write.');
-  if (!retry.body.idempotent) fail('X retry with the same executionId was not recovered.');
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('/2/users/me')) {
+      return { ok: true, status: 200, json: async () => ({ data: { id: '42', username: 'me' } }) };
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  try {
+    const result = await executeSocialAction(env, 'local-user', 'sa-x-mention-555', {
+      executionId: 'exec-x-01',
+      draft: 'ありがとう',
+      action: { platform: 'instagram', candidateId: 'evil', externalEventId: '111', type: 'follow' },
+    }, {
+      replyToXTweet: fakeX,
+      xGrantedScopes: xWriteScopes,
+      getXAccessToken: async () => 'x-user-token',
+    });
+    if (result.status !== 200 || result.body.certainty !== 'success') fail(`Live X execute failed: ${JSON.stringify(result.body)}`);
+    if (xCalls.length !== 1 || xCalls[0].tweetId !== '555') fail('X write did not target the canonical tweet id.');
+    if (xCalls[0].message !== 'ありがとう' || xCalls[0].accessToken !== 'x-user-token') fail('X write did not use the user-approved draft or connected token.');
+    const retry = await executeSocialAction(env, 'local-user', 'sa-x-mention-555', {
+      executionId: 'exec-x-01',
+      draft: '別の文',
+    }, {
+      replyToXTweet: fakeX,
+      xGrantedScopes: xWriteScopes,
+      getXAccessToken: async () => 'x-user-token',
+    });
+    if (xCalls.length !== 1) fail('X network retry duplicated the provider write.');
+    if (!retry.body.idempotent) fail('X retry with the same executionId was not recovered.');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 }
 
 {

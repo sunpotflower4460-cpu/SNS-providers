@@ -1,6 +1,7 @@
 import { fetchWithTimeout } from '../../fetchWithTimeout';
 import { queryRecord } from '../query';
 import { classifyProviderHttpStatus, providerErrorDetail } from '../httpStatus';
+import { isNewerNumericProviderId } from '../providerIds';
 import type { ProviderWriteResult } from '../types';
 
 const CONVERSATION_ID = /^[A-Za-z0-9._-]{1,64}$/;
@@ -167,7 +168,7 @@ export async function paginateXDmEvents(input: {
     const pageEvents = normalizeXDmEvents(payload.data || [], input.ownUserId, input.receivedAt, payload.includes?.users || []);
     for (const event of pageEvents) {
       if (knownNewest && event.externalEventId === knownNewest) reachedKnownBoundary = true;
-      if (!newestId || event.externalEventId > newestId) newestId = event.externalEventId;
+      if (!newestId || isNewerNumericProviderId(event.externalEventId, newestId)) newestId = event.externalEventId;
     }
     allEvents.push(...pageEvents);
     const next = typeof payload.meta?.next_token === 'string' ? payload.meta.next_token : '';

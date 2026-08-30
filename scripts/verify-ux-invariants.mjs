@@ -18,6 +18,7 @@ const syncCss = await readFile(new URL('../src/sync.css', import.meta.url), 'utf
 const workloadCss = await readFile(new URL('../src/workload.css', import.meta.url), 'utf8');
 const xAccountCss = await readFile(new URL('../src/xAccount.css', import.meta.url), 'utf8');
 const instagramCss = await readFile(new URL('../src/instagramAccount.css', import.meta.url), 'utf8');
+const budgetCeilingSave = await readFile(new URL('../src/budgetCeilingSave.ts', import.meta.url), 'utf8');
 
 function requireAll(source, fragments, message) {
   if (!fragments.every((fragment) => source.includes(fragment))) throw new Error(message);
@@ -130,12 +131,24 @@ requireAll(app, [
 
 requireAll(app, [
   'const [saved, setSaved] = useState(false);',
-  "{saved ? '保存しました' : 'この設定を保存'}",
+  "{saving ? '保存中…' : saved ? '保存しました' : 'この設定を保存'}",
+  '予算上限をサーバーへ保存できませんでした',
+  'persistServerBudgetCeiling',
+  'あなたの上限:',
+  'サーバー上限:',
+  '実効上限:',
   'aria-live="polite"',
   '目的地を追加',
   '最優先の目的地',
   'applyMissionDestinations',
-], 'Settings can regress to giving no explicit save confirmation or a single-destination-only Mission editor.');
+], 'Settings can regress to claiming budget save success before the server confirms, or a single-destination-only Mission editor.');
+
+requireAll(budgetCeilingSave, [
+  "export const BUDGET_SAVE_FAILED_MESSAGE = '予算上限をサーバーへ保存できませんでした'",
+  'parseRuntimeBudgetResponse',
+  'effectiveLimitUsd',
+  'serverHardLimitUsd',
+], 'Budget ceiling save helper lost fail-closed server confirmation.');
 
 requireAll(app, [
   'const freeOnly = state.budget.monthlyLimitUsd === 0;',

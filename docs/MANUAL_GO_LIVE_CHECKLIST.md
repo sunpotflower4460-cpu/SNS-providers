@@ -24,7 +24,7 @@ Do not turn production writes on until the matching official permission, price, 
 
 7. Complete Meta App permissions / App Review for comment and messaging scopes used by the current Instagram Login flow.
 8. Issue a live Professional account token and set Worker secrets.
-9. Register the Instagram webhook callback in Meta App Dashboard (`GET|POST /api/instagram/webhook`). Polling works without this.
+9. Register the Instagram webhook callback in Meta App Dashboard (`GET|POST /api/instagram/webhook`). Webhook is the realtime primary for comments. Polling fallback covers bounded paginated catch-up of owned media. For reliable comments on older media, Meta webhook registration is required.
 10. Confirm the connected account is BUSINESS / CREATOR / MEDIA_CREATOR.
 
 ## X Developer

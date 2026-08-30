@@ -75,3 +75,75 @@ export async function providerTextMatchesFingerprint(fingerprint: ExecutionFinge
 export function exactReconcileDecision(matchCount: number): 'success' | 'unknown' {
   return matchCount === 1 ? 'success' : 'unknown';
 }
+
+export function fingerprintRequiresTextHash(operation: string) {
+  return operation === 'instagram_comment_reply'
+    || operation === 'instagram_dm_write'
+    || operation === 'x_reply_write'
+    || operation === 'x_dm_write';
+}
+
+export function fingerprintRequiresConversation(operation: string) {
+  return operation === 'instagram_dm_write' || operation === 'x_dm_write';
+}
+
+export function assertDurableFingerprint(fingerprint: ExecutionFingerprint) {
+  if (!fingerprint.canonicalTargetId) {
+    throw new Error('Execution fingerprint is missing canonicalTargetId');
+  }
+  if (!fingerprint.actorId) {
+    throw new Error('Execution fingerprint is missing actorId');
+  }
+  if (!fingerprint.operation) {
+    throw new Error('Execution fingerprint is missing operation');
+  }
+  if (!fingerprint.preparedAt) {
+    throw new Error('Execution fingerprint is missing preparedAt');
+  }
+  if (fingerprintRequiresTextHash(fingerprint.operation) && !fingerprint.normalizedTextSha256) {
+    throw new Error('Execution fingerprint is missing normalizedTextSha256');
+  }
+  if (fingerprintRequiresConversation(fingerprint.operation) && !fingerprint.conversationId) {
+    throw new Error('Execution fingerprint is missing conversationId');
+  }
+}
+
+export async function persistExecutionFingerprintOrThrow(
+  db: D1Database,
+  userId: string,
+  idempotencyKey: string,
+  fingerprint: ExecutionFingerprint,
+) {
+  assertDurableFingerprint(fingerprint);
+  const payload = JSON.stringify(fingerprint);
+  let result: { meta?: { changes?: number } };
+  try {
+    result = await db.prepare(
+      `UPDATE social_executions
+       SET fingerprint_json = ?
+       WHERE user_id = ?
+         AND idempotency_key = ?
+         AND status = 'pending'`,
+    ).bind(payload, userId, idempotencyKey).run();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'D1 fingerprint write failed';
+    throw new Error(`Execution fingerprint could not be persisted: ${message}`);
+  }
+  if ((result.meta.changes || 0) !== 1) {
+    throw new Error('Execution fingerprint could not be persisted');
+  }
+  let stored: { fingerprint_json?: string | null } | null;
+  try {
+    stored = await db.prepare(
+      `SELECT fingerprint_json
+       FROM social_executions
+       WHERE user_id = ? AND idempotency_key = ?`,
+    ).bind(userId, idempotencyKey).first<{ fingerprint_json?: string | null }>();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'D1 fingerprint read failed';
+    throw new Error(`Execution fingerprint verification failed: ${message}`);
+  }
+  if (!stored || stored.fingerprint_json !== payload) {
+    throw new Error('Execution fingerprint verification failed');
+  }
+}

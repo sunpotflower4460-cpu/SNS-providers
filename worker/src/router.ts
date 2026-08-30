@@ -7,7 +7,6 @@ import { probeInstagramPermissions } from './social/instagram/probe';
 import { extractInstagramWebhookComments, extractInstagramWebhookMessages, handleInstagramWebhookVerification, persistWebhookComments, readValidatedInstagramWebhook } from './social/instagram/webhook';
 import { persistInstagramDmEvidence } from './social/instagram/persistDm';
 import { lookupInstagramConversationByUser, syncInstagramDirectMessages } from './social/instagram/dmSync';
-import { syncInstagramComments } from './social/instagram/commentSync';
 import { syncXInboundMentions } from './social/x/sync';
 import { syncXDirectMessages } from './social/x/dmSync';
 import { dismissCanonicalAction, listCanonicalActions, snoozeCanonicalAction } from './social/lifecycle';
@@ -314,12 +313,12 @@ export default {
         if (!Number.isFinite(requested) || requested < 0) {
           return json({ error: 'monthlyBudgetCeilingUsd must be a non-negative number.' }, 400, request, env);
         }
-        const hard = serverHardLimitUsd(env);
         const stored = await saveUserBudgetCeilingUsd(env.DB, userId, requested);
+        const hard = serverHardLimitUsd(env);
         return json({
           ...stored,
           serverHardLimitUsd: hard,
-          effectiveLimitUsd: Math.min(hard, requested),
+          effectiveLimitUsd: Math.min(hard, stored.monthlyBudgetCeilingUsd),
         }, 200, request, env);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Runtime settings failed';
@@ -371,7 +370,7 @@ export default {
       try {
         const body = await request.json<{ userId?: string; monthlyLimitUsd?: number; maxResults?: number }>();
         const userId = sanitizeUserId(body?.userId || 'local-user');
-        const leaseResult = await reserveSyncLease(env.DB, userId, 'x_inbound_sync', 3 * 60 * 1000);
+        const leaseResult = await reserveSyncLease(env.DB, userId, 'x_mentions_sync', 3 * 60 * 1000);
         if (!leaseResult.ok) {
           return json({ enabled: false, source: 'disabled', costUsd: 0, events: [], reason: leaseResult.reason }, 200, request, env);
         }
@@ -554,21 +553,8 @@ export default {
       try {
         const body = await request.json<{ userId?: string; monthlyLimitUsd?: number }>();
         const userId = sanitizeUserId(body?.userId || 'local-user');
-        const leaseResult = await reserveSyncLease(env.DB, userId, 'inbox_sync', 5 * 60 * 1000);
-        if (!leaseResult.ok) {
-          return json({
-            xMentions: { enabled: false, source: 'disabled', status: 'disabled', costUsd: 0, events: [], reason: leaseResult.reason },
-            xDm: { enabled: false, source: 'disabled', status: 'disabled', costUsd: 0, events: [], reason: leaseResult.reason },
-            instagramComments: { enabled: false, source: 'disabled', status: 'disabled', costUsd: 0, events: [], reason: leaseResult.reason },
-            instagramDm: { enabled: false, source: 'disabled', status: 'disabled', costUsd: 0, events: [], reason: leaseResult.reason },
-          }, 200, request, env);
-        }
-        try {
-          const inbox = await syncSocialInboxIsolated(env, body || {});
-          return json(inbox, 200, request, env);
-        } finally {
-          await releaseSyncLease(env.DB, leaseResult.lease);
-        }
+        const inbox = await syncSocialInboxIsolated(env, body || {});
+        return json(inbox, 200, request, env);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Inbox sync failed';
         return json({ error: message }, 400, request, env);
@@ -625,18 +611,7 @@ export default {
   async scheduled(_event: ScheduledEvent, env: Env) {
     if (env.SOCIAL_SCHEDULED_READ_ENABLED !== 'true') return;
     const userId = 'local-user';
-    const lease = await reserveSyncLease(env.DB, userId, 'scheduled_inbox_sync', 5 * 60 * 1000);
-    if (!lease.ok) return;
-    try {
-      await Promise.allSettled([
-        syncXInboundMentions(env, { userId }),
-        syncXDirectMessages(env, { userId }),
-        syncInstagramComments(env, { userId }),
-        syncInstagramDirectMessages(env, { userId }),
-      ]);
-    } finally {
-      await releaseSyncLease(env.DB, lease.lease);
-    }
+    await syncSocialInboxIsolated(env, { userId });
   },
 };
 

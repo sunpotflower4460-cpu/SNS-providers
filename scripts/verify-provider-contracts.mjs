@@ -28,6 +28,7 @@ await emit('fetchWithTimeout.js', new URL('../worker/src/fetchWithTimeout.ts', i
 await emit('social/query.js', new URL('../worker/src/social/query.ts', import.meta.url));
 await emit('social/httpStatus.js', new URL('../worker/src/social/httpStatus.ts', import.meta.url));
 await emit('social/ids.js', new URL('../worker/src/social/ids.ts', import.meta.url));
+await emit('social/providerIds.js', new URL('../worker/src/social/providerIds.ts', import.meta.url));
 await emit('social/x/follow.js', new URL('../worker/src/social/x/follow.ts', import.meta.url));
 await emit('social/x/like.js', new URL('../worker/src/social/x/like.ts', import.meta.url));
 await emit('social/x/dm.js', new URL('../worker/src/social/x/dm.ts', import.meta.url));
