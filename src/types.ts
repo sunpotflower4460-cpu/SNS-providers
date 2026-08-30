@@ -13,6 +13,7 @@ export type RecommendedAction = 'follow' | 'like' | 'reply' | 'dm' | 'review' | 
 
 export interface Mission {
   text: string;
+  /** Today's headline destination. Additional destinations live in secondaryGoals. */
   primaryGoal: string;
   secondaryGoals: string[];
   communicationDNA: string;

@@ -132,7 +132,10 @@ requireAll(app, [
   'const [saved, setSaved] = useState(false);',
   "{saved ? '保存しました' : 'この設定を保存'}",
   'aria-live="polite"',
-], 'Settings can regress to giving no explicit save confirmation.');
+  '目的地を追加',
+  '最優先の目的地',
+  'applyMissionDestinations',
+], 'Settings can regress to giving no explicit save confirmation or a single-destination-only Mission editor.');
 
 requireAll(app, [
   'const freeOnly = state.budget.monthlyLimitUsd === 0;',

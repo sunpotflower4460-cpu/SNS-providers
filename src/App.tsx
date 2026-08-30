@@ -10,7 +10,7 @@ import MissionInbox from './MissionInbox';
 import Onboarding from './Onboarding';
 import { hasSeenOnboarding, markOnboardingSeen } from './onboardingState';
 import { resolveVisibleResult } from './resultResolution';
-import { addCandidateFromReference, applyRankResults, applySelfAnalysis, applyXProfiles, loadState, saveState, setFollowBackStatus, syncBudget, updateCandidateDraft, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
+import { addCandidateFromReference, applyMissionDestinations, applyRankResults, applySelfAnalysis, applyXProfiles, destinationsFromMission, loadState, MAX_MISSION_DESTINATIONS, saveState, setFollowBackStatus, syncBudget, updateCandidateDraft, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
 import { copyDraft, openCandidate, openSocialAction, platformLabel } from './social';
 import { applyCanonicalServerActions } from './socialAction';
 import { setLiveSocialCapabilities, SOCIAL_CAPABILITIES_CHANGED } from './socialCapabilities';
@@ -553,6 +553,14 @@ function Today({ state, onChange, doneToday, onOpen, onTab, capabilityEpoch }: {
         <button className="text-button" onClick={() => onTab('settings')}>目的を編集</button>
       </div>
       <h1>{state.mission.primaryGoal}</h1>
+      {state.mission.secondaryGoals.filter((goal) => goal.trim()).length > 0 && (
+        <ul className="mission-destinations" aria-label="ほかの目的地">
+          {state.mission.secondaryGoals.map((goal, index) => {
+            const label = goal.trim();
+            return label ? <li key={`${index}:${label}`}>{label}</li> : null;
+          })}
+        </ul>
+      )}
       <p>{state.mission.text}</p>
       <div className="mission-progress-head"><span>今日の進捗</span><strong>{hasCandidates ? `${doneToday} / ${plannedTotal}` : '準備前'}</strong></div>
       <div className="mission-progress" aria-label={`今日の進捗 ${progress}%`}><span style={{ width: `${progress}%` }} /></div>
@@ -800,21 +808,22 @@ function Me({ state, onAnalyze, analyzing }: { state: AppState; onAnalyze: (prof
 
 function Settings({ state, onChange, onOpenManual }: { state: AppState; onChange: AppStateUpdater; onOpenManual: () => void }) {
   const [missionText, setMissionText] = useState(state.mission.text);
-  const [primaryGoal, setPrimaryGoal] = useState(state.mission.primaryGoal);
+  const [destinations, setDestinations] = useState(() => destinationsFromMission(state.mission));
   const [communicationDNA, setCommunicationDNA] = useState(state.mission.communicationDNA);
   const [budget, setBudget] = useState(state.budget.monthlyLimitUsd);
   const [followBackDays, setFollowBackDays] = useState(state.relationshipPolicy.followBackReviewAfterDays);
   const [saved, setSaved] = useState(false);
+  const storedDestinations = destinationsFromMission(state.mission).join('\n');
 
   useEffect(() => setMissionText(state.mission.text), [state.mission.text]);
-  useEffect(() => setPrimaryGoal(state.mission.primaryGoal), [state.mission.primaryGoal]);
+  useEffect(() => setDestinations(destinationsFromMission(state.mission)), [storedDestinations]);
   useEffect(() => setCommunicationDNA(state.mission.communicationDNA), [state.mission.communicationDNA]);
   useEffect(() => setBudget(state.budget.monthlyLimitUsd), [state.budget.monthlyLimitUsd]);
   useEffect(() => setFollowBackDays(state.relationshipPolicy.followBackReviewAfterDays), [state.relationshipPolicy.followBackReviewAfterDays]);
 
   function persist() {
     onChange((current) => {
-      let next = updateMission(current, { ...current.mission, text: missionText, primaryGoal, communicationDNA });
+      let next = updateMission(current, applyMissionDestinations({ ...current.mission, text: missionText, communicationDNA }, destinations));
       next = { ...next, budget: { ...next.budget, monthlyLimitUsd: Math.max(0, budget), hardLimit: true } };
       next = updateRelationshipPolicy(next, { ...next.relationshipPolicy, followBackReviewAfterDays: Math.max(7, Math.min(90, Math.round(followBackDays || 30))) });
       return next;
@@ -826,13 +835,65 @@ function Settings({ state, onChange, onOpenManual }: { state: AppState; onChange
     setSaved(false);
   }
 
+  function updateDestination(index: number, value: string) {
+    setDestinations((current) => current.map((goal, goalIndex) => (goalIndex === index ? value : goal)));
+    markEdited();
+  }
+
+  function addDestination() {
+    setDestinations((current) => (current.length >= MAX_MISSION_DESTINATIONS ? current : [...current, '']));
+    markEdited();
+  }
+
+  function removeDestination(index: number) {
+    setDestinations((current) => (current.length <= 1 ? current : current.filter((_, goalIndex) => goalIndex !== index)));
+    markEdited();
+  }
+
+  function promoteDestination(index: number) {
+    setDestinations((current) => {
+      if (index <= 0 || index >= current.length) return current;
+      const next = [...current];
+      const [picked] = next.splice(index, 1);
+      next.unshift(picked);
+      return next;
+    });
+    markEdited();
+  }
+
   return <>
     <PageHeading eyebrow="設定" title="AIの判断軸を決める" text="普段触るのはここだけで十分です。接続や細かい調整は下の詳細設定へまとめています。" />
     <button className="text-button" onClick={onOpenManual}>使い方ガイドを見る</button>
     <section className="form-card settings-primary-card">
-      <div className="form-intro"><strong>目的と話し方</strong><p>ここが「誰を選ぶか」「何を勧めるか」の基準になります。</p></div>
+      <div className="form-intro"><strong>目的と話し方</strong><p>目的地は複数持てます。最優先の1件がTodayの見出しになり、ほかの目的地も候補選びと評価に使います。</p></div>
       <label>このアプリに任せたいこと<textarea value={missionText} onChange={(event) => { setMissionText(event.target.value); markEdited(); }} /></label>
-      <label>最優先ゴール<input value={primaryGoal} onChange={(event) => { setPrimaryGoal(event.target.value); markEdited(); }} /></label>
+      <div className="destination-field">
+        <span>目的地</span>
+        <div className="destination-list">
+          {destinations.map((goal, index) => (
+            <div className="destination-row" key={index}>
+              <label>
+                {index === 0 ? '最優先の目的地' : `目的地 ${index + 1}`}
+                <input
+                  value={goal}
+                  maxLength={index === 0 ? 400 : 180}
+                  placeholder={index === 0 ? '例: ファンと良質なつながりを増やす' : '例: アーティスト仲間'}
+                  onChange={(event) => updateDestination(index, event.target.value)}
+                />
+              </label>
+              {(index > 0 || destinations.length > 1) && (
+                <div className="destination-row-actions">
+                  {index > 0 && <button type="button" className="secondary-button" onClick={() => promoteDestination(index)}>最優先にする</button>}
+                  {destinations.length > 1 && <button type="button" className="text-button" onClick={() => removeDestination(index)}>削除</button>}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+        {destinations.length < MAX_MISSION_DESTINATIONS
+          ? <button type="button" className="secondary-button destination-add" onClick={addDestination}>目的地を追加</button>
+          : <small>目的地は最大{MAX_MISSION_DESTINATIONS}件です。</small>}
+      </div>
       <label>あなたらしい話し方<textarea value={communicationDNA} onChange={(event) => { setCommunicationDNA(event.target.value); markEdited(); }} /></label>
 
       <details className="inline-disclosure">

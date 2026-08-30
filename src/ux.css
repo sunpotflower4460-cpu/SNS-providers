@@ -169,6 +169,24 @@ button:disabled { cursor: not-allowed; }
   line-height: 1.07;
   letter-spacing: -.05em;
 }
+.mission-destinations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+.mission-destinations li {
+  max-width: 100%;
+  padding: 7px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
 .mission-card > p {
   display: -webkit-box;
   -webkit-line-clamp: 3;
@@ -457,6 +475,31 @@ details[open] > summary > b { transform: rotate(180deg); }
 .form-card textarea,
 .form-card input { min-height: 46px; border-color: var(--line); border-radius: 13px; font-size: 13px; }
 .form-card textarea { min-height: 112px; }
+.destination-field,
+.destination-list,
+.destination-row {
+  display: grid;
+  gap: 10px;
+}
+.destination-field > span {
+  color: #b7c2ce;
+  font-size: 12px;
+  font-weight: 700;
+}
+.destination-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.destination-row-actions .secondary-button,
+.destination-row-actions .text-button,
+.destination-add {
+  min-height: 44px;
+}
+.destination-field > small {
+  color: var(--muted);
+  font-size: 11px;
+}
 .self-analysis-card { margin-top: 12px; }
 .self-result { grid-template-columns: 40px minmax(0, 1fr); }
 .rewrite-card > p { margin: 0; color: #c3ced9; font-size: 12px; line-height: 1.65; white-space: pre-wrap; }

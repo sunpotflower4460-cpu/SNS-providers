@@ -90,6 +90,27 @@ export function saveState(state: AppState) {
   }
 }
 
+export const MAX_MISSION_DESTINATIONS = 8;
+
+export function destinationsFromMission(mission: Mission): string[] {
+  const list = [mission.primaryGoal, ...mission.secondaryGoals]
+    .map((goal) => goal.trim())
+    .filter(Boolean);
+  return list.length ? list : [''];
+}
+
+export function applyMissionDestinations(mission: Mission, destinations: string[]): Mission {
+  const cleaned = destinations
+    .map((goal) => goal.trim())
+    .filter(Boolean)
+    .slice(0, MAX_MISSION_DESTINATIONS);
+  return {
+    ...mission,
+    primaryGoal: (cleaned[0] || '良質なつながりを増やす').slice(0, 400),
+    secondaryGoals: cleaned.slice(1).map((goal) => goal.slice(0, 180)),
+  };
+}
+
 export function updateMission(state: AppState, mission: Mission): AppState {
   return { ...state, mission };
 }

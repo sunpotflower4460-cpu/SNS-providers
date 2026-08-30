@@ -45,7 +45,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
     eyebrow: 'HOW TO USE',
     title: '基本の使い方の流れ',
     steps: [
-      'Settingsで自分のMission（誰と、何のためにつながりたいか）を書く。',
+      'Settingsで自分のMission（誰と、何のためにつながりたいか）を書く。目的地は複数持てます。',
       'Discoverを開き「Missionから無料で候補を探す」を押すか、プロフィールURL / @usernameを追加する。',
       '「AIで候補を再評価」を押すと、Missionとの一致度・おすすめアクション・返信案が更新される。',
       'Todayを開き、Mission Inbox（または Daily Queue）の上から1件ずつ確認する。',
@@ -73,7 +73,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
     eyebrow: 'GLOSSARY',
     title: '用語ミニ辞典',
     items: [
-      { term: 'Mission', desc: 'あなたが決める「誰と、何のためにつながりたいか」という目的。すべてのAI判断の基準になります。' },
+      { term: 'Mission / 目的地', desc: 'あなたが決める「誰と、何のためにつながりたいか」。最優先の目的地がTodayの見出しになり、追加した目的地も候補選びとAI評価に使われます。' },
       { term: 'Mission Match', desc: '候補カードに表示されるスコア（0〜100）。その人がMissionにどれだけ近いかを表します。' },
       { term: 'Mission Inbox / SocialAction', desc: '今処理すべき1件の交流。Candidate（人）とは別に、返信・コメント・DM・フォロー確認などを表します。' },
       { term: 'Daily Queue', desc: 'SocialActionがまだない候補向けの、今日やるべき行動の優先順リスト。Mission Inboxの移行フォールバックです。' },
