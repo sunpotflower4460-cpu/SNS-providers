@@ -20,7 +20,7 @@ for (const expected of [
   if (!indexHtml.includes(expected)) throw new Error(`Built index is missing base-path binding: ${expected}`);
 }
 
-for (const file of ['index.html', 'manifest.webmanifest', 'sw.js', 'icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png']) {
+for (const file of ['index.html', 'manifest.webmanifest', 'sw.js', 'icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'icon-1024.png']) {
   await assertNonEmpty(new URL(file, dist));
 }
 
@@ -28,7 +28,7 @@ if (manifest.id !== './' || manifest.start_url !== './' || manifest.scope !== '.
   throw new Error('Built manifest lost portable relative identity/scope settings.');
 }
 
-for (const icon of ['icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png']) {
+for (const icon of ['icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'icon-1024.png']) {
   if (!serviceWorker.includes(icon)) throw new Error(`Built Service Worker CORE cache missing ${icon}`);
 }
 

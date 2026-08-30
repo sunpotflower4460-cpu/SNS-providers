@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { fallbackDailyQueue, hasDeferredSocialWork } from './missionInbox';
+import { fallbackDailyQueue, hasDeferredSocialWork } from './missionInboxModel';
 import { platformLabel } from './social';
 import type { AppState, Candidate } from './types';
 import { localDayKey, useLocalDayKey } from './useLocalDay';

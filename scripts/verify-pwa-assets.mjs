@@ -15,6 +15,7 @@ for (const [key, expected] of Object.entries({ id: './', start_url: './', scope:
 const requiredIcons = [
   { src: './icon-192.png', size: 192, type: 'image/png' },
   { src: './icon-512.png', size: 512, type: 'image/png' },
+  { src: './icon-1024.png', size: 1024, type: 'image/png' },
 ];
 
 for (const required of requiredIcons) {
@@ -23,13 +24,13 @@ for (const required of requiredIcons) {
   if (entry.type !== required.type || entry.sizes !== `${required.size}x${required.size}`) {
     throw new Error(`PWA manifest icon metadata is invalid: ${required.src}`);
   }
-  await assertPngDimensions(new URL(`../public/${required.src.replace('./', '')}`, import.meta.url), required.size);
+  await assertTruecolorPng(new URL(`../public/${required.src.replace('./', '')}`, import.meta.url), required.size);
 }
 
 const svgEntry = manifest.icons?.find((icon) => icon.src === './icon.svg');
 if (!svgEntry || svgEntry.type !== 'image/svg+xml') throw new Error('SVG PWA fallback icon is missing.');
 await assertNonEmpty(new URL('../public/icon.svg', import.meta.url));
-await assertPngDimensions(new URL('../public/icon-180.png', import.meta.url), 180);
+await assertTruecolorPng(new URL('../public/icon-180.png', import.meta.url), 180);
 
 const indexRequirements = [
   '%BASE_URL%manifest.webmanifest',
@@ -42,7 +43,7 @@ for (const expected of indexRequirements) {
   if (!indexHtml.includes(expected)) throw new Error(`index.html lost PWA metadata: ${expected}`);
 }
 
-for (const icon of ['icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png']) {
+for (const icon of ['icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'icon-1024.png']) {
   if (!serviceWorker.includes(icon)) throw new Error(`Service Worker CORE cache missing ${icon}`);
 }
 
@@ -66,15 +67,20 @@ async function assertNonEmpty(url) {
   if (!info.isFile() || info.size <= 0) throw new Error(`Missing or empty file: ${url.pathname}`);
 }
 
-async function assertPngDimensions(url, expected) {
+async function assertTruecolorPng(url, expected) {
   const buffer = await readFile(url);
   const pngSignature = '89504e470d0a1a0a';
-  if (buffer.length < 24 || buffer.subarray(0, 8).toString('hex') !== pngSignature) {
+  if (buffer.length < 26 || buffer.subarray(0, 8).toString('hex') !== pngSignature) {
     throw new Error(`Invalid PNG file: ${url.pathname}`);
   }
   const width = buffer.readUInt32BE(16);
   const height = buffer.readUInt32BE(20);
+  const bitDepth = buffer[24];
+  const colorType = buffer[25];
   if (width !== expected || height !== expected) {
     throw new Error(`Unexpected PNG dimensions for ${url.pathname}: ${width}x${height}, expected ${expected}x${expected}`);
+  }
+  if (bitDepth !== 8 || colorType !== 2) {
+    throw new Error(`PWA icon ${url.pathname} must be 8-bit RGB (not palette/low-bit). bitDepth=${bitDepth} colorType=${colorType}`);
   }
 }

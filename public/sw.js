@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'social-mission-';
-const CACHE = `${CACHE_PREFIX}v6`;
+const CACHE = `${CACHE_PREFIX}v7`;
 const SCOPE_URL = new URL('./', self.registration.scope);
 const ROOT = SCOPE_URL.pathname;
 const CORE = [
@@ -9,6 +9,7 @@ const CORE = [
   `${ROOT}icon-180.png`,
   `${ROOT}icon-192.png`,
   `${ROOT}icon-512.png`,
+  `${ROOT}icon-1024.png`,
 ];
 const STATIC_ASSET_PATTERN = /\.(?:js|css|svg|png|webp|ico|webmanifest)$/i;
 
