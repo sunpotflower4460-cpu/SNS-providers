@@ -8,22 +8,28 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "security:check": "node scripts/verify-security-invariants.mjs && node scripts/verify-request-context-invariants.mjs && node scripts/verify-budget-boundary-invariants.mjs && node scripts/verify-action-supply-invariants.mjs && node scripts/verify-cache-ledger-invariants.mjs && node scripts/verify-restore-identity-invariants.mjs && node scripts/verify-social-action-invariants.mjs && node scripts/verify-social-action-runtime.mjs && node scripts/verify-server-execute-runtime.mjs && node scripts/verify-x-oauth-runtime.mjs",
+    "security:check": "node scripts/verify-security-invariants.mjs && node scripts/verify-request-context-invariants.mjs && node scripts/verify-budget-boundary-invariants.mjs && node scripts/verify-action-supply-invariants.mjs && node scripts/verify-cache-ledger-invariants.mjs && node scripts/verify-restore-identity-invariants.mjs && node scripts/verify-social-action-invariants.mjs && node scripts/verify-social-action-runtime.mjs && node scripts/verify-server-execute-runtime.mjs && node scripts/verify-x-oauth-runtime.mjs && node scripts/verify-cloud-complete-runtime.mjs && node scripts/verify-provider-contracts.mjs && node scripts/d1-migrate.mjs --check && node scripts/preflight.mjs",
     "ux:check": "node scripts/verify-ux-invariants.mjs",
     "pwa:check": "node scripts/verify-pwa-assets.mjs",
     "dist:check": "node scripts/verify-built-pwa.mjs",
     "d1:resolve": "node scripts/resolve-d1-database-id.mjs",
-    "d1:setup": "node scripts/resolve-d1-database-id.mjs --write"
+    "d1:setup": "node scripts/resolve-d1-database-id.mjs --write",
+    "d1:migrate": "node scripts/d1-migrate.mjs",
+    "d1:migrate:check": "node scripts/d1-migrate.mjs --check",
+    "preflight": "node scripts/preflight.mjs",
+    "preflight:prod": "node scripts/preflight.mjs --prod",
+    "postinstall": "node scripts/workers-ci-build.mjs",
+    "deploy": "npm run build && wrangler deploy",
+    "upload": "npm run build && wrangler versions upload"
   },
   "dependencies": {
-    "react": "19.1.1",
-    "react-dom": "19.1.1"
-  },
-  "devDependencies": {
     "@types/react": "19.1.10",
     "@types/react-dom": "19.1.7",
     "@vitejs/plugin-react": "5.0.2",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
     "typescript": "5.9.2",
-    "vite": "7.1.3"
+    "vite": "7.1.3",
+    "wrangler": "4.125.0"
   }
 }

@@ -1,5 +1,5 @@
-import { readActiveMonthUsage, reserveActiveMonthBudget } from '../budgetIntegrity';
-import { instagramCommentReplyWriteEnabled, liveInstagramCapabilities, liveXCapabilities, xReplyWriteEnabled } from './capabilities';
+import { readActiveMonthUsage, reserveActiveMonthBudget, voidBudgetReservation } from '../budgetIntegrity';
+import { liveInstagramCapabilities, liveXCapabilities, operationWriteEnabled } from './capabilities';
 import {
   assertExecutable,
   parseExecuteBody,
@@ -8,7 +8,13 @@ import {
   type ExecuteGuardErr,
 } from './executeGuard';
 import { replyToInstagramComment } from './instagram/execute';
+import { sendInstagramDm } from './instagram/dm';
+import { probeInstagramPermissions } from './instagram/probe';
+import { followXUser, unfollowXUser } from './x/follow';
+import { likeXTweet } from './x/like';
+import { sendXDm } from './x/dm';
 import { replyToXTweet } from './x/execute';
+import { lookupXAuthenticatedUser } from './x/lookup';
 import { getValidXAccessToken, xOAuthStatus, type XOAuthEnv } from '../xOAuth';
 import {
   claimActionForExecution,
@@ -35,6 +41,14 @@ export interface SocialExecuteEnv extends XOAuthEnv {
   X_FOLLOW_WRITE_USD?: string;
   X_DM_WRITE_USD?: string;
   INSTAGRAM_COMMENT_REPLY_USD?: string;
+  INSTAGRAM_DM_WRITE_USD?: string;
+  X_UNFOLLOW_WRITE_USD?: string;
+  X_LIKE_WRITE_USD?: string;
+  INSTAGRAM_DM_WRITE_ENABLED?: string;
+  X_FOLLOW_WRITE_ENABLED?: string;
+  X_UNFOLLOW_WRITE_ENABLED?: string;
+  X_LIKE_WRITE_ENABLED?: string;
+  X_DM_WRITE_ENABLED?: string;
   DEFAULT_MONTHLY_BUDGET_USD?: string;
 }
 
@@ -50,11 +64,17 @@ export interface ExecutionRecord {
   errorCode: string | null;
   createdAt: string;
   completedAt: string | null;
+  reservationId?: string | null;
 }
 
 export interface SocialExecuteAdapters {
   replyToInstagramComment?: typeof replyToInstagramComment;
   replyToXTweet?: typeof replyToXTweet;
+  followXUser?: typeof followXUser;
+  unfollowXUser?: typeof unfollowXUser;
+  likeXTweet?: typeof likeXTweet;
+  sendXDm?: typeof sendXDm;
+  sendInstagramDm?: typeof sendInstagramDm;
   xGrantedScopes?: readonly string[];
   getXAccessToken?: () => Promise<string>;
 }
@@ -101,11 +121,9 @@ export async function executeSocialAction(
     ? (adapters.xGrantedScopes || (await xOAuthStatus(env, userId)).scopes || [])
     : [];
   const capabilities = action.platform === 'instagram'
-    ? liveInstagramCapabilities(env)
-    : liveXCapabilities(env, xScopes);
-  const writesEnabled = env.SOCIAL_WRITE_MODE === 'test'
-    || (operation === 'instagram_comment_reply' && instagramCommentReplyWriteEnabled(env))
-    || (operation === 'x_reply_write' && xReplyWriteEnabled(env));
+    ? liveInstagramCapabilities(env, env.SOCIAL_WRITE_MODE === 'test' ? undefined : await probeInstagramPermissions(env, userId).catch(() => null))
+    : liveXCapabilities(env, xScopes, true);
+  const writesEnabled = operationWriteEnabled(env, operation);
   const writeCostKnown = env.SOCIAL_WRITE_MODE === 'test' || knownWriteCost(env, operation) != null;
   const executable = assertExecutable(context, capabilities, { writesEnabled, writeCostKnown });
   if (!executable.ok) {
@@ -125,9 +143,18 @@ export async function executeSocialAction(
   if (!claimed) {
     const latest = await loadCanonicalAction(env.DB, userId, action.id);
     if (latest?.status === 'executing') {
+      const prior = await loadLatestExecutionForAction(env, userId, action.id);
+      if (prior) return recoverExecution(prior, latest, operation);
       return {
-        status: 409,
-        body: { ok: false as const, code: 'ALREADY_EXECUTED', reason: 'This social action is already being executed.' },
+        status: 202,
+        body: {
+          ok: false as const,
+          code: 'UNKNOWN_RESULT',
+          reason: 'This action is executing with no confirmed provider result. Reconcile instead of sending again.',
+          executionId: parsed.executionId,
+          status: 'unknown',
+          certainty: 'unknown',
+        },
       };
     }
     return {
@@ -201,6 +228,8 @@ export async function executeSocialAction(
       await finalizeActionStatus(env.DB, userId, action.id, 'failed', { retryable: true, nowIso: new Date().toISOString() });
       return { status: 403, body: { ok: false as const, code: 'WRITE_COST_UNKNOWN', reason: 'Write budget reservation failed closed.' } };
     }
+    record.reservationId = reservationId;
+    await attachReservation(env, userId, parsed.executionId, reservationId);
   }
 
   const result = await performProviderWrite(env, context, operation, adapters);
@@ -226,6 +255,8 @@ export async function executeSocialAction(
         certainty: 'success',
         externalResultId: result.externalResultId || null,
         providerStatus: result.providerStatus,
+        metadata: result.metadata,
+        pendingFollow: result.metadata?.pendingFollow === true,
       },
     };
   }
@@ -257,6 +288,7 @@ export async function executeSocialAction(
     errorCode: result.errorCode || 'INVALID_ACTION',
     completedAt,
   });
+  if (reservationId) await voidBudgetReservation(env.DB, { id: reservationId, userId });
   await finalizeActionStatus(env.DB, userId, action.id, 'failed', {
     retryable: result.retryable === true,
     nowIso: completedAt,
@@ -373,18 +405,61 @@ async function performProviderWrite(
       accessToken,
     });
   }
+  const xToken = async () => adapters.getXAccessToken
+    ? adapters.getXAccessToken()
+    : getValidXAccessToken(env, context.action.userId);
+  if (operation === 'x_follow_write' || operation === 'x_unfollow_write' || operation === 'x_like_write') {
+    const accessToken = await xToken();
+    const me = await lookupXAuthenticatedUser(accessToken);
+    if (!me) {
+      return { certainty: 'failure', retryable: false, errorCode: 'CAPABILITY_DENIED', reason: 'Authenticated X user ID could not be resolved from the server token.' };
+    }
+    if (operation === 'x_like_write') {
+      const like = adapters.likeXTweet || likeXTweet;
+      return like({ sourceUserId: me.id, tweetId: target.externalEventId, accessToken });
+    }
+    const follow = operation === 'x_follow_write'
+      ? (adapters.followXUser || followXUser)
+      : (adapters.unfollowXUser || unfollowXUser);
+    return follow({ sourceUserId: me.id, targetUserId: target.externalEventId, accessToken });
+  }
+  if (operation === 'x_dm_write') {
+    if (!target.conversationId) {
+      return { certainty: 'failure', retryable: false, errorCode: 'BINDING_MISMATCH', reason: 'X DM requires a canonical conversation ID from server evidence.' };
+    }
+    const send = adapters.sendXDm || sendXDm;
+    return send({ conversationId: target.conversationId, message: context.draft, accessToken: await xToken() });
+  }
+  if (operation === 'instagram_dm_write') {
+    const recipientId = context.action.platformUserId || context.event?.externalUserId || '';
+    const send = adapters.sendInstagramDm || sendInstagramDm;
+    return send({
+      igUserId: env.INSTAGRAM_USER_ID?.trim() || '',
+      recipientId,
+      message: context.draft,
+      accessToken: env.INSTAGRAM_ACCESS_TOKEN?.trim() || '',
+      apiVersion: env.INSTAGRAM_API_VERSION?.trim() || '',
+      lastInboundAt: context.event?.occurredAt || context.action.observedAt,
+    });
+  }
   return {
     certainty: 'failure',
     retryable: false,
-    errorCode: 'WRITE_DISABLED',
+    errorCode: 'HANDOFF_NOT_EXECUTABLE',
     reason: 'Live provider writes are not enabled for this operation yet.',
   };
 }
 
 async function loadBoundEvent(db: D1Database, userId: string, action: CanonicalSocialAction) {
   if (!action.externalEventId) return null;
-  if (action.platform === 'instagram') {
+  if (action.platform === 'instagram' && action.type === 'comment_reply') {
     return loadCanonicalEvent(db, userId, 'instagram', 'comment', action.externalEventId);
+  }
+  if (action.platform === 'instagram' && (action.type === 'dm_reply' || action.type === 'dm_outbound')) {
+    return loadCanonicalEvent(db, userId, 'instagram', 'dm', action.externalEventId);
+  }
+  if (action.platform === 'x' && (action.type === 'dm_reply' || action.type === 'dm_outbound')) {
+    return loadCanonicalEvent(db, userId, 'x', 'dm', action.externalEventId);
   }
   if (action.platform === 'x') {
     return await loadCanonicalEvent(db, userId, 'x', 'reply', action.externalEventId)
@@ -401,14 +476,52 @@ function isExecuteGuardErr(value: unknown): value is ExecuteGuardErr {
 export function knownWriteCost(env: SocialExecuteEnv, operation: string) {
   const raw = operation === 'x_reply_write' ? env.X_REPLY_WRITE_USD
     : operation === 'x_follow_write' ? env.X_FOLLOW_WRITE_USD
-      : operation === 'x_dm_write' ? env.X_DM_WRITE_USD
-        : operation === 'instagram_comment_reply' ? env.INSTAGRAM_COMMENT_REPLY_USD
-          : undefined;
+      : operation === 'x_unfollow_write' ? env.X_UNFOLLOW_WRITE_USD
+        : operation === 'x_like_write' ? env.X_LIKE_WRITE_USD
+          : operation === 'x_dm_write' ? env.X_DM_WRITE_USD
+            : operation === 'instagram_comment_reply' ? env.INSTAGRAM_COMMENT_REPLY_USD
+              : operation === 'instagram_dm_write' ? env.INSTAGRAM_DM_WRITE_USD
+                : undefined;
   if (raw == null || String(raw).trim() === '') return null;
   const amount = Number(raw);
   if (!Number.isFinite(amount) || amount < 0) return null;
-  if (operation === 'instagram_comment_reply') return amount;
+  if (operation === 'instagram_comment_reply' || operation === 'instagram_dm_write') return amount;
   return amount > 0 ? amount : null;
+}
+
+async function attachReservation(env: SocialExecuteEnv, userId: string, executionId: string, reservationId: string) {
+  try {
+    await env.DB.prepare(
+      'UPDATE social_executions SET reservation_id = ? WHERE user_id = ? AND idempotency_key = ?',
+    ).bind(reservationId, userId, executionId).run();
+  } catch {
+    // Reservation row still exists in budget_ledger; unknown results retain it until reconcile.
+  }
+}
+
+async function loadLatestExecutionForAction(env: SocialExecuteEnv, userId: string, actionId: string) {
+  try {
+    const row = await env.DB.prepare(
+      `SELECT id, user_id, action_id, platform, operation, idempotency_key, external_result_id, status, error_code, created_at, completed_at
+       FROM social_executions WHERE user_id = ? AND action_id = ? ORDER BY created_at DESC LIMIT 1`,
+    ).bind(userId, actionId).first<Record<string, string | null>>();
+    if (!row) return null;
+    return {
+      id: String(row.id),
+      userId: String(row.user_id),
+      actionId: String(row.action_id),
+      platform: String(row.platform),
+      operation: String(row.operation),
+      idempotencyKey: String(row.idempotency_key),
+      externalResultId: row.external_result_id,
+      status: row.status === 'succeeded' || row.status === 'failed' ? row.status : 'pending',
+      errorCode: row.error_code,
+      createdAt: String(row.created_at),
+      completedAt: row.completed_at,
+    } satisfies ExecutionRecord;
+  } catch {
+    return null;
+  }
 }
 
 async function loadExecution(env: SocialExecuteEnv, userId: string, executionId: string) {

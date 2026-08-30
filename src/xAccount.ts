@@ -11,6 +11,7 @@ export interface XOAuthStatus {
     read: boolean;
     reply: boolean;
     follow: boolean;
+    like: boolean;
     dm: boolean;
   };
   expiresAt: string | null;
@@ -105,7 +106,7 @@ export async function fetchXOAuthStatus(userId = 'local-user') {
   return result;
 }
 
-export async function startXOAuth(intent: 'read' | 'reply' = 'read') {
+export async function startXOAuth(intent: 'read' | 'reply' | 'relationship' | 'engagement' | 'dm' = 'read') {
   if (!apiConfigured) throw new Error('Worker URLが設定されていません');
   const token = requiredControlToken();
   const result = await request<unknown>('/api/x/oauth/start', {
@@ -116,11 +117,20 @@ export async function startXOAuth(intent: 'read' | 'reply' = 'read') {
     throw new Error('X認可URLを取得できませんでした');
   }
   const scope = new URL(result.authorizeUrl).searchParams.get('scope') || '';
-  if (intent === 'read' && (/\btweet\.write\b/.test(scope) || /\bfollows\.write\b/.test(scope) || /\bdm\.write\b/.test(scope))) {
+  if (intent === 'read' && (/\btweet\.write\b/.test(scope) || /\bfollows\.write\b/.test(scope) || /\blike\.write\b/.test(scope) || /\bdm\.write\b/.test(scope))) {
     throw new Error('既定のX接続が書き込み権限を要求しています');
   }
-  if (intent === 'reply' && (!/\btweet\.write\b/.test(scope) || /\bfollows\.write\b/.test(scope) || /\bdm\.write\b/.test(scope))) {
+  if (intent === 'reply' && (!/\btweet\.write\b/.test(scope) || /\bfollows\.write\b/.test(scope) || /\blike\.write\b/.test(scope) || /\bdm\.write\b/.test(scope))) {
     throw new Error('X返信権限の追加要求が不正です');
+  }
+  if (intent === 'relationship' && (!/\bfollows\.write\b/.test(scope) || /\btweet\.write\b/.test(scope) || /\blike\.write\b/.test(scope) || /\bdm\.write\b/.test(scope))) {
+    throw new Error('Xフォロー権限の追加要求が不正です');
+  }
+  if (intent === 'engagement' && (!/\blike\.write\b/.test(scope) || /\btweet\.write\b/.test(scope) || /\bfollows\.write\b/.test(scope) || /\bdm\.write\b/.test(scope))) {
+    throw new Error('Xいいね権限の追加要求が不正です');
+  }
+  if (intent === 'dm' && (!/\bdm\.read\b/.test(scope) || !/\bdm\.write\b/.test(scope) || /\btweet\.write\b/.test(scope) || /\bfollows\.write\b/.test(scope) || /\blike\.write\b/.test(scope))) {
+    throw new Error('X DM権限の追加要求が不正です');
   }
   window.location.assign(result.authorizeUrl);
 }
@@ -208,6 +218,7 @@ function validXCapabilities(value: unknown) {
     && typeof value.read === 'boolean'
     && typeof value.reply === 'boolean'
     && typeof value.follow === 'boolean'
+    && typeof value.like === 'boolean'
     && typeof value.dm === 'boolean';
 }
 

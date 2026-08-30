@@ -3,6 +3,7 @@ import { apiConfigured, fetchBudget } from './api';
 import { downloadBackup, normalizeAppState, readBackup } from './backup';
 import InstallControls from './InstallControls';
 import InstagramAccountControls from './InstagramAccountControls';
+import PreflightControls from './PreflightControls';
 import { detachExternalAccountSummaries } from './restoreSafety';
 import { getSyncToken } from './sync';
 import SyncControls from './SyncControls';
@@ -113,6 +114,7 @@ export default function BackupControls({ state, onRestore }: { state: AppState; 
         <SyncControls state={state} onRestore={updateState} />
         <XAccountControls state={state} onChange={updateState} />
         <InstagramAccountControls state={state} onChange={updateState} />
+        <PreflightControls />
       </div>
     </details>
 

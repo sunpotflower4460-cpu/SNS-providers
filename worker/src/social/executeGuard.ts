@@ -130,10 +130,68 @@ export function resolveWriteTarget(
       targetUrl: permalink,
     };
   }
+  if (action.type === 'follow' || action.type === 'unfollow_review') {
+    if (action.platform !== 'x') {
+      return fail('HANDOFF_NOT_EXECUTABLE', 'Instagram follow/unfollow is a provider limitation HANDOFF.');
+    }
+    const targetUserId = action.platformUserId || '';
+    if (!TWEET_ID.test(targetUserId)) {
+      return fail('BINDING_MISMATCH', 'X follow/unfollow requires a canonical immutable target user ID.');
+    }
+    if (action.username && !action.platformUserId) {
+      return fail('BINDING_MISMATCH', 'Username cannot be used as an X write target.');
+    }
+    return {
+      platform: 'x',
+      operation: action.type === 'follow' ? 'x_follow_write' : 'x_unfollow_write',
+      externalEventId: targetUserId,
+      targetUrl: action.targetUrl,
+    };
+  }
+  if (action.type === 'like') {
+    if (action.platform !== 'x') {
+      return fail('HANDOFF_NOT_EXECUTABLE', 'Instagram arbitrary like is a provider limitation HANDOFF.');
+    }
+    const tweetId = action.externalEventId || '';
+    if (!TWEET_ID.test(tweetId)) {
+      return fail('BINDING_MISMATCH', 'X like requires a canonical tweet ID fixed at prepare time.');
+    }
+    return {
+      platform: 'x',
+      operation: 'x_like_write',
+      externalEventId: tweetId,
+      parentContentId: tweetId,
+      targetUrl: action.targetUrl,
+    };
+  }
+  if (action.type === 'dm_reply' || action.type === 'dm_outbound') {
+    if (!event || event.type !== 'dm' || event.platform !== action.platform) {
+      return fail('BINDING_MISMATCH', 'DM writes require a verified inbound DM SocialEvent.');
+    }
+    const conversationId = typeof event.payload.conversationId === 'string' && event.payload.conversationId
+      ? event.payload.conversationId
+      : action.conversationId || '';
+    if (!conversationId || conversationId.length > 64) {
+      return fail('BINDING_MISMATCH', 'DM writes require a canonical conversation ID from server evidence.');
+    }
+    if (action.conversationId && action.conversationId !== conversationId) {
+      return fail('BINDING_MISMATCH', 'SocialAction conversation binding does not match the verified DM event.');
+    }
+    if (action.externalEventId && action.externalEventId !== event.externalEventId) {
+      return fail('BINDING_MISMATCH', 'SocialAction is not bound to the verified DM event.');
+    }
+    return {
+      platform: action.platform,
+      operation: action.platform === 'instagram' ? 'instagram_dm_write' : 'x_dm_write',
+      externalEventId: event.externalEventId,
+      conversationId,
+      targetUrl: action.targetUrl,
+    };
+  }
   if (needsExternalTarget(action.type) && !action.externalEventId && !action.targetUrl && !action.parentContentId) {
     return fail('BINDING_MISMATCH', 'This write is missing a concrete external event or target.');
   }
-  return fail('WRITE_DISABLED', 'Live writes are not enabled for this operation yet.');
+  return fail('HANDOFF_NOT_EXECUTABLE', 'Live writes are not enabled for this operation yet.');
 }
 
 export function needsDraft(type: CanonicalSocialAction['type']) {
@@ -150,7 +208,9 @@ export function writeOperationFor(type: CanonicalSocialAction['type'], platform:
     case 'dm_reply':
     case 'dm_outbound':
       return platform === 'instagram' ? 'instagram_dm_write' : 'x_dm_write';
-    case 'follow': return 'x_follow_write';
+    case 'follow': return platform === 'instagram' ? 'instagram_follow_handoff' : 'x_follow_write';
+    case 'unfollow_review': return platform === 'instagram' ? 'instagram_unfollow_handoff' : 'x_unfollow_write';
+    case 'like': return platform === 'instagram' ? 'instagram_like_handoff' : 'x_like_write';
     case 'reply_inbound':
     case 'reply_outbound':
       return 'x_reply_write';
@@ -159,7 +219,7 @@ export function writeOperationFor(type: CanonicalSocialAction['type'], platform:
 }
 
 function needsExternalTarget(type: CanonicalSocialAction['type']) {
-  return type === 'comment_reply' || type === 'reply_inbound' || type === 'reply_outbound' || type === 'like';
+  return type === 'comment_reply' || type === 'reply_inbound' || type === 'reply_outbound' || type === 'like' || type === 'dm_reply' || type === 'dm_outbound';
 }
 
 function fail(code: ExecuteFailureCode, reason: string): ExecuteGuardErr {

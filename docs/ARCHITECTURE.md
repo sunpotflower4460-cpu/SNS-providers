@@ -72,15 +72,12 @@ Implemented server responsibilities:
 - token-gated state snapshots for personal multi-device transfer
 - optimistic state-snapshot concurrency checks to prevent stale-device overwrites
 - user-approved social execute boundary with D1 canonical SocialAction/SocialEvent resolution and idempotency
-- Instagram comment reply adapter behind explicit production write flags
-- optional X mention/reply inbound sync into SocialEvents / Mission Inbox
+- Instagram comment reply and Instagram Professional DM adapters behind explicit production write flags and runtime permission probes
+- X reply, follow, unfollow, like, and DM adapters behind explicit OAuth upgrades and production write flags
+- Instagram webhook verification/signature receiver with polling fallback
+- versioned D1 migrations (`db/migrations/`) and production preflight diagnostics
 
-Future server responsibilities:
-
-- Instagram comment webhooks to replace most manual polling in a larger deployment
-- other explicitly permitted first-party Instagram signals (for example mentions) where they improve relationship relevance
-- scheduled notification delivery
-- optional automatic merge-oriented/offline-first synchronization beyond the current conflict-safe manual push/pull
+Manual-only remaining work is listed in `docs/MANUAL_GO_LIVE_CHECKLIST.md`. Instagram follow and arbitrary like stay HANDOFF because the official Professional management API does not provide those writes.
 
 ## Candidate discovery
 
@@ -109,7 +106,7 @@ The OAuth scopes requested by the default connect flow are fixed to:
 - `follows.read`
 - `offline.access`
 
-`tweet.write`, `follows.write`, `dm.read` and `dm.write` exist as a separate optional write set. They are not requested by the default connection. An explicit Settings action `[返信権限を追加]` starts a second OAuth session that adds only `tweet.write`. The callback validates the grant against the session-stored `requested_scopes_json`, not an assumed default. Refresh reuses the already-verified granted set when X omits unchanged scope metadata, and cannot add follow/DM scopes. Grant validation compares the token to the requested set, so extra write scopes cannot silently appear. The PWA shows which capabilities are connected. Token encryption, refresh handling, identity leasing and derived-state cleanup stay unchanged.
+`tweet.write`, `follows.write`, `like.write`, `dm.read` and `dm.write` exist as separate optional write sets. They are not requested by the default connection. Settings starts a second OAuth session per intent (`reply`, `relationship`, `engagement`, `dm`) and validates the grant against session-stored `requested_scopes_json`.
 
 A CI security invariant parses the default read-only list and fails when a write-capable X scope is added there, and also fails if the default authorize URL starts requesting the optional write set.
 

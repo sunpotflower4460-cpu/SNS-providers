@@ -2,6 +2,19 @@
 
 This file is the production boundary checklist for the optional Cloudflare Worker + D1 deployment.
 
+## Versioned D1 migrations
+
+Do **not** treat re-running `CREATE TABLE IF NOT EXISTS` as a migration. Production uses ordered files in `db/migrations/` plus a `schema_migrations` ledger.
+
+```bash
+npm run d1:migrate:check   # no credentials
+npm run d1:migrate         # applies when CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID exist
+```
+
+GitHub Action **Migrate production D1** (`workflow_dispatch`) runs the same apply path. Secret-less CI still validates file order and checksums.
+
+`db/schema.sql` remains the desired full schema for a fresh database. Existing databases must go through the versioned files so new columns such as `social_actions.snoozed_until` and `x_oauth_sessions.requested_scopes_json` are actually added.
+
 ## 1. Prefer a fresh D1 database for the first production deployment
 
 `db/schema.sql` is authoritative for a fresh database. `worker/wrangler.jsonc` binds D1 by `database_name` and omits `database_id`. GitHub Actions can patch a real UUID into `wrangler.jsonc` for that job only via `scripts/resolve-d1-database-id.mjs --write`. Do not deploy paid/provider routes until a real D1 database exists and the Worker is reachable.
@@ -36,7 +49,18 @@ cd worker && npx wrangler d1 execute social-mission --remote --file=../db/schema
 
 ### Cloudflare Workers Builds (dashboard)
 
-The Git-connected dashboard Worker is named `sns-providers` and deploys the **PWA** from the repository root. Root `wrangler.toml` must use that same `name` and point `[assets].directory` at `./dist`, or the GitHub `Workers Builds: sns-providers` check fails immediately on pull requests (missing entry-point / “Deployment skipped”). Pull-request checks also stay skipped unless the dashboard has **Builds for non-production branches** enabled (Settings → Build → Branch control).
+The Git-connected dashboard Worker is named `sns-providers` and deploys the **PWA** from the repository root. Root `wrangler.toml` must use that same `name`, set `main` to `./pwa-worker.js`, and point `[assets].directory` at `./dist` with `binding = "ASSETS"`, or the GitHub `Workers Builds: sns-providers` check fails immediately (missing entry-point / “Deployment skipped”).
+
+Workers Builds **does not honor** `[build]` as its dashboard Build-command step. `wrangler deploy` still runs that command, and `postinstall` builds `./dist` when Cloudflare injects `WORKERS_CI=1`. Vite and Wrangler live in `dependencies` so `npm install --omit=dev` still has them. `dist/.gitkeep` keeps the assets directory visible in git.
+
+In the Cloudflare dashboard (Worker → Settings → Build):
+
+- Build command: `npm run build` (optional if postinstall / wrangler `[build]` already ran)
+- Deploy command (production): `npx wrangler deploy` or `npm run deploy`
+- Non-production deploy command: `npx wrangler versions upload` or `npm run upload`
+- **Builds for non-production branches**: enable this, or pull-request checks stay `Deployment skipped` even when `main` can deploy
+
+GitHub Actions Option A for the API Worker skips the deploy job when `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` are unset, instead of failing `main`.
 
 The API Worker is a separate project: `worker/wrangler.jsonc` keeps `name` as `social-mission-api`. Prefer GitHub Actions Option A for API deploys that also apply `db/schema.sql`. Do not rename the API Worker to `sns-providers`; that would overwrite the PWA deployment.
 

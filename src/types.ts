@@ -94,6 +94,9 @@ export type SocialActionSource =
   | 'x_dm'
   | 'x_discovery'
   | 'x_relationship'
+  | 'x_follow'
+  | 'x_unfollow'
+  | 'x_like'
   | 'instagram_comment'
   | 'instagram_dm'
   | 'instagram_discovery'
@@ -130,6 +133,7 @@ export interface SocialAction {
   completedAt?: string;
   executionId?: string;
   failureReason?: string;
+  unknownExecution?: boolean;
 }
 
 export interface SocialCapabilities {

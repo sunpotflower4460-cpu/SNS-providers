@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { apiConfigured, fetchSocialCapabilities, syncXInbound } from './api';
+import { apiConfigured, fetchSocialCapabilities, syncXDirectMessages, syncXInbound } from './api';
+import { applyXDmEvents } from './dmInboundStore';
 import { applyXInboundEvents } from './xInboundStore';
 import { CONTROL_TOKEN_CHANGED_EVENT } from './controlToken';
 import { applyOwnedXSyncWithDiscovery } from './xOwnedStore';
@@ -22,6 +23,7 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
   const [loading, setLoading] = useState(apiConfigured);
   const [syncing, setSyncing] = useState(false);
   const [inboundSyncing, setInboundSyncing] = useState(false);
+  const [dmSyncing, setDmSyncing] = useState(false);
   const [note, setNote] = useState(apiConfigured ? 'Xの接続状態を確認しています…' : 'X接続はまだ利用できません');
 
   useEffect(() => {
@@ -89,13 +91,13 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
     }
   }
 
-  async function upgradeReply() {
+  async function upgrade(intent: 'reply' | 'relationship' | 'engagement' | 'dm', label: string) {
     setLoading(true);
     try {
-      setNote('Xの確認画面で返信権限だけを追加します…');
-      await startXOAuth('reply');
+      setNote(`Xの確認画面で${label}だけを追加します…`);
+      await startXOAuth(intent);
     } catch (error) {
-      setNote(error instanceof Error ? error.message : 'X返信権限の追加を開始できませんでした');
+      setNote(error instanceof Error ? error.message : `${label}の追加を開始できませんでした`);
       setLoading(false);
     }
   }
@@ -165,6 +167,24 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
     }
   }
 
+  async function syncDm() {
+    setDmSyncing(true);
+    setNote('XのDMを確認しています…');
+    try {
+      const result = await syncXDirectMessages('local-user', state.budget.monthlyLimitUsd);
+      if (!result.enabled) {
+        setNote(result.reason || '現在はXのDMを同期できません');
+        return;
+      }
+      onChange((current) => applyXDmEvents(current, Array.isArray(result.events) ? result.events as never : []));
+      setNote(`X DM ${Array.isArray(result.events) ? result.events.length : 0}件をMission Inboxへ反映しました · $${(result.costUsd || 0).toFixed(4)}`);
+    } catch (error) {
+      setNote(error instanceof Error ? error.message : 'XのDMを更新できませんでした');
+    } finally {
+      setDmSyncing(false);
+    }
+  }
+
   async function disconnect() {
     setLoading(true);
     try {
@@ -189,13 +209,14 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
 
     <div className="x-scope-note">
       <strong>既定は読み取り接続です</strong>
-      <span>プロフィール・投稿・フォロー関係の読み取りだけを使います。返信権限は [返信権限を追加] を押したときだけ要求します。フォロー・DMの書き込み権限は要求しません。勝手にフォロー、解除、投稿、DM送信することはありません。</span>
+      <span>プロフィール・投稿・フォロー関係の読み取りだけを使います。返信・フォロー・いいね・DMの書き込み権限は、それぞれ専用ボタンを押したときだけ要求します。まとめて取りすぎません。勝手にフォロー、解除、いいね、投稿、DM送信することはありません。</span>
     </div>
 
     {status.connected && <div className="x-capability-list" aria-label="Xの接続権限">
       <span>{status.capabilities?.read !== false ? '✓ 読み取り 許可' : '− 読み取り 未許可'}</span>
       <span>{status.capabilities?.reply ? '✓ 返信 許可' : '− 返信 未許可'}</span>
       <span>{status.capabilities?.follow ? '✓ フォロー 許可' : '− フォロー 未許可'}</span>
+      <span>{status.capabilities?.like ? '✓ いいね 許可' : '− いいね 未許可'}</span>
       <span>{status.capabilities?.dm ? '✓ DM 許可' : '− DM 未許可'}</span>
     </div>}
 
@@ -229,17 +250,21 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
 
     <details className="candidate-details">
       <summary>読み取り権限の詳細</summary>
-      <div className="candidate-details-body strategy-note"><p>既定の接続は tweet.read / users.read / follows.read / offline.access のみです。返信権限の追加は tweet.write だけを足します。tweet.write / follows.write / dm.read / dm.write を既定接続でまとめて要求することはありません。</p></div>
+      <div className="candidate-details-body strategy-note"><p>既定の接続は tweet.read / users.read / follows.read / offline.access のみです。返信は tweet.write、フォローは follows.write、いいねは like.write、DMは dm.read+dm.write を、それぞれ専用ボタンでだけ追加します。既定接続で書き込み権限をまとめて要求することはありません。</p></div>
     </details>
 
     <div className="x-account-actions">
       {!status.connected
         ? <button className="primary-button" disabled={loading || !apiConfigured || !status.configured} onClick={connect}>{loading ? '確認中…' : 'Xを読み取り専用で接続'}</button>
         : <>
-          <button className="primary-button" disabled={syncing || loading || inboundSyncing} onClick={sync}>{syncing ? '更新中…' : 'Xの情報を更新'}</button>
-          <button className="secondary-button" disabled={syncing || loading || inboundSyncing} onClick={syncInbound}>{inboundSyncing ? '受信を確認中…' : 'メンション/返信を取り込む'}</button>
-          {!status.capabilities?.reply && <button className="secondary-button" disabled={loading || syncing || inboundSyncing} onClick={() => void upgradeReply()}>{loading ? '処理中…' : '返信権限を追加'}</button>}
-          <button className="secondary-button" disabled={loading || syncing || inboundSyncing} onClick={disconnect}>{loading ? '処理中…' : 'Xとの接続を解除'}</button>
+          <button className="primary-button" disabled={syncing || loading || inboundSyncing || dmSyncing} onClick={sync}>{syncing ? '更新中…' : 'Xの情報を更新'}</button>
+          <button className="secondary-button" disabled={syncing || loading || inboundSyncing || dmSyncing} onClick={syncInbound}>{inboundSyncing ? '受信を確認中…' : 'メンション/返信を取り込む'}</button>
+          <button className="secondary-button" disabled={syncing || loading || inboundSyncing || dmSyncing} onClick={() => void syncDm()}>{dmSyncing ? 'DM確認中…' : 'DMを取り込む'}</button>
+          {!status.capabilities?.reply && <button className="secondary-button" disabled={loading || syncing || inboundSyncing || dmSyncing} onClick={() => void upgrade('reply', '返信権限')}>{loading ? '処理中…' : '返信権限を追加'}</button>}
+          {!status.capabilities?.follow && <button className="secondary-button" disabled={loading || syncing || inboundSyncing || dmSyncing} onClick={() => void upgrade('relationship', 'フォロー権限')}>{loading ? '処理中…' : 'フォロー権限を追加'}</button>}
+          {!status.capabilities?.like && <button className="secondary-button" disabled={loading || syncing || inboundSyncing || dmSyncing} onClick={() => void upgrade('engagement', 'いいね権限')}>{loading ? '処理中…' : 'いいね権限を追加'}</button>}
+          {!status.capabilities?.dm && <button className="secondary-button" disabled={loading || syncing || inboundSyncing || dmSyncing} onClick={() => void upgrade('dm', 'DM権限')}>{loading ? '処理中…' : 'DM権限を追加'}</button>}
+          <button className="secondary-button" disabled={loading || syncing || inboundSyncing || dmSyncing} onClick={disconnect}>{loading ? '処理中…' : 'Xとの接続を解除'}</button>
         </>}
     </div>
     <small>{note}</small>

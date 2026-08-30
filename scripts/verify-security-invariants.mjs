@@ -298,14 +298,17 @@ for (const scope of requiredReadScopes) {
 
 const writeScopes = scopes.filter((scope) => scope.includes('.write') || scope === 'dm.write');
 if (writeScopes.length) throw new Error(`Write-capable X OAuth scope detected: ${writeScopes.join(', ')}`);
-if (!xOAuth.includes("const OPTIONAL_WRITE_SCOPES = ['tweet.write', 'follows.write', 'dm.read', 'dm.write']")
+if (!xOAuth.includes("const OPTIONAL_WRITE_SCOPES = ['tweet.write', 'follows.write', 'like.write', 'dm.read', 'dm.write']")
   || !xOAuth.includes('scope: requested.join')
   || !xOAuth.includes('requested_scopes_json')
   || !xOAuth.includes("scopesForOAuthIntent")
   || !xOAuth.includes("parseOAuthIntent")
   || xOAuth.includes('scope: OPTIONAL_WRITE_SCOPES.join')
   || !xOAuth.includes("intent: XOAuthIntent = 'read'")
-  || !xOAuth.includes("X reply upgrade must not request follow or DM scopes")) {
+  || !xOAuth.includes("X reply upgrade must not request follow or DM scopes")
+  || !xOAuth.includes("X relationship upgrade must request follows.write only")
+  || !xOAuth.includes("X engagement upgrade must request like.write only")
+  || !xOAuth.includes("X DM upgrade must not request reply, follow, or like scopes")) {
   throw new Error('X OAuth write capabilities are no longer an explicit, opt-in scope set separate from the default read-only connection.');
 }
 if (!xOAuth.includes('validateGrantedScopes(token.scope, {')
@@ -325,11 +328,20 @@ if (!xOAuth.includes('invalidateStoredConnectionAfterRefreshPersistenceFailure(e
   throw new Error('A successfully rotated X refresh token can leave stale D1 credentials looking reusable after persistence failure.');
 }
 if (!xAccountControls.includes('返信権限を追加')
+  || !xAccountControls.includes('フォロー権限を追加')
+  || !xAccountControls.includes('いいね権限を追加')
+  || !xAccountControls.includes('DM権限を追加')
   || !xAccountControls.includes("startXOAuth('read')")
-  || !xAccountControls.includes("startXOAuth('reply')")
+  || !xAccountControls.includes("upgrade('reply'")
+  || !xAccountControls.includes("upgrade('relationship'")
+  || !xAccountControls.includes("upgrade('engagement'")
+  || !xAccountControls.includes("upgrade('dm'")
   || xAccountControls.includes("startXOAuth('follow')")
   || !xAccount.includes("intent === 'read'")
   || !xAccount.includes("intent === 'reply'")
+  || !xAccount.includes("intent === 'relationship'")
+  || !xAccount.includes("intent === 'engagement'")
+  || !xAccount.includes("intent === 'dm'")
   || !dbSchema.includes('requested_scopes_json')) {
   throw new Error('X reply OAuth upgrade is missing session-bound scopes, or default connect is no longer read-only.');
 }

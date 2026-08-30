@@ -22,6 +22,8 @@ jobs:
       - run: npm run ux:check
       - name: Verify recent bug-fix regressions
         run: node scripts/verify-regression-fixes.mjs
+      - run: npm run d1:migrate:check
+      - run: npm run preflight
       - run: npm run pwa:check
       - run: npm run build
       - name: Verify local-root production build

@@ -3,12 +3,20 @@
 # file, PR checks fail immediately with "Deployment skipped" / missing
 # entry-point. This Worker serves the Vite PWA. The API Worker remains
 # worker/wrangler.jsonc (`social-mission-api`) and is deployed separately.
+#
+# Workers Builds does not honor [build] as its dashboard Build-command step.
+# wrangler deploy / versions upload still run this command. postinstall also
+# builds ./dist when Cloudflare injects WORKERS_CI=1.
 name = "sns-providers"
+account_id = "874c6872694e19a3e7da0c3178461b8f"
+main = "./pwa-worker.js"
 compatibility_date = "2026-08-21"
 preview_urls = true
+workers_dev = true
 
 [assets]
 directory = "./dist"
+binding = "ASSETS"
 not_found_handling = "single-page-application"
 
 [build]

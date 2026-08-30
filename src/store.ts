@@ -478,7 +478,7 @@ export function dismissInboxAction(state: AppState, actionId: string): AppState 
 export function completeInboxAction(
   state: AppState,
   actionId: string,
-  options?: { executionId?: string; externalResultId?: string; note?: string },
+  options?: { executionId?: string; externalResultId?: string; note?: string; pendingFollow?: boolean },
 ): AppState {
   return refreshRelationshipAdvice(completeSocialAction(state, actionId, options));
 }

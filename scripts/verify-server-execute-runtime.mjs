@@ -27,6 +27,7 @@ await emit('budgetIntegrity.js', new URL('../worker/src/budgetIntegrity.ts', imp
 await emit('fetchWithTimeout.js', new URL('../worker/src/fetchWithTimeout.ts', import.meta.url));
 await emit('social/types.js', new URL('../worker/src/social/types.ts', import.meta.url));
 await emit('social/ids.js', new URL('../worker/src/social/ids.ts', import.meta.url));
+await emit('social/httpStatus.js', new URL('../worker/src/social/httpStatus.ts', import.meta.url));
 await emit('social/capabilities.js', new URL('../worker/src/social/capabilities.ts', import.meta.url));
 await emit('social/executeGuard.js', new URL('../worker/src/social/executeGuard.ts', import.meta.url));
 await emit('social/repository.js', new URL('../worker/src/social/repository.ts', import.meta.url));
@@ -34,9 +35,15 @@ await emit('social/execute.js', new URL('../worker/src/social/execute.ts', impor
 await emit('social/instagram/inbound.js', new URL('../worker/src/social/instagram/inbound.ts', import.meta.url));
 await emit('social/instagram/execute.js', new URL('../worker/src/social/instagram/execute.ts', import.meta.url));
 await emit('social/instagram/persist.js', new URL('../worker/src/social/instagram/persist.ts', import.meta.url));
+await emit('social/instagram/dm.js', new URL('../worker/src/social/instagram/dm.ts', import.meta.url));
+await emit('social/instagram/probe.js', new URL('../worker/src/social/instagram/probe.ts', import.meta.url));
 await emit('social/x/inbound.js', new URL('../worker/src/social/x/inbound.ts', import.meta.url));
 await emit('social/x/persist.js', new URL('../worker/src/social/x/persist.ts', import.meta.url));
 await emit('social/x/execute.js', new URL('../worker/src/social/x/execute.ts', import.meta.url));
+await emit('social/x/follow.js', new URL('../worker/src/social/x/follow.ts', import.meta.url));
+await emit('social/x/like.js', new URL('../worker/src/social/x/like.ts', import.meta.url));
+await emit('social/x/dm.js', new URL('../worker/src/social/x/dm.ts', import.meta.url));
+await emit('social/x/lookup.js', new URL('../worker/src/social/x/lookup.ts', import.meta.url));
 await emit('syncLease.js', new URL('../worker/src/syncLease.ts', import.meta.url));
 await emit('xOAuth.js', new URL('../worker/src/xOAuth.ts', import.meta.url));
 
@@ -58,6 +65,7 @@ function createMemoryD1() {
   const events = new Map();
   const executions = new Map();
   const ledger = [];
+  const probes = new Map();
 
   function actionKey(userId, id) { return `${userId}::${id}`; }
   function eventKey(userId, platform, type, ext) { return `${userId}::${platform}::${type}::${ext}`; }
@@ -68,6 +76,7 @@ function createMemoryD1() {
     _events: events,
     _executions: executions,
     _ledger: ledger,
+    _probes: probes,
     prepare(sql) {
       const normalized = String(sql).replace(/\s+/g, ' ').trim();
       return {
@@ -82,6 +91,13 @@ function createMemoryD1() {
               }
               if (normalized.includes('FROM social_executions WHERE user_id = ? AND idempotency_key = ?')) {
                 return executions.get(execKey(params[0], params[1])) || null;
+              }
+              if (normalized.includes('FROM social_executions WHERE user_id = ? AND action_id = ?')) {
+                const matches = [...executions.values()].filter((row) => row.user_id === params[0] && row.action_id === params[1]);
+                return matches.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0] || null;
+              }
+              if (normalized.includes('FROM instagram_permission_probes WHERE user_id = ?')) {
+                return probes.get(params[0]) || null;
               }
               if (normalized.includes('FROM current_usage') && normalized.includes('timestamp_integrity')) {
                 return { used: 0, invalid_count: 0, unassignable_count: 0 };
@@ -106,6 +122,8 @@ function createMemoryD1() {
                   target_url: params[11], observed_at: params[12], created_at: params[13], updated_at: params[14],
                   completed_at: params[15], platform_user_id: params[16], username: params[17],
                   identity_conflict: params[18], retryable: params[19],
+                  snoozed_until: params[20] ?? null,
+                  result_metadata_json: params[21] ?? '{}',
                 };
                 const existing = actions.get(actionKey(row.user_id, row.id));
                 if (existing && ['completed', 'executing', 'dismissed', 'expired'].includes(existing.status)) {
@@ -162,6 +180,28 @@ function createMemoryD1() {
                 if (!row || row.status !== 'pending' || row.error_code != null) return { meta: { changes: 0 } };
                 row.error_code = 'SENDING';
                 return { meta: { changes: 1 } };
+              }
+              if (normalized.includes('UPDATE social_executions SET reservation_id')) {
+                const row = executions.get(execKey(params[1], params[2]));
+                if (!row) return { meta: { changes: 0 } };
+                row.reservation_id = params[0];
+                return { meta: { changes: 1 } };
+              }
+              if (normalized.includes('INSERT INTO instagram_permission_probes')) {
+                probes.set(params[0], {
+                  user_id: params[0],
+                  checked_at: params[1],
+                  payload_json: params[2],
+                  permissions_verified: params[3],
+                });
+                return { meta: { changes: 1 } };
+              }
+              if (normalized.includes('DELETE FROM budget_ledger WHERE id = ? AND user_id = ?')) {
+                const before = ledger.length;
+                for (let i = ledger.length - 1; i >= 0; i -= 1) {
+                  if (ledger[i].id === params[0] && ledger[i].user_id === params[1]) ledger.splice(i, 1);
+                }
+                return { meta: { changes: before === ledger.length ? 0 : 1 } };
               }
               if (normalized.includes('UPDATE social_executions SET status = ?')) {
                 const row = executions.get(execKey(params[4], params[5]));
@@ -293,14 +333,34 @@ const capsOff = liveInstagramCapabilities({
   INSTAGRAM_API_VERSION: 'v24.0',
 });
 if (capsOff.sendCommentReply) fail('Instagram write capability was inferred from platform configuration alone.');
-const capsOn = liveInstagramCapabilities({
+const tokenOnly = liveInstagramCapabilities({
   INSTAGRAM_ACCESS_TOKEN: 'token',
   INSTAGRAM_USER_ID: '12345678',
   INSTAGRAM_API_VERSION: 'v24.0',
   SOCIAL_WRITE_ENABLED: 'true',
   INSTAGRAM_COMMENT_REPLY_ENABLED: 'true',
 });
+if (tokenOnly.sendCommentReply) fail('Instagram write capability was inferred from token presence without a permission probe.');
+const capsOn = liveInstagramCapabilities({
+  INSTAGRAM_ACCESS_TOKEN: 'token',
+  INSTAGRAM_USER_ID: '12345678',
+  INSTAGRAM_API_VERSION: 'v24.0',
+  SOCIAL_WRITE_ENABLED: 'true',
+  INSTAGRAM_COMMENT_REPLY_ENABLED: 'true',
+}, {
+  configured: true,
+  tokenValid: true,
+  professionalAccount: true,
+  readComments: true,
+  sendCommentReply: true,
+  readDm: false,
+  sendDm: false,
+  permissionsVerified: true,
+  grantedPermissions: ['instagram_business_manage_comments'],
+  checkedAt: now,
+});
 if (!capsOn.sendCommentReply) fail('Enabled Instagram comment reply capability was not live.');
+if (capsOn.sendDm || capsOn.follow || capsOn.like) fail('Instagram DM/follow/like writes were enabled from comment permission.');
 
 const xCapsOff = liveXCapabilities({ SOCIAL_WRITE_ENABLED: 'true' }, ['tweet.read', 'users.read', 'follows.read', 'offline.access', 'tweet.write']);
 if (xCapsOff.sendReply) fail('X sendReply was inferred from tweet.write without X_REPLY_WRITE_ENABLED.');
@@ -317,6 +377,24 @@ const xCapsNoScope = liveXCapabilities({
 if (xCapsNoScope.sendReply) fail('X sendReply was enabled without tweet.write.');
 
 async function seedInstagram(db) {
+  const checkedAt = new Date().toISOString();
+  db._probes.set('local-user', {
+    user_id: 'local-user',
+    checked_at: checkedAt,
+    payload_json: JSON.stringify({
+      configured: true,
+      tokenValid: true,
+      professionalAccount: true,
+      readComments: true,
+      sendCommentReply: true,
+      readDm: false,
+      sendDm: false,
+      permissionsVerified: true,
+      grantedPermissions: ['instagram_business_manage_comments'],
+      checkedAt,
+    }),
+    permissions_verified: 1,
+  });
   await persistInstagramCommentEvidence(db, 'local-user', [{
     id: '789',
     username: 'alice',

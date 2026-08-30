@@ -2,8 +2,17 @@ import api from './index';
 import { discoverSocialProfiles } from './discovery';
 import { syncInstagramEngagers, type InstagramOwnedSyncRequest } from './instagramOwned';
 import { executeSocialAction } from './social/execute';
-import { liveSocialCapabilities } from './social/capabilities';
+import { executionModeForAction, liveInstagramCapabilities, liveSocialCapabilities } from './social/capabilities';
+import { probeInstagramPermissions } from './social/instagram/probe';
+import { extractInstagramWebhookMessages, handleInstagramWebhookVerification, readValidatedInstagramWebhook } from './social/instagram/webhook';
+import { persistInstagramDmEvidence } from './social/instagram/persistDm';
+import { syncInstagramDirectMessages } from './social/instagram/dmSync';
 import { syncXInboundMentions } from './social/x/sync';
+import { syncXDirectMessages } from './social/x/dmSync';
+import { dismissCanonicalAction, listCanonicalActions, snoozeCanonicalAction } from './social/lifecycle';
+import { prepareSocialAction } from './social/prepare';
+import { reconcileExecution } from './social/reconcile';
+import { buildProductionPreflight } from './social/preflight';
 import { reserveSyncLease, releaseSyncLease } from './syncLease';
 import { completeXOAuth, disconnectXOAuth, parseOAuthIntent, startXOAuth, xOAuthStatus } from './xOAuth';
 import { syncOwnedXData, type XOwnedSyncRequest } from './xOwned';
@@ -30,10 +39,26 @@ interface Env {
   X_REPLY_WRITE_ENABLED?: string;
   X_REPLY_WRITE_USD?: string;
   X_FOLLOW_WRITE_USD?: string;
+  X_UNFOLLOW_WRITE_USD?: string;
+  X_LIKE_WRITE_USD?: string;
   X_DM_WRITE_USD?: string;
+  X_DM_READ_USD?: string;
   INSTAGRAM_COMMENT_REPLY_USD?: string;
+  INSTAGRAM_DM_WRITE_USD?: string;
+  INSTAGRAM_DM_READ_USD?: string;
+  SOCIAL_RECONCILE_READ_USD?: string;
+  INSTAGRAM_DM_WRITE_ENABLED?: string;
+  INSTAGRAM_DM_READ_ENABLED?: string;
+  X_FOLLOW_WRITE_ENABLED?: string;
+  X_UNFOLLOW_WRITE_ENABLED?: string;
+  X_LIKE_WRITE_ENABLED?: string;
+  X_DM_WRITE_ENABLED?: string;
+  X_DM_READ_ENABLED?: string;
   X_INBOUND_SYNC_ENABLED?: string;
   X_INBOUND_READ_USD?: string;
+  INSTAGRAM_WEBHOOK_VERIFY_TOKEN?: string;
+  INSTAGRAM_APP_SECRET?: string;
+  SOCIAL_SCHEDULED_READ_ENABLED?: string;
   DEFAULT_MONTHLY_BUDGET_USD?: string;
   ALLOWED_ORIGIN?: string;
   [key: string]: unknown;
@@ -68,7 +93,13 @@ const ROUTER_CORS_PATHS = new Set([
   '/api/x/owned/sync',
   '/api/instagram/engagers/sync',
   '/api/social/capabilities',
+  '/api/social/actions',
+  '/api/social/actions/prepare',
+  '/api/social/inbox/sync',
+  '/api/instagram/dm/sync',
+  '/api/x/dm/sync',
   '/api/x/inbound/sync',
+  '/api/preflight',
 ]);
 
 const PROVIDER_COST_PATHS = new Set([
@@ -82,13 +113,27 @@ function isSocialExecutePath(pathname: string) {
   return /^\/api\/social\/actions\/[^/]+\/execute$/.test(pathname);
 }
 
+function isSocialLifecyclePath(pathname: string) {
+  return /^\/api\/social\/actions\/[^/]+\/(snooze|dismiss)$/.test(pathname);
+}
+
+function isReconcilePath(pathname: string) {
+  return /^\/api\/social\/executions\/[^/]+\/reconcile$/.test(pathname);
+}
+
 function isRoutedApiPath(pathname: string) {
-  return ROUTER_CORS_PATHS.has(pathname) || isSocialExecutePath(pathname);
+  return ROUTER_CORS_PATHS.has(pathname) || isSocialExecutePath(pathname) || isSocialLifecyclePath(pathname) || isReconcilePath(pathname);
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    if (request.method === 'GET' && url.pathname === '/api/instagram/webhook') {
+      return handleInstagramWebhookVerification(request, env);
+    }
+    if (request.method === 'POST' && url.pathname === '/api/instagram/webhook') {
+      return handleInstagramWebhookPost(request, env);
+    }
     if (request.method === 'OPTIONS' && isRoutedApiPath(url.pathname)) {
       return new Response(null, { status: 204, headers: corsHeaders(request, env) });
     }
@@ -211,9 +256,75 @@ export default {
       try {
         const userId = sanitizeUserId(url.searchParams.get('userId') || 'local-user');
         const status = await xOAuthStatus(env, userId);
-        return json(liveSocialCapabilities(env, status.scopes || []), 200, request, env);
+        const probe = await probeInstagramPermissions(env, userId);
+        const snapshot = liveSocialCapabilities(env, status.scopes || [], probe, status.connected);
+        return json({
+          instagram: {
+            ...snapshot.instagram,
+            readComments: snapshot.instagram.readComments,
+            sendCommentReply: snapshot.instagram.sendCommentReply,
+            readDm: snapshot.instagram.readDm,
+            sendDm: snapshot.instagram.sendDm,
+            configured: snapshot.instagram.configured,
+            tokenValid: snapshot.instagram.tokenValid,
+            professionalAccount: snapshot.instagram.professionalAccount,
+            permissionsVerified: snapshot.instagram.permissionsVerified,
+            reason: snapshot.instagram.reason,
+          },
+          x: {
+            ...snapshot.x,
+            connected: snapshot.x.connected,
+            scopes: snapshot.x.scopes,
+            readMentions: snapshot.x.readMentions,
+            sendReply: snapshot.x.sendReply,
+            follow: snapshot.x.follow,
+            unfollow: snapshot.x.unfollow,
+            like: snapshot.x.like,
+            readDm: snapshot.x.readDm,
+            sendDm: snapshot.x.sendDm,
+            reason: snapshot.x.reason,
+          },
+        }, 200, request, env);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Social capability lookup failed';
+        return json({ error: message }, 400, request, env);
+      }
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/preflight') {
+      const authorized = await authorizeSync(request, env);
+      if (!authorized.ok) return json({ error: authorized.reason, code: 'UNAUTHENTICATED' }, authorized.status, request, env);
+      try {
+        const userId = sanitizeUserId(url.searchParams.get('userId') || 'local-user');
+        return json(await buildProductionPreflight(env, userId), 200, request, env);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Preflight failed';
+        return json({ error: message }, 400, request, env);
+      }
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/social/actions') {
+      const authorized = await authorizeSync(request, env);
+      if (!authorized.ok) return json({ error: authorized.reason, code: 'UNAUTHENTICATED' }, authorized.status, request, env);
+      try {
+        const userId = sanitizeUserId(url.searchParams.get('userId') || 'local-user');
+        return json(await listCanonicalActions(env.DB, userId), 200, request, env);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Social action list failed';
+        return json({ error: message }, 400, request, env);
+      }
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/social/actions/prepare') {
+      const authorized = await authorizeSync(request, env);
+      if (!authorized.ok) return json({ error: authorized.reason, code: 'UNAUTHENTICATED' }, authorized.status, request, env);
+      try {
+        const body = await request.json<unknown>();
+        const userId = sanitizeUserId((isRecord(body) && typeof body.userId === 'string' ? body.userId : 'local-user') || 'local-user');
+        const result = await prepareSocialAction(env, userId, body);
+        return json(result.body, result.status, request, env);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Social action prepare failed';
         return json({ error: message }, 400, request, env);
       }
     }
@@ -323,6 +434,116 @@ export default {
       }
     }
 
+    if (request.method === 'POST' && isSocialLifecyclePath(url.pathname)) {
+      const authorized = await authorizeSync(request, env);
+      if (!authorized.ok) return json({ error: authorized.reason, code: 'UNAUTHENTICATED' }, authorized.status, request, env);
+      try {
+        const parts = url.pathname.split('/');
+        const actionId = decodeURIComponent(parts[4] || '').trim();
+        const verb = parts[5];
+        const body = await request.json<unknown>().catch(() => ({}));
+        const userId = sanitizeUserId((isRecord(body) && typeof body.userId === 'string' ? body.userId : 'local-user') || 'local-user');
+        if (!actionId) return json({ ok: false, code: 'INVALID_ACTION', reason: 'actionId is required.' }, 400, request, env);
+        const result = verb === 'dismiss'
+          ? await dismissCanonicalAction(env.DB, userId, actionId)
+          : await snoozeCanonicalAction(env.DB, userId, actionId, body);
+        return json(result.body, result.status, request, env);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Social action lifecycle failed';
+        return json({ error: message }, 400, request, env);
+      }
+    }
+
+    if (request.method === 'POST' && isReconcilePath(url.pathname)) {
+      const authorized = await authorizeSync(request, env);
+      if (!authorized.ok) return json({ error: authorized.reason, code: 'UNAUTHENTICATED' }, authorized.status, request, env);
+      try {
+        const executionId = decodeURIComponent(url.pathname.split('/')[4] || '').trim();
+        const body = await request.json<unknown>().catch(() => ({}));
+        const userId = sanitizeUserId((isRecord(body) && typeof body.userId === 'string' ? body.userId : 'local-user') || 'local-user');
+        if (!executionId) return json({ ok: false, code: 'INVALID_ACTION', reason: 'executionId is required.' }, 400, request, env);
+        const result = await reconcileExecution(env, userId, executionId);
+        return json(result.body, result.status, request, env);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Reconcile failed';
+        return json({ error: message }, 400, request, env);
+      }
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/x/dm/sync') {
+      const authorized = await authorizeSync(request, env);
+      if (!authorized.ok) return json({ error: authorized.reason }, authorized.status, request, env);
+      try {
+        const body = await request.json<{ userId?: string; monthlyLimitUsd?: number }>();
+        const userId = sanitizeUserId(body?.userId || 'local-user');
+        const leaseResult = await reserveSyncLease(env.DB, userId, 'x_dm_sync', 3 * 60 * 1000);
+        if (!leaseResult.ok) {
+          return json({ enabled: false, source: 'disabled', costUsd: 0, events: [], reason: leaseResult.reason }, 200, request, env);
+        }
+        try {
+          return json(await syncXDirectMessages(env, body || {}), 200, request, env);
+        } finally {
+          await releaseSyncLease(env.DB, leaseResult.lease);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'X DM sync failed';
+        return json({ error: message }, 400, request, env);
+      }
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/instagram/dm/sync') {
+      const authorized = await authorizeSync(request, env);
+      if (!authorized.ok) return json({ error: authorized.reason }, authorized.status, request, env);
+      try {
+        const body = await request.json<{ userId?: string; monthlyLimitUsd?: number }>();
+        const userId = sanitizeUserId(body?.userId || 'local-user');
+        const leaseResult = await reserveSyncLease(env.DB, userId, 'instagram_dm_sync', 3 * 60 * 1000);
+        if (!leaseResult.ok) {
+          return json({ enabled: false, source: 'disabled', costUsd: 0, events: [], reason: leaseResult.reason }, 200, request, env);
+        }
+        try {
+          return json(await syncInstagramDirectMessages(env, body || {}), 200, request, env);
+        } finally {
+          await releaseSyncLease(env.DB, leaseResult.lease);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Instagram DM sync failed';
+        return json({ error: message }, 400, request, env);
+      }
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/social/inbox/sync') {
+      const authorized = await authorizeSync(request, env);
+      if (!authorized.ok) return json({ error: authorized.reason }, authorized.status, request, env);
+      try {
+        const body = await request.json<{ userId?: string; monthlyLimitUsd?: number }>();
+        const userId = sanitizeUserId(body?.userId || 'local-user');
+        const leaseResult = await reserveSyncLease(env.DB, userId, 'inbox_sync', 5 * 60 * 1000);
+        if (!leaseResult.ok) {
+          return json({
+            xMentions: { enabled: false, source: 'disabled', costUsd: 0, events: [], reason: leaseResult.reason },
+            xDm: { enabled: false, source: 'disabled', costUsd: 0, events: [], reason: leaseResult.reason },
+            instagramDm: { enabled: false, source: 'disabled', costUsd: 0, events: [], reason: leaseResult.reason },
+          }, 200, request, env);
+        }
+        try {
+          const mentions = await syncXInboundMentions(env, body || {});
+          const xDm = await syncXDirectMessages(env, body || {});
+          const igDm = await syncInstagramDirectMessages(env, body || {});
+          return json({
+            xMentions: mentions,
+            xDm,
+            instagramDm: igDm,
+          }, 200, request, env);
+        } finally {
+          await releaseSyncLease(env.DB, leaseResult.lease);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Inbox sync failed';
+        return json({ error: message }, 400, request, env);
+      }
+    }
+
     if (request.method === 'POST' && url.pathname === '/api/discover/social') {
       let automaticGuardId: string | null = null;
       try {
@@ -369,6 +590,19 @@ export default {
     }
 
     return (api as { fetch(request: Request, env: unknown): Promise<Response> }).fetch(request, env);
+  },
+  async scheduled(_event: ScheduledEvent, env: Env) {
+    if (env.SOCIAL_SCHEDULED_READ_ENABLED !== 'true') return;
+    const userId = 'local-user';
+    const lease = await reserveSyncLease(env.DB, userId, 'scheduled_inbox_sync', 5 * 60 * 1000);
+    if (!lease.ok) return;
+    try {
+      await syncXInboundMentions(env, { userId });
+      await syncXDirectMessages(env, { userId });
+      await syncInstagramDirectMessages(env, { userId });
+    } finally {
+      await releaseSyncLease(env.DB, lease.lease);
+    }
   },
 };
 
@@ -520,6 +754,43 @@ async function recordFreeSearchUsage(env: Env, userId: string, credits: number) 
   } catch {
     // Search remains usable in free mode before D1 is configured.
   }
+}
+
+async function handleInstagramWebhookPost(request: Request, env: Env) {
+  const validated = await readValidatedInstagramWebhook(request, env);
+  if (!validated.ok) {
+    return new Response(JSON.stringify({ error: validated.reason }), {
+      status: validated.status,
+      headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+    });
+  }
+  const messages = extractInstagramWebhookMessages(validated.payload);
+  const receivedAt = new Date().toISOString();
+  const ownId = env.INSTAGRAM_USER_ID?.trim() || '';
+  const events = messages
+    .filter((item) => item.fromId && item.fromId !== ownId && item.messageId)
+    .map((item) => ({
+      id: `ig-dm-${item.messageId}`,
+      platform: 'instagram' as const,
+      type: 'dm' as const,
+      externalEventId: item.messageId,
+      externalUserId: item.fromId,
+      conversationId: item.conversationId || item.fromId || '',
+      text: item.text,
+      occurredAt: item.timestamp && Number.isFinite(new Date(item.timestamp).getTime()) ? item.timestamp : receivedAt,
+      receivedAt,
+      ownMessage: false,
+    }))
+    .filter((item) => item.conversationId);
+  if (events.length) {
+    const probe = await probeInstagramPermissions(env, 'local-user').catch(() => null);
+    const executionMode = executionModeForAction('dm_reply', liveInstagramCapabilities(env, probe));
+    await persistInstagramDmEvidence(env.DB, 'local-user', events, executionMode);
+  }
+  return new Response(JSON.stringify({ ok: true, received: messages.length }), {
+    status: 200,
+    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+  });
 }
 
 function json(data: unknown, status: number, request: Request, env: Env) {

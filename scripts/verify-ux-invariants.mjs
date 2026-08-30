@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises';
 const app = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8');
 const daily = await readFile(new URL('../src/DailyQueue.tsx', import.meta.url), 'utf8');
 const backup = await readFile(new URL('../src/BackupControls.tsx', import.meta.url), 'utf8');
+const inboxUi = await readFile(new URL('../src/MissionInbox.tsx', import.meta.url), 'utf8');
+const preflightUi = await readFile(new URL('../src/PreflightControls.tsx', import.meta.url), 'utf8');
 const social = await readFile(new URL('../src/social.ts', import.meta.url), 'utf8');
 const dialogBehavior = await readFile(new URL('../src/dialogBehavior.ts', import.meta.url), 'utf8');
 const statusPresentation = await readFile(new URL('../src/statusPresentation.ts', import.meta.url), 'utf8');
@@ -224,6 +226,13 @@ for (const [name, source] of [
   if (source.includes('font-size: 7px') || source.includes('font-size: 8px')) {
     throw new Error(`${name} advanced settings regressed to unreadably small 7–8px text.`);
   }
+}
+
+requireAll(backup, ['<PreflightControls'], 'Settings no longer includes the production preflight check.');
+requireAll(preflightUi, ['本番準備チェック', '問題なし', '注意', '停止', '色だけでなく文章でも'], 'Preflight UI lost color-independent severity labels.');
+requireAll(inboxUi, ['育てる', '結果を再確認', '送信結果を確認しています', '明日へ', '今回は返さない', '今日やる理由', 'もう一度送る操作はありません'], 'Mission Inbox lost nurture coverage, unknown-result recovery, why-this-action, or snooze/dismiss labels.');
+if (/<button[^>]*>[\s\S]{0,80}もう一度送る/.test(inboxUi)) {
+  throw new Error('Unknown-result UX offers resend as a primary action.');
 }
 
 console.log('UX invariants OK: Japanese navigation, human-readable idle status, truthful Today states, action-specific next steps, progressive candidate reveal, accessible selection states, action-specific outcomes, keyboard-safe dialogs, clipboard feedback, urgent relation ordering, save feedback, truthful budget display, progressive workload tuning, verifiable sync-key entry, two-step backup restore, mobile input ergonomics, readable advanced settings, and real-device viewport safety are preserved.');
