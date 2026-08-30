@@ -964,7 +964,7 @@ function Settings({ state, onChange, onOpenManual }: { state: AppState; onChange
               あなたの上限: ${budgetAuthority.monthlyBudgetCeilingUsd}　サーバー上限: ${budgetAuthority.serverHardLimitUsd}　実効上限: ${budgetAuthority.effectiveLimitUsd}
             </p>
           )}
-          {budgetSaveError && <p className="budget-save-error" role="alert">{budgetSaveError}</p>}
+          {budgetSaveError && <p className="budget-save-error" role="alert">予算上限をサーバーへ保存できませんでした</p>}
           <label>フォローバック整理を確認するまで <span className="inline-value">{followBackDays}日</span><input className="range" type="range" min="7" max="90" step="1" value={followBackDays} onChange={(event) => { setFollowBackDays(Number(event.target.value)); markEdited(); }} /></label>
           <div className="hard-limit-row"><span><strong>予算上限を超えない</strong><small>設定額を超える有料API処理は実行しません</small></span><b>ON</b></div>
           <button type="button" className="policy-toggle" onClick={() => onChange((current) => updateRelationshipPolicy(current, { ...current.relationshipPolicy, autoDraftReplies: !(current.relationshipPolicy.autoDraftReplies !== false) }))}>
