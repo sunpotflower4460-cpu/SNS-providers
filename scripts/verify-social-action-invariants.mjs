@@ -143,6 +143,8 @@ requireAll(execute, [
   'UNKNOWN_RESULT',
   'x_reply_write',
   'replyToXTweet',
+  'persistExecutionFingerprintOrThrow',
+  'providerCallStarted = true',
 ], 'Execution idempotency, binding mismatch recovery, canonical server resolution, or fail-closed live writes are missing.');
 
 requireAll(schema, [

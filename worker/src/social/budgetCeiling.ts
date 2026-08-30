@@ -29,14 +29,20 @@ export async function saveUserBudgetCeilingUsd(db: D1Database, userId: string, c
     throw new Error('monthly_budget_ceiling_usd must be a non-negative number.');
   }
   const updatedAt = new Date().toISOString();
-  await db.prepare(
+  const result = await db.prepare(
     `INSERT INTO user_runtime_settings (user_id, monthly_budget_ceiling_usd, updated_at)
      VALUES (?, ?, ?)
      ON CONFLICT(user_id) DO UPDATE SET
        monthly_budget_ceiling_usd = excluded.monthly_budget_ceiling_usd,
        updated_at = excluded.updated_at`,
   ).bind(userId, ceilingUsd, updatedAt).run();
-  return { userId, monthlyBudgetCeilingUsd: ceilingUsd, updatedAt };
+  const stored = await loadUserBudgetCeilingUsd(db, userId);
+  if (stored !== ceilingUsd) {
+    throw new Error((result.meta.changes || 0) < 1
+      ? 'Budget ceiling could not be persisted.'
+      : 'Budget ceiling verification failed.');
+  }
+  return { userId, monthlyBudgetCeilingUsd: stored, updatedAt };
 }
 
 export async function resolveEffectiveBudgetLimit(

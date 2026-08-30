@@ -99,8 +99,10 @@ export async function reconcileExecution(env: ReconcileEnv, userId: string, exec
     const event = action.externalEventId
       ? await loadBoundEvent(env.DB, userId, action)
       : null;
-    const fingerprint = parseExecutionFingerprint(existing.fingerprintJson)
-      || parseExecutionFingerprint(existing.resultMetadataJson);
+    const fingerprint = parseExecutionFingerprint(existing.fingerprintJson);
+    if (!fingerprint) {
+      return stillUnknown(existing, 'UNKNOWN reconciliation cannot run without a durable execution fingerprint.');
+    }
     providerCallStarted = true;
     const match = await readProviderMatch(env, action, existing, event, fingerprint);
     if (match === 'success') {
@@ -181,10 +183,10 @@ async function readProviderMatch(
       return reconcileXDm(env, action, execution, event, fingerprint);
     }
     if (action.platform === 'x' && action.type === 'like') {
-      return reconcileXLike(env, action, execution);
+      return reconcileXLike(env, action, execution, fingerprint);
     }
     if (action.platform === 'x' && (action.type === 'follow' || action.type === 'unfollow_review')) {
-      return reconcileXFollow(env, action, execution);
+      return reconcileXFollow(env, action, execution, fingerprint);
     }
     return 'unknown';
   } catch {
@@ -209,7 +211,8 @@ async function reconcileInstagramComment(
   const ownId = env.INSTAGRAM_USER_ID?.trim() || '';
   if (!/^\d{1,30}$/.test(commentId) || !token || !/^v\d+\.\d+$/.test(version) || !ownId) return 'unknown';
   if (!fingerprint?.normalizedTextSha256) return 'unknown';
-  if (fingerprint.canonicalTargetId && fingerprint.canonicalTargetId !== commentId) return 'unknown';
+  if (!fingerprint.canonicalTargetId || fingerprint.canonicalTargetId !== commentId) return 'unknown';
+  if (!fingerprint.actorId || fingerprint.actorId !== ownId) return 'unknown';
   const url = `https://graph.instagram.com/${version}/${encodeURIComponent(commentId)}/replies?fields=id,text,timestamp,from,parent`;
   const payload = await igGet<{ data?: Array<Record<string, unknown>> }>(url, token, 'Instagram reply reconcile');
   const matches = [];
@@ -218,7 +221,7 @@ async function reconcileInstagramComment(
     const parentId = isRecord(row.parent) && typeof row.parent.id === 'string' ? row.parent.id : commentId;
     const created = typeof row.timestamp === 'string' ? new Date(row.timestamp).getTime() : Number.NaN;
     const textOk = await providerTextMatchesFingerprint(fingerprint, typeof row.text === 'string' ? row.text : undefined);
-    if (fromId === ownId && parentId === commentId && inReconcileWindow(execution.createdAt, created) && textOk) {
+    if (fromId === ownId && fromId === fingerprint.actorId && parentId === commentId && inReconcileWindow(execution.createdAt, created) && textOk) {
       matches.push(row);
     }
   }
@@ -238,7 +241,8 @@ async function reconcileInstagramDm(
   const ownId = env.INSTAGRAM_USER_ID?.trim() || '';
   if (!conversationId || !token || !ownId || !instagramMessagingWindowOpen(event?.occurredAt || action.observedAt)) return 'unknown';
   if (!fingerprint?.normalizedTextSha256) return 'unknown';
-  if (fingerprint.conversationId && fingerprint.conversationId !== conversationId) return 'unknown';
+  if (!fingerprint.conversationId || fingerprint.conversationId !== conversationId) return 'unknown';
+  if (!fingerprint.actorId || fingerprint.actorId !== ownId) return 'unknown';
   const url = `https://graph.instagram.com/${version}/${encodeURIComponent(conversationId)}?fields=messages{id,created_time,from,message}`;
   const payload = await igGet<{ messages?: { data?: Array<Record<string, unknown>> } }>(url, token, 'Instagram DM reconcile');
   const matches = [];
@@ -247,7 +251,7 @@ async function reconcileInstagramDm(
     const created = typeof row.created_time === 'string' ? new Date(row.created_time).getTime() : Number.NaN;
     const text = typeof row.message === 'string' ? row.message : typeof row.text === 'string' ? row.text : undefined;
     const textOk = await providerTextMatchesFingerprint(fingerprint, text);
-    if (fromId === ownId && inReconcileWindow(execution.createdAt, created) && textOk) matches.push(row);
+    if (fromId === ownId && fromId === fingerprint.actorId && inReconcileWindow(execution.createdAt, created) && textOk) matches.push(row);
   }
   return exactReconcileDecision(matches.length);
 }
@@ -262,12 +266,12 @@ async function reconcileXReply(
   const tweetId = event?.externalEventId || action.externalEventId || '';
   if (!/^\d{1,30}$/.test(tweetId)) return 'unknown';
   if (!fingerprint?.normalizedTextSha256) return 'unknown';
-  if (fingerprint.canonicalTargetId && fingerprint.canonicalTargetId !== tweetId) return 'unknown';
+  if (!fingerprint.canonicalTargetId || fingerprint.canonicalTargetId !== tweetId) return 'unknown';
   if (fingerprint.parentContentId && fingerprint.parentContentId !== tweetId) return 'unknown';
   const accessToken = await getValidXAccessToken(env, action.userId);
   const me = await lookupXAuthenticatedUser(accessToken);
   if (!me) return 'unknown';
-  if (fingerprint.actorId && fingerprint.actorId !== me.id) return 'unknown';
+  if (!fingerprint.actorId || fingerprint.actorId !== me.id) return 'unknown';
   const url = `https://api.x.com/2/users/${encodeURIComponent(me.id)}/tweets?max_results=20&tweet.fields=created_at,text,conversation_id&expansions=referenced_tweets.id`;
   const payload = await xGet<{
     data?: Array<Record<string, unknown>>;
@@ -293,10 +297,11 @@ async function reconcileXDm(
   const conversationId = action.conversationId || (typeof event?.payload.conversationId === 'string' ? event.payload.conversationId : '');
   if (!conversationId) return 'unknown';
   if (!fingerprint?.normalizedTextSha256) return 'unknown';
-  if (fingerprint.conversationId && fingerprint.conversationId !== conversationId) return 'unknown';
+  if (!fingerprint.conversationId || fingerprint.conversationId !== conversationId) return 'unknown';
   const accessToken = await getValidXAccessToken(env, action.userId);
   const me = await lookupXAuthenticatedUser(accessToken);
   if (!me) return 'unknown';
+  if (!fingerprint.actorId || fingerprint.actorId !== me.id) return 'unknown';
   const url = 'https://api.x.com/2/dm_events?max_results=50&dm_event.fields=id,text,event_type,dm_conversation_id,sender_id,created_at&event_types=MessageCreate';
   const payload = await xGet<{ data?: Array<Record<string, unknown>> }>(url, accessToken, 'X DM reconcile');
   const matches = [];
@@ -316,14 +321,19 @@ async function reconcileXLike(
   env: ReconcileEnv,
   action: CanonicalSocialAction,
   _execution: ExecutionRecord,
+  fingerprint: ExecutionFingerprint | null,
 ): Promise<'success' | 'failure' | 'unknown'> {
   const tweetId = action.externalEventId || extractXTweetId(action.targetUrl || '');
   if (!/^\d{1,30}$/.test(tweetId)) return 'unknown';
+  if (!fingerprint?.canonicalTargetId || fingerprint.canonicalTargetId !== tweetId) return 'unknown';
+  if (!fingerprint.actorId || !fingerprint.operation || !fingerprint.preparedAt) return 'unknown';
+  if (fingerprint.operation !== 'x_like_write') return 'unknown';
   const oauth = await xOAuthStatus(env, action.userId);
   if (!likeReconciliationReady(oauth.scopes || [])) return 'unknown';
   const accessToken = await getValidXAccessToken(env, action.userId);
   const me = await lookupXAuthenticatedUser(accessToken);
   if (!me) return 'unknown';
+  if (fingerprint.actorId !== me.id) return 'unknown';
   const state = await lookupXLikedState({ sourceUserId: me.id, tweetId, accessToken });
   return interpretLikeState(state);
 }
@@ -332,12 +342,18 @@ async function reconcileXFollow(
   env: ReconcileEnv,
   action: CanonicalSocialAction,
   _execution: ExecutionRecord,
+  fingerprint: ExecutionFingerprint | null,
 ): Promise<'success' | 'failure' | 'unknown'> {
   const target = action.platformUserId || '';
   if (!/^\d{1,30}$/.test(target)) return 'unknown';
+  if (!fingerprint?.canonicalTargetId || fingerprint.canonicalTargetId !== target) return 'unknown';
+  if (!fingerprint.actorId || !fingerprint.operation || !fingerprint.preparedAt) return 'unknown';
+  const expectedOp = action.type === 'unfollow_review' ? 'x_unfollow_write' : 'x_follow_write';
+  if (fingerprint.operation !== expectedOp) return 'unknown';
   const accessToken = await getValidXAccessToken(env, action.userId);
   const me = await lookupXAuthenticatedUser(accessToken);
   if (!me) return 'unknown';
+  if (fingerprint.actorId !== me.id) return 'unknown';
   const relationship = await lookupXFollowRelationship({
     sourceUserId: me.id,
     targetUserId: target,

@@ -32,6 +32,7 @@ const files = [
   ['social/query.js', '../worker/src/social/query.ts'],
   ['social/types.js', '../worker/src/social/types.ts'],
   ['social/budgetCeiling.js', '../worker/src/social/budgetCeiling.ts'],
+  ['social/providerIds.js', '../worker/src/social/providerIds.ts'],
   ['social/fingerprint.js', '../worker/src/social/fingerprint.ts'],
   ['social/syncCheckpoints.js', '../worker/src/social/syncCheckpoints.ts'],
   ['social/httpStatus.js', '../worker/src/social/httpStatus.ts'],
@@ -248,7 +249,39 @@ const dmWalk = await paginateXDmEvents({
 if (!dmWalk.complete || dmWalk.events.length !== 3) fail('X DM pagination did not collect every page.');
 if (dmWalk.events.filter((event) => event.ownMessage).length !== 1) fail('Own X DMs were turned into inbound actions.');
 
-const isolated = await syncSocialInboxIsolated({}, {}, {
+function leaseDb() {
+  const leases = new Map();
+  return {
+    prepare(sql) {
+      const normalized = String(sql).replace(/\s+/g, ' ').trim();
+      return {
+        bind(...params) {
+          return {
+            async first() { return null; },
+            async run() {
+              if (normalized.startsWith('INSERT INTO budget_ledger')) {
+                const id = params[0];
+                if (leases.has(id)) return { meta: { changes: 0 } };
+                leases.set(id, params[2]);
+                return { meta: { changes: 1 } };
+              }
+              if (normalized.startsWith('DELETE FROM budget_ledger')) {
+                if (leases.get(params[0]) === params[1]) {
+                  leases.delete(params[0]);
+                  return { meta: { changes: 1 } };
+                }
+                return { meta: { changes: 0 } };
+              }
+              return { meta: { changes: 1 } };
+            },
+          };
+        },
+      };
+    },
+  };
+}
+
+const isolated = await syncSocialInboxIsolated({ DB: leaseDb() }, {}, {
   syncXInboundMentions: async () => ({ status: 'success', events: [{ id: 'm1' }] }),
   syncXDirectMessages: async () => { throw new Error('X API returned 503'); },
   syncInstagramComments: async () => ({ status: 'success', events: [{ id: 'c1' }] }),
@@ -358,6 +391,8 @@ if (commentsUrl.method !== 'GET' || !commentsUrl.path.endsWith('/99/comments') |
 const convoUrl = instagramConversationListUrl('v24.0', '1');
 if (!convoUrl.url.includes('/1/conversations') || !convoUrl.url.includes('participants')) fail('Instagram conversation list dropped participant metadata.');
 const msgUrl = instagramConversationMessagesUrl('v24.0', '888', 'c2');
-if (msgUrl.path !== '/888/messages' || !msgUrl.url.includes('after=c2')) fail('Instagram DM messages did not use the official messages edge.');
+if (msgUrl.path !== '/888/messages' || !msgUrl.url.includes('after=c2') || !msgUrl.url.includes('limit=20')) {
+  fail('Instagram DM messages did not use the official messages edge with the Meta 20-message detail window.');
+}
 
 console.log('Manual-only closure tests OK: cumulative like.read, official follow lookup, exact text fingerprint, DM expansions, webhook DM/comment evidence, user budget ceiling, pagination checkpoints, isolated sync, webhook/poll convergence.');

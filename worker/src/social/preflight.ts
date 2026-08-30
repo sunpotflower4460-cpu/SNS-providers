@@ -60,6 +60,11 @@ export async function buildProductionPreflight(env: PreflightEnv, userId: string
 
   const socialActionsReady = await tableExists(env.DB, 'social_actions');
   const executionsReady = await tableExists(env.DB, 'social_executions');
+  const fingerprintReady = await columnExists(env.DB, 'social_executions', 'fingerprint_json');
+  const runtimeBudgetReady = await tableExists(env.DB, 'user_runtime_settings');
+  const checkpointReady = await tableExists(env.DB, 'social_sync_checkpoints');
+  const xIdentityReady = await columnExists(env.DB, 'x_oauth_tokens', 'x_user_id');
+  const writesEnabled = env.SOCIAL_WRITE_ENABLED === 'true' || env.SOCIAL_WRITE_MODE === 'test';
   const checks: Check[] = [];
   checks.push(schema.connected && schema.partial.length === 0 && schema.currentVersion === EXPECTED_SCHEMA_VERSION
     ? ok('database', 'D1 schema matches the expected migration version.')
@@ -70,6 +75,21 @@ export async function buildProductionPreflight(env: PreflightEnv, userId: string
   checks.push(executionsReady
     ? ok('executionSchemaReady', 'social_executions table is ready.')
     : block('executionSchemaReady', 'social_executions table is missing.', 'Run production D1 migrations.'));
+  checks.push(fingerprintReady
+    ? ok('executionFingerprintReady', 'social_executions.fingerprint_json is available as the durable write authority.')
+    : block('executionFingerprintReady', 'fingerprint_json is missing, so provider writes cannot be reconciled safely.', 'Run production D1 migrations through version 5 (0005_execution_fingerprint.sql).'));
+  checks.push(runtimeBudgetReady
+    ? ok('runtimeBudgetTableReady', 'user_runtime_settings is available for the user budget ceiling.')
+    : block('runtimeBudgetTableReady', 'user_runtime_settings is missing.', 'Run production D1 migrations through version 7.'));
+  checks.push(checkpointReady
+    ? ok('syncCheckpointTableReady', 'social_sync_checkpoints is available.')
+    : block('syncCheckpointTableReady', 'social_sync_checkpoints is missing, so provider reads fail closed.', 'Run production D1 migrations through version 6.'));
+  checks.push(xIdentityReady
+    ? ok('xOAuthIdentityColumnReady', 'X OAuth same-account identity column is available.')
+    : block('xOAuthIdentityColumnReady', 'x_oauth_tokens.x_user_id is missing.', 'Run production D1 migrations through version 4.'));
+  if (writesEnabled && !fingerprintReady) {
+    checks.push(block('writeFingerprintGate', 'Production writes are enabled but durable execution fingerprints cannot be stored.', 'Keep SOCIAL_WRITE_ENABLED=false until migration 0005 is applied.'));
+  }
 
   const scopes = oauth.scopes || [];
   checks.push(xOAuthConfigured(env)
@@ -174,7 +194,11 @@ export async function buildProductionPreflight(env: PreflightEnv, userId: string
     app: {
       socialActionSchemaReady: socialActionsReady,
       executionSchemaReady: executionsReady,
-      socialWriteEnabled: env.SOCIAL_WRITE_ENABLED === 'true' || env.SOCIAL_WRITE_MODE === 'test',
+      executionFingerprintReady: fingerprintReady,
+      runtimeBudgetTableReady: runtimeBudgetReady,
+      syncCheckpointTableReady: checkpointReady,
+      xOAuthIdentityColumnReady: xIdentityReady,
+      socialWriteEnabled: writesEnabled,
     },
     checks,
     summary: {
@@ -229,6 +253,15 @@ async function monthUsage(db: D1Database, userId: string) {
   }
 }
 
+async function columnExists(db: D1Database, table: string, column: string) {
+  try {
+    await db.prepare(`SELECT ${column} FROM ${table} LIMIT 1`).first();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function tableExists(db: D1Database, name: string) {
   try {
     const row = await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").bind(name).first<{ name: string }>();
@@ -261,22 +294,32 @@ async function sourceStatuses(
   const igCommentsPoll = probe.readComments === true;
   const igDmReady = probe.readDm === true && env.INSTAGRAM_DM_READ_ENABLED === 'true' && env.INSTAGRAM_DM_READ_USD != null && String(env.INSTAGRAM_DM_READ_USD).trim() !== '';
   const mentionCheckpoint = await loadSyncCheckpoint(env.DB, userId, 'x_mentions');
+  const xDmCheckpoint = await loadSyncCheckpoint(env.DB, userId, 'x_dm');
+  const igCommentCheckpoint = await loadSyncCheckpoint(env.DB, userId, 'instagram_comments_poll');
+  const igDmCheckpoint = await loadSyncCheckpoint(env.DB, userId, 'instagram_dm');
+  const checkpointHealth = [mentionCheckpoint, xDmCheckpoint, igCommentCheckpoint, igDmCheckpoint];
+  const checkpointQueryFailed = checkpointHealth.some((item) => !item.available);
   return [
     sourceCheck('xMentions', 'X mentions', xMentionsReady ? 'READY' : (env.X_INBOUND_SYNC_ENABLED === 'true' ? 'BLOCKED' : 'DISABLED'), xMentionsReady
-      ? `X mention/reply polling is ready${mentionCheckpoint?.continuationCursor ? ' (continuation cursor stored).' : '.'}`
+      ? `X mention/reply polling is ready${mentionCheckpoint.available && mentionCheckpoint.checkpoint?.continuationCursor ? ' (continuation cursor stored).' : '.'}`
       : 'X mention sync is not ready.', xMentionsReady ? undefined : 'Set X_INBOUND_SYNC_ENABLED=true, X_INBOUND_READ_USD, and connect X.'),
     sourceCheck('xDm', 'X DM', xDmReady ? 'READY' : (env.X_DM_READ_ENABLED === 'true' ? 'BLOCKED' : 'DISABLED'), xDmReady
       ? 'X DM read is ready.'
       : 'X DM read is not ready.', xDmReady ? undefined : 'Settings → X → DM権限を追加, then X_DM_READ_ENABLED=true and X_DM_READ_USD.'),
     sourceCheck('instagramCommentsWebhook', 'Instagram comments webhook', webhookReady && igCommentsPoll ? 'WEBHOOK READY' : webhookReady ? 'BLOCKED' : 'DISABLED', webhookReady && igCommentsPoll
-      ? 'Comment webhook receiver is ready. Dashboard subscription is still manual.'
+      ? 'Comment webhook is the realtime primary. Dashboard subscription is still manual.'
       : 'Comment webhook is not fully ready.', 'Register comments + live_comments in Meta App Dashboard after secrets exist.'),
     sourceCheck('instagramCommentsPoll', 'Instagram comments polling', igCommentsPoll ? 'POLLING READY' : 'BLOCKED', igCommentsPoll
-      ? 'Comment catch-up polling can run without a webhook.'
-      : 'Comment polling is blocked until comment permission is verified.', 'Settings → Instagram → 権限状態を確認.'),
+      ? (webhookReady
+        ? 'Polling is a bounded catch-up fallback. Webhook secrets are present; dashboard registration is still manual.'
+        : 'Polling fallback covers bounded paginated catch-up of owned media. For reliable comments on older media, Meta webhook registration is required.')
+      : 'Comment polling is blocked until comment permission is verified.', webhookReady ? 'Register comments + live_comments in Meta App Dashboard.' : 'Set webhook secrets and register the callback in Meta App Dashboard for reliable older-media comments. Settings → Instagram → 権限状態を確認.'),
     sourceCheck('instagramDm', 'Instagram DM', igDmReady ? 'READY' : 'BLOCKED', igDmReady
-      ? 'Instagram DM read is ready.'
-      : 'Instagram DM read is blocked.', 'Verify message permission, set INSTAGRAM_DM_READ_ENABLED=true and INSTAGRAM_DM_READ_USD.'),
+      ? 'Instagram DM read is ready. Official API details cover the 20 most recent messages per conversation; older message bodies are a Meta limitation. Incomplete threads from our page budget are never marked processed.'
+      : 'Instagram DM read is blocked.', 'Verify message permission, set INSTAGRAM_DM_READ_ENABLED=true and INSTAGRAM_DM_READ_USD. Register the messaging webhook for realtime DMs.'),
+    sourceCheck('syncCheckpointHealth', 'Sync checkpoint query', checkpointQueryFailed ? 'BLOCKED' : 'READY', checkpointQueryFailed
+      ? checkpointHealth.find((item) => !item.available)?.reason || 'Checkpoint query failed.'
+      : 'Sync checkpoint table is readable for all sources.', checkpointQueryFailed ? 'Run production D1 migrations and confirm D1 is reachable.' : undefined),
   ];
 }
 

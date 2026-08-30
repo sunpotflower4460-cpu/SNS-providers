@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { analyzeSelfProfile, apiConfigured, discoverSocialCandidates, enrichXProfiles, fetchBudget, fetchCanonicalSocialActions, fetchSocialCapabilities, putRuntimeSettings, rankCandidates, syncSocialInbox } from './api';
+import { persistServerBudgetCeiling } from './budgetCeilingSave';
 import BackupControls from './BackupControls';
 import { getSyncToken } from './controlToken';
 import { buildDailyQueue } from './daily';
@@ -851,6 +852,9 @@ function Settings({ state, onChange, onOpenManual }: { state: AppState; onChange
   const [budget, setBudget] = useState(state.budget.monthlyLimitUsd);
   const [followBackDays, setFollowBackDays] = useState(state.relationshipPolicy.followBackReviewAfterDays);
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [budgetSaveError, setBudgetSaveError] = useState<string | null>(null);
+  const [budgetAuthority, setBudgetAuthority] = useState<{ monthlyBudgetCeilingUsd: number; serverHardLimitUsd: number; effectiveLimitUsd: number } | null>(null);
   const storedDestinations = destinationsFromMission(state.mission).join('\n');
 
   useEffect(() => setMissionText(state.mission.text), [state.mission.text]);
@@ -859,14 +863,30 @@ function Settings({ state, onChange, onOpenManual }: { state: AppState; onChange
   useEffect(() => setBudget(state.budget.monthlyLimitUsd), [state.budget.monthlyLimitUsd]);
   useEffect(() => setFollowBackDays(state.relationshipPolicy.followBackReviewAfterDays), [state.relationshipPolicy.followBackReviewAfterDays]);
 
-  function persist() {
+  async function persist() {
+    setSaving(true);
+    setBudgetSaveError(null);
     onChange((current) => {
       let next = updateMission(current, applyMissionDestinations({ ...current.mission, text: missionText, communicationDNA }, destinations));
-      next = { ...next, budget: { ...next.budget, monthlyLimitUsd: Math.max(0, budget), hardLimit: true } };
       next = updateRelationshipPolicy(next, { ...next.relationshipPolicy, followBackReviewAfterDays: Math.max(7, Math.min(90, Math.round(followBackDays || 30))) });
       return next;
     });
-    void putRuntimeSettings(Math.max(0, budget)).catch(() => undefined);
+    const budgetResult = await persistServerBudgetCeiling({
+      requestedUsd: Math.max(0, budget),
+      putRuntimeSettings,
+    });
+    setSaving(false);
+    if (!budgetResult.ok) {
+      setBudgetSaveError(budgetResult.reason);
+      setSaved(false);
+      return;
+    }
+    setBudgetAuthority(budgetResult);
+    setBudget(budgetResult.effectiveLimitUsd);
+    onChange((current) => ({
+      ...current,
+      budget: { ...current.budget, monthlyLimitUsd: budgetResult.effectiveLimitUsd, hardLimit: true },
+    }));
     setSaved(true);
   }
 
@@ -939,6 +959,12 @@ function Settings({ state, onChange, onOpenManual }: { state: AppState; onChange
         <summary><span><strong>予算と整理ルール</strong><small>必要なときだけ変更</small></span><b>⌄</b></summary>
         <div className="inline-disclosure-body">
           <label>月間AI / API予算 <span className="inline-value">${budget.toFixed(2)}</span><input className="range" type="range" min="0" max="10" step="0.5" value={budget} onChange={(event) => { setBudget(Number(event.target.value)); markEdited(); }} /></label>
+          {budgetAuthority && (
+            <p className="budget-authority">
+              あなたの上限: ${budgetAuthority.monthlyBudgetCeilingUsd}　サーバー上限: ${budgetAuthority.serverHardLimitUsd}　実効上限: ${budgetAuthority.effectiveLimitUsd}
+            </p>
+          )}
+          {budgetSaveError && <p className="budget-save-error" role="alert">予算上限をサーバーへ保存できませんでした</p>}
           <label>フォローバック整理を確認するまで <span className="inline-value">{followBackDays}日</span><input className="range" type="range" min="7" max="90" step="1" value={followBackDays} onChange={(event) => { setFollowBackDays(Number(event.target.value)); markEdited(); }} /></label>
           <div className="hard-limit-row"><span><strong>予算上限を超えない</strong><small>設定額を超える有料API処理は実行しません</small></span><b>ON</b></div>
           <button type="button" className="policy-toggle" onClick={() => onChange((current) => updateRelationshipPolicy(current, { ...current.relationshipPolicy, autoDraftReplies: !(current.relationshipPolicy.autoDraftReplies !== false) }))}>
@@ -947,7 +973,7 @@ function Settings({ state, onChange, onOpenManual }: { state: AppState; onChange
           </button>
         </div>
       </details>
-      <button className="primary-button" onClick={persist} aria-live="polite">{saved ? '保存しました' : 'この設定を保存'}</button>
+      <button className="primary-button" onClick={() => void persist()} disabled={saving} aria-live="polite">{saving ? '保存中…' : saved ? '保存しました' : 'この設定を保存'}</button>
     </section>
     <BackupControls state={state} onRestore={onChange} />
   </>;

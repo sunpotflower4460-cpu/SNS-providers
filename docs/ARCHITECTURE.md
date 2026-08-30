@@ -71,13 +71,13 @@ Implemented server responsibilities:
 - pre-request budget reservations for paid calls
 - token-gated state snapshots for personal multi-device transfer
 - optimistic state-snapshot concurrency checks to prevent stale-device overwrites
-- user-approved social execute boundary with D1 canonical SocialAction/SocialEvent resolution, execution fingerprints, and exact-match reconciliation
-- isolated inbox ingest for X mentions, X DM, Instagram comments, and Instagram DM with durable checkpoints (a page cap never commits newest-seen)
+- user-approved social execute boundary with D1 canonical SocialAction/SocialEvent resolution, execution fingerprints durably persisted and re-read before every provider write, and exact-match reconciliation that refuses to run without that fingerprint
+- isolated inbox ingest for X mentions, X DM, Instagram comments, and Instagram DM with source-level leases and durable checkpoints (a page cap never commits newest-seen; checkpoint query failure is distinct from a missing row and fails closed). Instagram DM message details are limited by Meta to the 20 most recent messages per conversation; that is a provider limitation, not an unfinished catch-up.
 - Instagram comment reply and Instagram Professional DM adapters behind explicit production write flags and runtime permission probes
 - X reply, follow, unfollow, like, and DM adapters behind explicit OAuth upgrades and production write flags
-- Instagram webhook verification/signature receiver with polling fallback; comment/live_comment and messaging webhooks persist events without treating recipient.id as a conversation id
-- versioned D1 migrations (`db/migrations/`) and production preflight diagnostics
-- persisted user budget ceiling (`user_runtime_settings`) under the server HARD LIMIT
+- Instagram webhook verification/signature receiver as the realtime primary, plus bounded polling catch-up of paginated owned media; comment/live_comment and messaging webhooks persist events without treating recipient.id as a conversation id
+- versioned D1 migrations (`db/migrations/`) and production preflight diagnostics that block writes when the fingerprint column, budget table, checkpoint table, or schema version is missing
+- persisted user budget ceiling (`user_runtime_settings`) under the server HARD LIMIT; Settings treats a ceiling as saved only after the server returns monthlyBudgetCeilingUsd / serverHardLimitUsd / effectiveLimitUsd
 
 Manual-only remaining work is listed in `docs/MANUAL_GO_LIVE_CHECKLIST.md`. Instagram follow and arbitrary like stay HANDOFF because the official Professional management API does not provide those writes.
 

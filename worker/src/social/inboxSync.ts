@@ -1,9 +1,12 @@
+import { runWithSourceLease } from '../syncLease';
 import { syncInstagramComments } from './instagram/commentSync';
 import { syncInstagramDirectMessages } from './instagram/dmSync';
 import { syncXDirectMessages } from './x/dmSync';
 import { syncXInboundMentions } from './x/sync';
 
 type SourceResult = Record<string, unknown> & { status?: string; enabled?: boolean; reason?: string };
+
+const SOURCE_LEASE_TTL_MS = 5 * 60 * 1000;
 
 function wrap(result: SourceResult): SourceResult {
   if (result.status) return result;
@@ -32,14 +35,15 @@ export async function syncSocialInboxIsolated(
   body: { userId?: string; monthlyLimitUsd?: number },
   adapters: InboxSyncAdapters = {},
 ) {
+  const userId = typeof body.userId === 'string' && body.userId.trim() ? body.userId.trim() : 'local-user';
   const mentions = adapters.syncXInboundMentions || syncXInboundMentions;
   const dm = adapters.syncXDirectMessages || syncXDirectMessages;
   const comments = adapters.syncInstagramComments || syncInstagramComments;
   const igDm = adapters.syncInstagramDirectMessages || syncInstagramDirectMessages;
-  const xMentions = await runIsolated(() => mentions(env, body));
-  const xDm = await runIsolated(() => dm(env, body));
-  const instagramComments = await runIsolated(() => comments(env, body));
-  const instagramDm = await runIsolated(() => igDm(env, body));
+  const xMentions = await runIsolated(() => runWithSourceLease(env.DB, userId, 'x_mentions_sync', SOURCE_LEASE_TTL_MS, () => mentions(env, body)));
+  const xDm = await runIsolated(() => runWithSourceLease(env.DB, userId, 'x_dm_sync', SOURCE_LEASE_TTL_MS, () => dm(env, body)));
+  const instagramComments = await runIsolated(() => runWithSourceLease(env.DB, userId, 'instagram_comments_sync', SOURCE_LEASE_TTL_MS, () => comments(env, body)));
+  const instagramDm = await runIsolated(() => runWithSourceLease(env.DB, userId, 'instagram_dm_sync', SOURCE_LEASE_TTL_MS, () => igDm(env, body)));
   return {
     xMentions: wrap(xMentions),
     xDm: wrap(xDm),
