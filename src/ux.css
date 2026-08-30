@@ -92,12 +92,12 @@ button:disabled { cursor: not-allowed; }
 .budget-pill span { color: var(--muted); font-size: 9px; }
 
 /* Shared headings and cards */
-.page-heading { margin: 2px 2px 24px; }
+.page-heading { margin: 2px 2px 18px; }
 .page-heading h1 {
-  margin: 7px 0 8px;
-  font-size: clamp(28px, 7vw, 38px);
-  line-height: 1.08;
-  letter-spacing: -.045em;
+  margin: 6px 0 6px;
+  font-size: clamp(24px, 6.5vw, 32px);
+  line-height: 1.12;
+  letter-spacing: -.04em;
 }
 .page-heading p,
 .mission-card p {
@@ -163,11 +163,58 @@ button:disabled { cursor: not-allowed; }
   gap: 12px;
 }
 .mission-card h1 {
-  max-width: 16ch;
-  margin: 10px 0 10px;
-  font-size: clamp(28px, 7vw, 40px);
-  line-height: 1.07;
-  letter-spacing: -.05em;
+  max-width: none;
+  margin: 8px 0 8px;
+  font-size: clamp(24px, 6.4vw, 34px);
+  line-height: 1.15;
+  letter-spacing: -.04em;
+}
+.mission-card-compact {
+  padding: 18px 18px 16px;
+}
+.mission-card-compact h1 {
+  margin: 4px 0 8px;
+  font-size: clamp(22px, 6vw, 28px);
+}
+.mission-more {
+  margin: 0 0 8px;
+}
+.mission-more > summary {
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.mission-more > summary::-webkit-details-marker { display: none; }
+.mission-more > summary::after {
+  content: ' ⌄';
+  font-size: 11px;
+}
+.mission-more[open] > summary::after { content: ' ⌃'; }
+.mission-more p {
+  margin: 8px 0 0;
+  color: #aab8c8;
+  font-size: 13px;
+  line-height: 1.65;
+}
+.mission-meter.is-idle {
+  margin-top: 4px;
+}
+.mission-meter.is-idle .mission-progress {
+  height: 4px;
+  margin-top: 6px;
+}
+.today-summary.is-idle {
+  margin-top: 10px;
+  gap: 6px;
+}
+.today-summary.is-idle span {
+  padding: 6px 4px;
+  background: transparent;
 }
 .mission-destinations {
   display: flex;
@@ -479,7 +526,7 @@ details[open] > summary > b { transform: rotate(180deg); }
 .destination-list,
 .destination-row {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 .destination-field > span {
   color: #b7c2ce;
@@ -489,16 +536,20 @@ details[open] > summary > b { transform: rotate(180deg); }
 .destination-row-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 4px 10px;
+  margin-top: -4px;
 }
-.destination-row-actions .secondary-button,
-.destination-row-actions .text-button,
+.destination-row-actions .text-button {
+  min-height: 36px;
+  padding: 4px 2px;
+  font-size: 12px;
+}
 .destination-add {
-  min-height: 44px;
+  min-height: 48px;
 }
 .destination-field > small {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 .self-analysis-card { margin-top: 12px; }
 .self-result { grid-template-columns: 40px minmax(0, 1fr); }

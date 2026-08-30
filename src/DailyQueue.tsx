@@ -64,7 +64,7 @@ export default function DailyQueue({ state, onOpenCandidate, onOpenMe, onOpenDis
       <div className="queue-complete-icon">＋</div>
       <span className="section-kicker">最初の一歩</span>
       <h3>まず、つながる候補を見つけましょう</h3>
-      <p>Missionを基準に候補を探すと、誰に何をするかがTodayへ自動で並びます。細かい設定は後からで大丈夫です。</p>
+      <p>目的に合う相手を探すと、今日やることがここに並びます。細かい設定は後からで大丈夫です。</p>
       <button className="primary-button empty-action" onClick={onOpenDiscover}>候補を探す</button>
     </section>;
   }

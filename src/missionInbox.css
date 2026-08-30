@@ -1,18 +1,20 @@
 .mission-inbox .inbox-summary {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   margin-top: 12px;
 }
 .mission-inbox .inbox-summary span {
   display: grid;
   gap: 2px;
+  min-width: 4.5rem;
+  flex: 1 1 4.5rem;
   padding: 8px 6px;
   border: 1px solid rgba(255,255,255,.06);
   border-radius: 12px;
   background: rgba(255,255,255,.025);
   color: #8b9aab;
-  font-size: 10px;
+  font-size: 11px;
   text-align: center;
 }
 .mission-inbox .inbox-summary b {
@@ -39,10 +41,11 @@
 .exec-mode {
   padding: 5px 8px;
   border-radius: 999px;
-  font-size: 9px;
+  font-size: 11px;
   font-style: normal;
-  font-weight: 800;
-  letter-spacing: .04em;
+  font-weight: 700;
+  letter-spacing: 0;
+  white-space: nowrap;
 }
 .exec-mode.in-app { color: #06120e; background: #72dfbd; }
 .exec-mode.handoff { color: #ffc27c; background: rgba(255,194,124,.12); border: 1px solid rgba(255,194,124,.22); }
