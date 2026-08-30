@@ -326,16 +326,31 @@ if (!/^name = "sns-providers"$/m.test(pwaWrangler)
   || !pwaWrangler.includes('not_found_handling = "single-page-application"')
   || !pwaWrangler.includes('binding = "ASSETS"')
   || !pwaWrangler.includes('main = "./pwa-worker.js"')
+  || !pwaWrangler.includes('command = "npm run build"')
   || !/"name"\s*:\s*"social-mission-api"/.test(wrangler)
   || /"name"\s*:\s*"sns-providers"/.test(wrangler)) {
   throw new Error('Cloudflare Workers Builds needs root wrangler.toml named sns-providers for the PWA; the API Worker must stay social-mission-api.');
 }
 const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 const workersCiBuild = await readFile(new URL('../scripts/workers-ci-build.mjs', import.meta.url), 'utf8');
+const viteConfig = await readFile(new URL('../vite.config.ts', import.meta.url), 'utf8');
+const gitignore = await readFile(new URL('../.gitignore', import.meta.url), 'utf8');
+const pagesWorkflow = await readFile(new URL('../.github/workflows/deploy-pages.yml', import.meta.url), 'utf8');
+const workerDeploy = await readFile(new URL('../.github/workflows/deploy-worker.yml', import.meta.url), 'utf8');
 if (pkg.scripts.postinstall !== 'node scripts/workers-ci-build.mjs'
-  || !workersCiBuild.includes("process.env.WORKERS_CI !== '1'")
-  || !workersCiBuild.includes("['run', 'build']")) {
-  throw new Error('Workers Builds no longer builds ./dist during Cloudflare install when WORKERS_CI=1.');
+  || pkg.scripts.deploy !== 'npm run build && wrangler deploy'
+  || pkg.scripts.upload !== 'npm run build && wrangler versions upload'
+  || !pkg.dependencies?.vite
+  || !pkg.dependencies?.wrangler
+  || !workersCiBuild.includes("process.env.WORKERS_CI === '1'")
+  || !workersCiBuild.includes('WORKERS_CI_BUILD_UUID')
+  || !workersCiBuild.includes("['run', 'build']")
+  || !gitignore.includes('!dist/.gitkeep')
+  || !viteConfig.includes('keep-dist-gitkeep')
+  || !viteConfig.includes("writeFileSync('dist/.gitkeep'")
+  || !pagesWorkflow.includes('enablement: true')
+  || !workerDeploy.includes("secrets.CLOUDFLARE_API_TOKEN != ''")) {
+  throw new Error('Workers Builds no longer builds ./dist during Cloudflare install, Vite/wrangler are omit-dev-fragile, dist is fully gitignored, GitHub Pages cannot self-enable, or Worker deploy still fails closed without secrets.');
 }
 
 console.log('Regression fixes OK: provider defaults are aligned, manual and automatic candidate operations are serialized, Today completion ignores profile-only reviews and counts one aggregate self-analysis action, auto refill keeps self-work quota stable and continues multi-batch free ranking, automatic discovery guards reject future poison, slow cloud restores cannot erase newer local work, cross-device discovery retry and first-party sync leases are enforced, reserved social paths and future sync versions fail closed, X/Instagram immutable identity changes and handle renames cannot inherit or split old CRM/evidence, mixed stable/unbound restores and manual re-adds stay quarantined until identity proof, stale X enrichment cannot rewrite identity, visible result sheets are identity-bound, cleanup accounting stays distinct from profile review, exact engagement is consumed, Instagram binds the newest comment to its own concrete post target, repairs handle-renamed legacy duplicates without reactivating stale dismissals, X OAuth validates refresh-token usability, paid LLM cost stays within reservation, inbound followers stay below DM-ready, reply/like require concrete targets, CRM progression stays follow-gated, follow-back negatives require current following evidence, D1 restore reconciles live budget totals, cached follow evidence is not replayed, unbound identity conflicts stay quarantined, Today reopens on newer same-day signals, paid X username lookups keep reserved cost, JSON restore reconciles live budget, cache/complete snapshots cannot wipe post-boundary follows or invent negatives, concurrent restore guards abort on newer local edits, same-response handle transfers preserve CRM, and cache cannot rewind immutable identity.');

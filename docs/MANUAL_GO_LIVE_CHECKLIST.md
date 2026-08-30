@@ -13,26 +13,30 @@ Do not turn production writes on until the matching official permission, price, 
    - Instagram: `INSTAGRAM_ACCESS_TOKEN`, `INSTAGRAM_USER_ID`, `INSTAGRAM_API_VERSION`
    - Optional webhook: `INSTAGRAM_WEBHOOK_VERIFY_TOKEN`, `INSTAGRAM_APP_SECRET`
 3. Run GitHub Action **Migrate production D1** (`workflow_dispatch`) against production.
-4. Cloudflare dashboard Worker `sns-providers` → Settings → Build: set **Build command** to `npm run build` if the GitHub `Workers Builds` check is still red. The repo also builds `./dist` during Cloudflare install when `WORKERS_CI=1`. Keep deploy as `npx wrangler deploy` and non-production as `npx wrangler versions upload`.
-5. Confirm `/api/preflight` from Settings → 本番準備チェック, or `npm run preflight:prod`.
+4. Cloudflare dashboard Worker `sns-providers` → Settings → Build:
+   - Enable **Builds for non-production branches** (Branch control). Pull-request `Workers Builds: sns-providers` stays `Deployment skipped` until this is on. The repo cannot flip that dashboard toggle.
+   - Set **Build command** to `npm run build` if production builds still miss `./dist`. The repo also builds during Cloudflare install when `WORKERS_CI=1`, and `wrangler deploy` runs `[build]`.
+   - Keep deploy as `npx wrangler deploy` (or `npm run deploy`) and non-production as `npx wrangler versions upload` (or `npm run upload`).
+5. Confirm GitHub Pages is using GitHub Actions (Settings → Pages). The deploy workflow now requests enablement automatically.
+6. Confirm `/api/preflight` from Settings → 本番準備チェック, or `npm run preflight:prod`.
 
 ## Meta / Instagram
 
-5. Complete Meta App permissions / App Review for comment and messaging scopes used by the current Instagram Login flow.
-6. Issue a live Professional account token and set Worker secrets.
-7. Register the Instagram webhook callback in Meta App Dashboard (`GET|POST /api/instagram/webhook`). Polling works without this.
-8. Confirm the connected account is BUSINESS / CREATOR / MEDIA_CREATOR.
+7. Complete Meta App permissions / App Review for comment and messaging scopes used by the current Instagram Login flow.
+8. Issue a live Professional account token and set Worker secrets.
+9. Register the Instagram webhook callback in Meta App Dashboard (`GET|POST /api/instagram/webhook`). Polling works without this.
+10. Confirm the connected account is BUSINESS / CREATOR / MEDIA_CREATOR.
 
 ## X Developer
 
-9. Configure the X app as a confidential web app with the exact Worker callback URL.
-10. Keep default user connect read-only. Grant write scopes only through the in-app upgrade buttons:
+11. Configure the X app as a confidential web app with the exact Worker callback URL.
+12. Keep default user connect read-only. Grant write scopes only through the in-app upgrade buttons:
     - 返信権限 → `tweet.write`
     - フォロー権限 → `follows.write`
     - いいね権限 → `like.write`
     - DM権限 → `dm.read` + `dm.write`
-11. Complete each OAuth consent in the official X dialog.
-12. Enter current official X API prices into Worker vars. Missing prices stay fail-closed. Do not set `$0` unless the operation is confirmed free.
+13. Complete each OAuth consent in the official X dialog.
+14. Enter current official X API prices into Worker vars. Missing prices stay fail-closed. Do not set `$0` unless the operation is confirmed free.
     - `X_REPLY_WRITE_USD`
     - `X_FOLLOW_WRITE_USD`
     - `X_UNFOLLOW_WRITE_USD`
@@ -48,29 +52,29 @@ Do not turn production writes on until the matching official permission, price, 
 
 Repository defaults stay OFF. Turn on one operation at a time after the matching permission and price exist:
 
-13. `SOCIAL_WRITE_ENABLED=true`
-14. `INSTAGRAM_COMMENT_REPLY_ENABLED=true`
-15. `INSTAGRAM_DM_READ_ENABLED=true` / `INSTAGRAM_DM_WRITE_ENABLED=true`
-16. `X_REPLY_WRITE_ENABLED=true`
-17. `X_FOLLOW_WRITE_ENABLED=true` / `X_UNFOLLOW_WRITE_ENABLED=true`
-18. `X_LIKE_WRITE_ENABLED=true`
-19. `X_DM_READ_ENABLED=true` / `X_DM_WRITE_ENABLED=true`
-20. Leave `SOCIAL_SCHEDULED_READ_ENABLED` false unless you have confirmed read cost and rate limits.
+15. `SOCIAL_WRITE_ENABLED=true`
+16. `INSTAGRAM_COMMENT_REPLY_ENABLED=true`
+17. `INSTAGRAM_DM_READ_ENABLED=true` / `INSTAGRAM_DM_WRITE_ENABLED=true`
+18. `X_REPLY_WRITE_ENABLED=true`
+19. `X_FOLLOW_WRITE_ENABLED=true` / `X_UNFOLLOW_WRITE_ENABLED=true`
+20. `X_LIKE_WRITE_ENABLED=true`
+21. `X_DM_READ_ENABLED=true` / `X_DM_WRITE_ENABLED=true`
+22. Leave `SOCIAL_SCHEDULED_READ_ENABLED` false unless you have confirmed read cost and rate limits.
 
 ## Real-account smoke tests
 
 Use Mission Inbox. One user approval per write. Never batch.
 
-21. Instagram comment reply
-22. Instagram inbound DM + approved reply (inside the 24-hour messaging window)
-23. X mention/reply inbound + approved reply
-24. X follow (confirm pending vs following)
-25. X like
-26. X inbound DM + approved reply
+23. Instagram comment reply
+24. Instagram inbound DM + approved reply (inside the 24-hour messaging window)
+25. X mention/reply inbound + approved reply
+26. X follow (confirm pending vs following)
+27. X like
+28. X inbound DM + approved reply
 
 ## Real-device checks
 
-27. iPhone PWA install, keyboard, safe-area, offline note, snooze/dismiss, unknown-result “結果を再確認”
-28. Desktop Settings capability upgrade buttons and 本番準備チェック copy (red/yellow/green also have words)
+29. iPhone PWA install, keyboard, safe-area, offline note, snooze/dismiss, unknown-result “結果を再確認”
+30. Desktop Settings capability upgrade buttons and 本番準備チェック copy (red/yellow/green also have words)
 
 If a write is blocked, the preflight reason names the exact Settings button or secret to fix. Do not bypass HANDOFF for Instagram follow / arbitrary like; those are provider limitations, not unfinished code.

@@ -1,3 +1,4 @@
+import { writeFileSync } from 'node:fs';
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 
@@ -11,11 +12,20 @@ export default defineConfig(({ mode }) => {
 
   return {
     base,
-    plugins: [react(), cspConnectPlugin(connectSources.join(' '))],
+    plugins: [react(), cspConnectPlugin(connectSources.join(' ')), keepDistGitkeepPlugin()],
     server: { host: true },
     preview: { host: true },
   };
 });
+
+function keepDistGitkeepPlugin(): Plugin {
+  return {
+    name: 'keep-dist-gitkeep',
+    closeBundle() {
+      writeFileSync('dist/.gitkeep', '# Keep ./dist in git so Workers Builds can see assets.directory before Vite runs.\n');
+    },
+  };
+}
 
 function cspConnectPlugin(connectSources: string): Plugin {
   return {

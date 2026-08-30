@@ -1,0 +1,1 @@
+# Keep ./dist in git so Workers Builds can see assets.directory before Vite runs.

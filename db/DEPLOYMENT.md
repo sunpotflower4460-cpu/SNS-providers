@@ -49,15 +49,18 @@ cd worker && npx wrangler d1 execute social-mission --remote --file=../db/schema
 
 ### Cloudflare Workers Builds (dashboard)
 
-The Git-connected dashboard Worker is named `sns-providers` and deploys the **PWA** from the repository root. Root `wrangler.toml` must use that same `name`, set `main` to `./pwa-worker.js`, and point `[assets].directory` at `./dist` with `binding = "ASSETS"`, or the GitHub `Workers Builds: sns-providers` check fails immediately on pull requests (missing entry-point / “Deployment skipped”).
+The Git-connected dashboard Worker is named `sns-providers` and deploys the **PWA** from the repository root. Root `wrangler.toml` must use that same `name`, set `main` to `./pwa-worker.js`, and point `[assets].directory` at `./dist` with `binding = "ASSETS"`, or the GitHub `Workers Builds: sns-providers` check fails immediately (missing entry-point / “Deployment skipped”).
 
-Workers Builds **does not honor** `[build]` in `wrangler.toml`. In the Cloudflare dashboard (Worker → Settings → Build) set:
+Workers Builds **does not honor** `[build]` as its dashboard Build-command step. `wrangler deploy` still runs that command, and `postinstall` builds `./dist` when Cloudflare injects `WORKERS_CI=1`. Vite and Wrangler live in `dependencies` so `npm install --omit=dev` still has them. `dist/.gitkeep` keeps the assets directory visible in git.
 
-- Build command: `npm run build`
-- Deploy command (production): `npx wrangler deploy`
-- Non-production deploy command: `npx wrangler versions upload`
+In the Cloudflare dashboard (Worker → Settings → Build):
 
-Until that Build command is set, `postinstall` still runs `npm run build` when Cloudflare injects `WORKERS_CI=1`, so `./dist` exists before `npx wrangler versions upload`. Pull-request checks also stay skipped unless the dashboard has **Builds for non-production branches** enabled (Settings → Build → Branch control).
+- Build command: `npm run build` (optional if postinstall / wrangler `[build]` already ran)
+- Deploy command (production): `npx wrangler deploy` or `npm run deploy`
+- Non-production deploy command: `npx wrangler versions upload` or `npm run upload`
+- **Builds for non-production branches**: enable this, or pull-request checks stay `Deployment skipped` even when `main` can deploy
+
+GitHub Actions Option A for the API Worker skips the deploy job when `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` are unset, instead of failing `main`.
 
 The API Worker is a separate project: `worker/wrangler.jsonc` keeps `name` as `social-mission-api`. Prefer GitHub Actions Option A for API deploys that also apply `db/schema.sql`. Do not rename the API Worker to `sns-providers`; that would overwrite the PWA deployment.
 

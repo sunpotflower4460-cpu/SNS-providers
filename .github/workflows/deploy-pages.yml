@@ -24,6 +24,8 @@ jobs:
         with:
           node-version: 22
       - uses: actions/configure-pages@v6
+        with:
+          enablement: true
       - run: npm install --no-audit --no-fund
       - run: npm run typecheck
       - run: npm run security:check

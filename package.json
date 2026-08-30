@@ -18,16 +18,16 @@
     "d1:migrate:check": "node scripts/d1-migrate.mjs --check",
     "preflight": "node scripts/preflight.mjs",
     "preflight:prod": "node scripts/preflight.mjs --prod",
-    "postinstall": "node scripts/workers-ci-build.mjs"
+    "postinstall": "node scripts/workers-ci-build.mjs",
+    "deploy": "npm run build && wrangler deploy",
+    "upload": "npm run build && wrangler versions upload"
   },
   "dependencies": {
-    "react": "19.1.1",
-    "react-dom": "19.1.1"
-  },
-  "devDependencies": {
     "@types/react": "19.1.10",
     "@types/react-dom": "19.1.7",
     "@vitejs/plugin-react": "5.0.2",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
     "typescript": "5.9.2",
     "vite": "7.1.3",
     "wrangler": "4.125.0"
