@@ -4,7 +4,7 @@ This file is the production boundary checklist for the optional Cloudflare Worke
 
 ## 1. Prefer a fresh D1 database for the first production deployment
 
-`db/schema.sql` is authoritative for a fresh database. The repository ships a placeholder D1 ID (`REPLACE_WITH_D1_DATABASE_ID`) in `worker/wrangler.jsonc` on purpose so account-specific IDs are not committed. Do not deploy paid/provider routes until that placeholder is replaced with a real database ID.
+`db/schema.sql` is authoritative for a fresh database. `worker/wrangler.jsonc` binds D1 by `database_name` and omits `database_id`. GitHub Actions can patch a real UUID into `wrangler.jsonc` for that job only via `scripts/resolve-d1-database-id.mjs --write`. Do not deploy paid/provider routes until a real D1 database exists and the Worker is reachable.
 
 ### Option A — GitHub Actions (recommended)
 
@@ -20,7 +20,7 @@ This file is the production boundary checklist for the optional Cloudflare Worke
 cd worker
 npx wrangler login
 npx wrangler d1 create social-mission
-# copy the returned database_id into worker/wrangler.jsonc
+# copy the returned database_id into worker/wrangler.jsonc if you are not using auto-provisioning
 npx wrangler d1 execute social-mission --remote --file=../db/schema.sql
 npx wrangler deploy
 ```
@@ -36,7 +36,9 @@ cd worker && npx wrangler d1 execute social-mission --remote --file=../db/schema
 
 ### Cloudflare Workers Builds (dashboard)
 
-If the Cloudflare dashboard is connected directly to this GitHub repo, it builds from the committed `wrangler.jsonc`. Until the placeholder is replaced (or the D1 binding is overridden in the dashboard), **Workers Builds will fail** even when GitHub Actions CI is green. Prefer Option A, or paste the real `database_id` into `wrangler.jsonc` after the first create if you rely on dashboard builds.
+The Git-connected dashboard Worker is named `sns-providers` and deploys the **PWA** from the repository root. Root `wrangler.toml` must use that same `name` and point `[assets].directory` at `./dist`, or the GitHub `Workers Builds: sns-providers` check fails immediately on pull requests (missing entry-point / “Deployment skipped”). Pull-request checks also stay skipped unless the dashboard has **Builds for non-production branches** enabled (Settings → Build → Branch control).
+
+The API Worker is a separate project: `worker/wrangler.jsonc` keeps `name` as `social-mission-api`. Prefer GitHub Actions Option A for API deploys that also apply `db/schema.sql`. Do not rename the API Worker to `sns-providers`; that would overwrite the PWA deployment.
 
 Then deploy the Worker and verify `/api/health` before connecting the PWA.
 
@@ -62,6 +64,10 @@ The highest-risk tables to verify are:
 - `x_owned_paging` / `x_follow_cycle_targets` — cycle and evidence integrity protects follow-back decisions.
 - `state_snapshots` — optimistic versioning protects cross-device state.
 - `x_owned_snapshots` / `instagram_engager_snapshots` — current Worker code now rejects malformed cached JSON, but the tables still need to exist with the expected keys.
+- `social_executions` — idempotency for user-approved writes. A repeated `executionId` must recover the prior result instead of posting twice.
+- `social_events` — optional provider-evidence log, conceptually separate from user-facing SocialActions.
+
+Existing databases need `CREATE TABLE IF NOT EXISTS` for the new `social_executions` and `social_events` tables. Re-running the full `db/schema.sql` is safe for new tables; it will not retrofit older tables.
 
 ## 3. X API pricing must be confirmed at deployment time
 
@@ -103,6 +109,6 @@ Do not hard-code today's rates into application logic: the Worker requires expli
 9. Configure Instagram Professional credentials/version and verify media/comment sync twice, including cache reuse.
 10. Configure free Tavily/Groq paths as desired and test automatic replenishment with the monthly paid budget still protected.
 11. Deploy the Pages build with `VITE_API_BASE_URL` pointing at the Worker.
-12. Smoke-test Today/Discover/Relations/Me/Settings on desktop and iPhone, including official X/Instagram handoff.
+12. Smoke-test Today/Discover/Relations/Me/Settings on desktop and iPhone, including Mission Inbox, official HANDOFF, and that no social write happens without a single-action approval.
 
-Final follow/like/reply/DM/unfollow actions remain human-controlled on the official social platform.
+Final social writes stay user-approved. When an official platform API permits the action, SNS-providers may execute that one approved action; otherwise it remains an explicit HANDOFF. There is still no auto-send or bulk write.

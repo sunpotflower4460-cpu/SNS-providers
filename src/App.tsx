@@ -2,16 +2,17 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { analyzeSelfProfile, apiConfigured, discoverSocialCandidates, enrichXProfiles, fetchBudget, rankCandidates } from './api';
 import BackupControls from './BackupControls';
 import { getSyncToken } from './controlToken';
-import DailyQueue from './DailyQueue';
-import { buildDailyQueue, queueSummary } from './daily';
+import { buildDailyQueue } from './daily';
+import { buildMissionInbox } from './missionInbox';
 import { mergeDiscoveredProfiles } from './discoveryStore';
 import Manual from './Manual';
+import MissionInbox from './MissionInbox';
 import Onboarding from './Onboarding';
 import { hasSeenOnboarding, markOnboardingSeen } from './onboarding';
 import { resolveVisibleResult } from './resultResolution';
 import { addCandidateFromReference, applyRankResults, applySelfAnalysis, applyXProfiles, loadState, saveState, setFollowBackStatus, syncBudget, updateCandidateDraft, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
-import { copyDraft, openCandidate, platformLabel } from './social';
-import type { AppState, AppStateUpdater, Candidate, Platform } from './types';
+import { copyDraft, openCandidate, openSocialAction, platformLabel } from './social';
+import type { AppState, AppStateUpdater, Candidate, Platform, SocialAction } from './types';
 import { useLocalDayKey } from './useLocalDay';
 import { useModalA11y } from './useModalA11y';
 
@@ -57,7 +58,7 @@ const insightCategoryLabel = {
 function App() {
   const [state, setState] = useState<AppState>(() => loadState());
   const [tab, setTab] = useState<Tab>('today');
-  const [pending, setPending] = useState<Candidate | null>(null);
+  const [pending, setPending] = useState<{ candidate: Candidate; action?: SocialAction } | null>(null);
   const [ranking, setRanking] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [enrichingX, setEnrichingX] = useState(false);
@@ -263,14 +264,17 @@ function App() {
     return relationshipDone + selfDone;
   }, [state.interactions, state.selfProfile.analyzedAt, localDay]);
 
-  function onOpen(candidate: Candidate) {
-    setPending(candidate);
-    openCandidate(candidate);
+  function onOpen(candidate: Candidate, action?: SocialAction) {
+    setPending({ candidate, action });
+    if (action) openSocialAction(action, candidate);
+    else openCandidate(candidate);
   }
 
   function resolvePending(action: 'followed' | 'skipped' | 'later' | 'kept') {
     if (!pending) return;
-    if (action !== 'later') setState((current) => resolveVisibleResult(current, pending, action));
+    if (action !== 'later') {
+      setState((current) => resolveVisibleResult(current, pending.candidate, action, pending.action));
+    }
     setPending(null);
   }
 
@@ -415,7 +419,7 @@ function App() {
       </header>
 
       <main className="page">
-        {tab === 'today' && <Today state={state} doneToday={doneToday} onOpen={onOpen} onTab={setTab} />}
+        {tab === 'today' && <Today state={state} onChange={setState} doneToday={doneToday} onOpen={onOpen} onTab={setTab} />}
         {tab === 'discover' && <Discover state={state} candidates={active} onOpen={onOpen} onChange={setState} onDiscover={discoverCandidates} onRerank={rerankCandidates} onEnrichX={enrichXCandidates} discovering={discovering} ranking={ranking} enrichingX={enrichingX} apiNote={statusNote} />}
         {tab === 'relations' && <Relations state={state} onOpen={onOpen} onChange={setState} />}
         {tab === 'me' && <Me state={state} onAnalyze={analyzeMe} analyzing={analyzingSelf} />}
@@ -430,7 +434,7 @@ function App() {
         ))}
       </nav>
 
-      {pending && <ResultSheet candidate={pending} onResolve={resolvePending} />}
+      {pending && <ResultSheet candidate={pending.candidate} action={pending.action} onResolve={resolvePending} />}
       {showOnboarding && <Onboarding onFinish={() => { markOnboardingSeen(); setShowOnboarding(false); }} onOpenManual={() => setShowManual(true)} />}
       {!showOnboarding && showManual && <Manual onClose={() => setShowManual(false)} />}
     </div>
@@ -447,15 +451,23 @@ function BudgetPill({ state }: { state: AppState }) {
   </div>;
 }
 
-function Today({ state, doneToday, onOpen, onTab }: {
-  state: AppState; doneToday: number; onOpen: (c: Candidate) => void; onTab: (tab: Tab) => void;
+function Today({ state, onChange, doneToday, onOpen, onTab }: {
+  state: AppState;
+  onChange: AppStateUpdater;
+  doneToday: number;
+  onOpen: (c: Candidate, action?: SocialAction) => void;
+  onTab: (tab: Tab) => void;
 }) {
-  const rawQueue = buildDailyQueue(state);
   const hasCandidates = state.candidates.some((candidate) => !candidate.skipped);
-  const queue = hasCandidates ? rawQueue : [];
-  const summary = queueSummary(queue);
-  const configuredLimit = Math.max(1, state.relationshipPolicy.dailyQueueLimit ?? 30);
-  const plannedTotal = hasCandidates ? Math.min(configuredLimit, doneToday + queue.length) : 0;
+  const inbox = hasCandidates ? buildMissionInbox(state) : [];
+  const remainingItems = inbox;
+  const remaining = remainingItems.length;
+  const summary = {
+    connect: remainingItems.filter((item) => item.category === 'connect').length,
+    engage: remainingItems.filter((item) => item.category === 'reply' || item.category === 'outreach' || item.category === 'nurture').length,
+    cleanup: remainingItems.filter((item) => item.category === 'cleanup').length,
+  };
+  const plannedTotal = hasCandidates ? doneToday + remaining : 0;
   const progress = plannedTotal > 0 ? Math.min(100, Math.round((doneToday / plannedTotal) * 100)) : 0;
 
   return <>
@@ -469,14 +481,14 @@ function Today({ state, doneToday, onOpen, onTab }: {
       <div className="mission-progress-head"><span>今日の進捗</span><strong>{hasCandidates ? `${doneToday} / ${plannedTotal}` : '準備前'}</strong></div>
       <div className="mission-progress" aria-label={`今日の進捗 ${progress}%`}><span style={{ width: `${progress}%` }} /></div>
       <div className="today-summary" aria-label="今日の残り内訳">
-        <span><b>{queue.length}</b>残り</span>
+        <span><b>{remaining}</b>残り</span>
         <span><b>{summary.connect}</b>新規</span>
         <span><b>{summary.engage}</b>交流</span>
         <span><b>{summary.cleanup}</b>整理</span>
       </div>
     </section>
 
-    <DailyQueue state={state} onOpenCandidate={onOpen} onOpenMe={() => onTab('me')} onOpenDiscover={() => onTab('discover')} />
+    <MissionInbox state={state} onChange={onChange} onOpenCandidate={onOpen} onOpenMe={() => onTab('me')} onOpenDiscover={() => onTab('discover')} />
 
     {state.insights[0] && <section className="coach-card">
       <div className="coach-icon">✦</div>
@@ -553,7 +565,7 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
       <div className="discover-primary-copy">
         <span className="section-kicker">おすすめ</span>
         <h2>Missionから自動で探す</h2>
-        <p>XとInstagramの公開情報から、今の目的に合う相手を探します。最終フォローや返信は公式SNSであなたが行います。</p>
+        <p>XとInstagramの公開情報から、今の目的に合う相手を探します。最終的なフォローや返信は、あなたが1件ずつ承認してから実行します。</p>
       </div>
       <button className="discovery-button" disabled={candidateOperationBusy} onClick={onDiscover}>
         <span>✦</span>
@@ -754,7 +766,7 @@ function Settings({ state, onChange, onOpenManual }: { state: AppState; onChange
           <label>フォローバック整理を確認するまで <span className="inline-value">{followBackDays}日</span><input className="range" type="range" min="7" max="90" step="1" value={followBackDays} onChange={(event) => { setFollowBackDays(Number(event.target.value)); markEdited(); }} /></label>
           <div className="hard-limit-row"><span><strong>予算上限を超えない</strong><small>設定額を超える有料API処理は実行しません</small></span><b>ON</b></div>
           <button type="button" className="policy-toggle" onClick={() => onChange((current) => updateRelationshipPolicy(current, { ...current.relationshipPolicy, autoDraftReplies: !(current.relationshipPolicy.autoDraftReplies !== false) }))}>
-            <span><strong>返信文案を自動で提案する</strong><small>AI再評価のとき、返信・DMが適切な候補に下書き文を自動生成します(1回の評価につき最大5件)。オフでも評価自体は行われますが下書きは作られません。送信は引き続きご自身で公式アプリから行います。</small></span>
+            <span><strong>返信文案を自動で提案する</strong><small>AI再評価のとき、返信・DMが適切な候補に下書き文を自動生成します(1回の評価につき最大5件)。オフでも評価自体は行われますが下書きは作られません。送信は1件ずつ、あなたが承認したときだけです。</small></span>
             <span className={state.relationshipPolicy.autoDraftReplies !== false ? 'toggle on' : 'toggle'} />
           </button>
         </div>
@@ -804,13 +816,14 @@ function PageHeading({ eyebrow, title, text }: { eyebrow: string; title: string;
   return <header className="page-heading"><span className="section-kicker">{eyebrow}</span><h1>{title}</h1><p>{text}</p></header>;
 }
 
-function ResultSheet({ candidate, onResolve }: { candidate: Candidate; onResolve: (action: 'followed' | 'skipped' | 'later' | 'kept') => void }) {
-  const cleanup = candidate.recommendedAction === 'unfollow_review';
-  const completion = outcomeForAction(candidate);
+function ResultSheet({ candidate, action, onResolve }: { candidate: Candidate; action?: SocialAction; onResolve: (sheetAction: 'followed' | 'skipped' | 'later' | 'kept') => void }) {
+  const cleanup = action ? action.type === 'unfollow_review' : candidate.recommendedAction === 'unfollow_review';
+  const completion = action ? outcomeForSocialAction(action) : outcomeForAction(candidate);
+  const visibleActionLabel = action ? socialActionResultLabel(action.type) : actionLabel[candidate.recommendedAction];
   return <div className="sheet-backdrop"><section className="result-sheet" role="dialog" aria-modal="true" aria-labelledby="result-title">
     <div className="sheet-handle" />
     <span className="section-kicker">結果を記録</span>
-    <h2 id="result-title">@{candidate.username} への{actionLabel[candidate.recommendedAction]}はどうでしたか？</h2>
+    <h2 id="result-title">@{candidate.username} への{visibleActionLabel}はどうでしたか？</h2>
     <p>{cleanup ? '公式SNSで確認した結果だけ記録します。自動でフォロー解除することはありません。' : '公式SNSでの操作結果だけ記録します。次回のおすすめ精度に使います。'}</p>
     <div className="sheet-actions">{cleanup ? <>
       <button className="sheet-primary" onClick={() => onResolve('kept')}>フォローを継続した</button>
@@ -843,6 +856,42 @@ function outcomeForAction(candidate: Candidate): { label: string; result: 'follo
     case 'reply': return { label: '返信した', result: 'kept' };
     case 'dm': return { label: 'DMした', result: 'kept' };
     default: return { label: '確認・交流した', result: 'kept' };
+  }
+}
+
+function outcomeForSocialAction(action: SocialAction): { label: string; result: 'followed' | 'kept' } {
+  switch (action.type) {
+    case 'follow': return { label: 'フォローした', result: 'followed' };
+    case 'like': return { label: 'いいねした', result: 'kept' };
+    case 'comment_reply':
+    case 'reply_inbound':
+    case 'reply_outbound':
+      return { label: '返信した', result: 'kept' };
+    case 'dm_reply':
+    case 'dm_outbound':
+      return { label: 'DMした', result: 'kept' };
+    case 'unfollow_review':
+      return { label: 'フォローを継続した', result: 'kept' };
+    default:
+      return { label: '確認・交流した', result: 'kept' };
+  }
+}
+
+function socialActionResultLabel(type: SocialAction['type']) {
+  switch (type) {
+    case 'follow': return 'フォロー';
+    case 'like': return 'いいね';
+    case 'comment_reply':
+    case 'reply_inbound':
+    case 'reply_outbound':
+      return '返信';
+    case 'dm_reply':
+    case 'dm_outbound':
+      return 'DM';
+    case 'unfollow_review':
+      return 'フォロー整理';
+    default:
+      return '確認';
   }
 }
 

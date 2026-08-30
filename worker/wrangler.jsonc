@@ -14,8 +14,10 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "social-mission",
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID"
+      "database_name": "social-mission"
+      // database_id is omitted on purpose. A non-UUID placeholder made local
+      // and GitHub Actions deploys fail closed. Wrangler / the resolve script
+      // patches a real UUID at deploy time when credentials are present.
     }
   ]
 }

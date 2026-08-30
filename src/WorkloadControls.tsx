@@ -90,7 +90,7 @@ export default function WorkloadControls({ state, onChange }: Props) {
         <WorkloadSlider label="軽く反応する" value={values.light} min={0} max={30} hint="対象投稿が決まっているいいね" onChange={(light) => apply({ ...values, light })} />
         <WorkloadSlider label="フォローを見直す" value={values.cleanup} min={0} max={30} hint="継続するか確認する相手" onChange={(cleanup) => apply({ ...values, cleanup })} />
         <WorkloadSlider label="自分の発信を整える" value={values.self} min={0} max={1} hint="その日のプロフィール・投稿分析を1回" onChange={(self) => apply({ ...values, self })} />
-        <small className="workload-warning">ここで決めるのはSNSの操作上限ではなく、あなたが1日に確認する量です。実際のフォロー・いいね・返信は公式SNSで行います。</small>
+        <small className="workload-warning">ここで決めるのはSNSの操作上限ではなく、あなたが1日に確認する量です。実際のフォロー・いいね・返信は、あなたが1件ずつ承認したあとだけ実行します。</small>
       </div>
     </details>
 

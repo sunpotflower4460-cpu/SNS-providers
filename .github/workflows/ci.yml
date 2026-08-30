@@ -26,6 +26,8 @@ jobs:
       - run: npm run build
       - name: Verify local-root production build
         run: npm run dist:check
+      - name: Verify PWA Wrangler config
+        run: npx --yes wrangler@4.125.0 deploy --dry-run --config wrangler.toml
       - name: Build with GitHub Pages base path and Worker origin
         run: npm run build
         env:

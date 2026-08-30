@@ -151,9 +151,16 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
     </div>
 
     <div className="x-scope-note">
-      <strong>見るだけの接続です</strong>
-      <span>プロフィール・投稿・フォロー関係の読み取りだけを使います。このアプリが勝手にフォロー、解除、投稿、DM送信することはありません。</span>
+      <strong>既定は読み取り接続です</strong>
+      <span>プロフィール・投稿・フォロー関係の読み取りだけを使います。返信・フォロー・DMの書き込み権限は、明示的に追加しない限り要求しません。勝手にフォロー、解除、投稿、DM送信することはありません。</span>
     </div>
+
+    {status.connected && <div className="x-capability-list" aria-label="Xの接続権限">
+      <span>{status.capabilities?.read !== false ? '✓' : '−'} 読み取り接続</span>
+      <span>{status.capabilities?.reply ? '✓' : '−'} 返信</span>
+      <span>{status.capabilities?.follow ? '✓' : '−'} フォロー</span>
+      <span>{status.capabilities?.dm ? '✓' : '−'} DM</span>
+    </div>}
 
     {status.connected && <div className="x-connection-details">
       <span><b>状態</b> 読み取り専用で接続済み{status.refreshable ? ' · 接続を自動維持' : ''}</span>
@@ -180,7 +187,7 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
 
     <details className="candidate-details">
       <summary>読み取り権限の詳細</summary>
-      <div className="candidate-details-body strategy-note"><p>使用する権限は tweet.read / users.read / follows.read / offline.access のみです。書き込み権限は要求しません。</p></div>
+      <div className="candidate-details-body strategy-note"><p>既定の接続は tweet.read / users.read / follows.read / offline.access のみです。tweet.write / follows.write / dm.read / dm.write は別の権限セットで、明示的な再接続なしでは追加しません。</p></div>
     </details>
 
     <div className="x-account-actions">

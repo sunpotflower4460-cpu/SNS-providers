@@ -45,12 +45,16 @@ requireAll(daily, [
   'completedToday',
   '今日のおすすめは完了です',
   '今は実行できる候補がありません',
+  '受信した交流は明日へ送りました',
+  'fallbackDailyQueue(state)',
+  'hasDeferredSocialWork(state)',
   'onOpenDiscover',
-], 'Today empty states can again confuse first use, completed work, and insufficient actionable evidence.');
+], 'Today empty states can again confuse first use, completed work, deferred inbox work, and insufficient actionable evidence.');
 
 requireAll(app, [
   "const hasCandidates = state.candidates.some((candidate) => !candidate.skipped);",
-  "const queue = hasCandidates ? rawQueue : [];",
+  "const inbox = hasCandidates ? buildMissionInbox(state) : [];",
+  "const plannedTotal = hasCandidates ? doneToday + remaining : 0;",
   "hasCandidates ? `${doneToday} / ${plannedTotal}` : '準備前'",
 ], 'First-use progress can again show synthetic self-actions or a misleading completed state before any candidate exists.');
 

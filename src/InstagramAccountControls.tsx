@@ -36,7 +36,7 @@ export default function InstagramAccountControls({ state, onChange }: { state: A
     </div>
     <div className="instagram-source-note">
       <strong>自分の投稿へのコメントだけを読み取ります</strong>
-      <span>Instagram全体を勝手に巡回したり、知らない人の情報を大量取得したりはしません。Professionalアカウントの公式な接続だけを使います。</span>
+      <span>コメント返信は公式APIが許可する範囲でアプリ内実行の対象です。フォローは公式プロフィールへのHANDOFFのままです。勝手に巡回したり、承認なしで送信したりはしません。</span>
     </div>
     {state.instagramAccount?.lastSyncedAt && <div className="instagram-sync-summary">
       <span><b>{state.instagramAccount.mediaScanned || 0}</b> 投稿を確認</span>

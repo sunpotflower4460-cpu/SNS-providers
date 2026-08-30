@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { buildDailyQueue } from './daily';
+import { fallbackDailyQueue, hasDeferredSocialWork } from './missionInbox';
 import { platformLabel } from './social';
 import type { AppState, Candidate } from './types';
 import { localDayKey, useLocalDayKey } from './useLocalDay';
@@ -34,7 +34,7 @@ const actionLabel: Record<string, string> = {
 
 export default function DailyQueue({ state, onOpenCandidate, onOpenMe, onOpenDiscover }: Props) {
   const localDay = useLocalDayKey();
-  const items = useMemo(() => buildDailyQueue(state), [state, localDay]);
+  const items = useMemo(() => fallbackDailyQueue(state), [state, localDay]);
   const candidateById = useMemo(() => new Map(state.candidates.map((candidate) => [candidate.id, candidate])), [state.candidates]);
   const activeCandidateCount = state.candidates.filter((candidate) => !candidate.skipped).length;
   const completedToday = useMemo(() => {
@@ -75,6 +75,16 @@ export default function DailyQueue({ state, onOpenCandidate, onOpenMe, onOpenDis
       <span className="section-kicker">今日のおすすめ</span>
       <h3>今日のおすすめは完了です</h3>
       <p>追加で無理に行動する必要はありません。新しい相手を見たいときだけ、候補一覧を確認できます。</p>
+      <button className="secondary-button empty-action" onClick={onOpenDiscover}>候補を見る</button>
+    </section>;
+  }
+
+  if (!items.length && hasDeferredSocialWork(state)) {
+    return <section className="daily-queue empty deferred-empty">
+      <div className="queue-wait-icon">○</div>
+      <span className="section-kicker">今日のおすすめ</span>
+      <h3>受信した交流は明日へ送りました</h3>
+      <p>スヌーズしたコメントは期限が来ると Inbox に戻ります。今は無理に別の相手へ進まなくて大丈夫です。</p>
       <button className="secondary-button empty-action" onClick={onOpenDiscover}>候補を見る</button>
     </section>;
   }

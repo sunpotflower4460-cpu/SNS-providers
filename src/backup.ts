@@ -1,3 +1,4 @@
+import { normalizeSocialActions } from './socialAction';
 import type { AppState, Candidate, Interaction, RelationshipPolicy, SelfInsight } from './types';
 
 interface BackupEnvelope {
@@ -101,6 +102,13 @@ export function normalizeAppState(state: AppState): AppState {
     ? state.insights.map(normalizeInsight).filter((insight): insight is SelfInsight => insight !== null)
     : [];
   const insights = dedupeById(normalizedInsights).slice(0, 50);
+  const socialActions = normalizeSocialActions(state?.socialActions)
+    .map((action) => {
+      const candidateId = resolveCandidateAlias(action.candidateId, deduped.aliases);
+      return candidateId === action.candidateId ? action : { ...action, candidateId };
+    })
+    .filter((action) => candidateIds.has(action.candidateId)
+      && !deduped.invalidInteractionCandidateIds.has(action.candidateId));
 
   return {
     mission: {
@@ -111,6 +119,7 @@ export function normalizeAppState(state: AppState): AppState {
     },
     candidates,
     interactions,
+    socialActions,
     budget: {
       monthlyLimitUsd: clampNumber(state?.budget?.monthlyLimitUsd, 0, 10, 3),
       hardLimit: true,
@@ -138,7 +147,7 @@ export function normalizeAppState(state: AppState): AppState {
 
 export function validateAppState(state: AppState) {
   if (!state.mission || typeof state.mission.text !== 'string' || typeof state.mission.primaryGoal !== 'string' || !Array.isArray(state.mission.secondaryGoals)) throw new Error('Missionデータが不正です');
-  if (!Array.isArray(state.candidates) || !Array.isArray(state.interactions)) throw new Error('候補・交流データが不正です');
+  if (!Array.isArray(state.candidates) || !Array.isArray(state.interactions) || !Array.isArray(state.socialActions)) throw new Error('候補・交流データが不正です');
   if (!state.budget || typeof state.budget.monthlyLimitUsd !== 'number' || !Number.isFinite(state.budget.monthlyLimitUsd) || state.budget.hardLimit !== true) throw new Error('予算データが不正です');
   if (!state.relationshipPolicy || typeof state.relationshipPolicy.followBackReviewAfterDays !== 'number') throw new Error('関係性ポリシーが不正です');
   if (!state.selfProfile || typeof state.selfProfile.profileText !== 'string' || typeof state.selfProfile.recentPostsText !== 'string') throw new Error('自己分析データが不正です');
@@ -220,6 +229,8 @@ function normalizeInteraction(raw: Interaction): Interaction | null {
     action: action as Interaction['action'],
     at,
     note: safeText(raw.note, 2000) || undefined,
+    socialActionId: safeText(raw.socialActionId, 180) || undefined,
+    externalResultId: safeText(raw.externalResultId, 180) || undefined,
   };
 }
 

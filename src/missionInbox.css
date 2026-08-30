@@ -1,0 +1,78 @@
+.mission-inbox .inbox-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 12px;
+}
+.mission-inbox .inbox-summary span {
+  display: grid;
+  gap: 2px;
+  padding: 8px 6px;
+  border: 1px solid rgba(255,255,255,.06);
+  border-radius: 12px;
+  background: rgba(255,255,255,.025);
+  color: #8b9aab;
+  font-size: 10px;
+  text-align: center;
+}
+.mission-inbox .inbox-summary b {
+  color: #e8eef6;
+  font-size: 16px;
+}
+.inbox-action-card {
+  margin-top: 14px;
+  padding: 16px;
+  border: 1px solid rgba(114,223,189,.18);
+  border-radius: 18px;
+  background: rgba(114,223,189,.06);
+}
+.inbox-action-card.featured { box-shadow: 0 12px 30px rgba(0,0,0,.16); }
+.inbox-action-meta {
+  display: grid;
+  grid-template-columns: 44px minmax(0,1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+.inbox-action-meta small { color: #72dfbd; font-size: 10px; font-weight: 800; }
+.inbox-action-meta strong { display: block; font-size: 15px; }
+.inbox-action-meta span { color: #8f9fb2; font-size: 11px; }
+.exec-mode {
+  padding: 5px 8px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 800;
+  letter-spacing: .04em;
+}
+.exec-mode.in-app { color: #06120e; background: #72dfbd; }
+.exec-mode.handoff { color: #ffc27c; background: rgba(255,194,124,.12); border: 1px solid rgba(255,194,124,.22); }
+.inbox-inbound {
+  margin: 12px 0 8px;
+  color: #dce5ef;
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.inbox-reason {
+  margin: 0;
+  color: #8f9fb2;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.inbox-execute-note {
+  margin: 8px 0 0;
+  color: #9aa8b8;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.inbox-action-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 14px;
+}
+.inbox-action-buttons .primary-button { grid-column: 1 / -1; }
+@media (max-width: 480px) {
+  .mission-inbox .inbox-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

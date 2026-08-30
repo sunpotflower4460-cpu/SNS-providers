@@ -61,6 +61,105 @@ export interface Interaction {
   action: RecommendedAction | 'followed' | 'skipped' | 'kept';
   at: string;
   note?: string;
+  socialActionId?: string;
+  externalResultId?: string;
+}
+
+export type SocialActionType =
+  | 'reply_inbound'
+  | 'reply_outbound'
+  | 'comment_reply'
+  | 'dm_reply'
+  | 'dm_outbound'
+  | 'follow'
+  | 'like'
+  | 'reconnect'
+  | 'relationship_review'
+  | 'unfollow_review';
+
+export type SocialActionStatus =
+  | 'pending'
+  | 'ready'
+  | 'snoozed'
+  | 'executing'
+  | 'completed'
+  | 'dismissed'
+  | 'failed'
+  | 'expired';
+
+export type ExecutionMode = 'in_app' | 'handoff';
+
+export type SocialActionSource =
+  | 'x_mention'
+  | 'x_dm'
+  | 'x_discovery'
+  | 'x_relationship'
+  | 'instagram_comment'
+  | 'instagram_dm'
+  | 'instagram_discovery'
+  | 'relationship_engine'
+  | 'manual';
+
+export interface SocialAction {
+  id: string;
+  platform: Platform;
+  candidateId: string;
+  type: SocialActionType;
+  status: SocialActionStatus;
+  executionMode: ExecutionMode;
+  source: SocialActionSource;
+  externalEventId?: string;
+  conversationId?: string;
+  parentContentId?: string;
+  targetUrl?: string;
+  inboundText?: string;
+  contextText?: string;
+  aiDraft?: string;
+  draft?: string;
+  missionRelevance: number;
+  relationshipValue: number;
+  urgency: number;
+  conversationOpportunity: number;
+  authenticityRisk: number;
+  priorityScore: number;
+  reason: string;
+  observedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  snoozedUntil?: string;
+  completedAt?: string;
+  executionId?: string;
+  failureReason?: string;
+}
+
+export interface SocialCapabilities {
+  readMentions: boolean;
+  readComments: boolean;
+  readDm: boolean;
+  sendReply: boolean;
+  sendCommentReply: boolean;
+  sendDm: boolean;
+  follow: boolean;
+  unfollow: boolean;
+  like: boolean;
+}
+
+export type SocialEventType = 'mention' | 'reply' | 'comment' | 'dm' | 'follow';
+
+export interface SocialEvent {
+  id: string;
+  platform: Platform;
+  type: SocialEventType;
+  externalEventId: string;
+  externalUserId?: string;
+  text?: string;
+  conversationId?: string;
+  contentId?: string;
+  parentContentId?: string;
+  permalink?: string;
+  occurredAt: string;
+  receivedAt: string;
+  rawHash?: string;
 }
 
 export interface BudgetState {
@@ -134,6 +233,7 @@ export interface AppState {
   mission: Mission;
   candidates: Candidate[];
   interactions: Interaction[];
+  socialActions: SocialAction[];
   budget: BudgetState;
   relationshipPolicy: RelationshipPolicy;
   insights: SelfInsight[];

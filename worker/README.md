@@ -23,6 +23,7 @@ Personal-control Bearer token required unless otherwise noted:
 - `DELETE /api/x/oauth/disconnect?userId=local-user`
 - `POST /api/x/owned/sync`
 - `POST /api/instagram/engagers/sync`
+- `POST /api/social/actions/:id/execute` — user-approved single-action execute boundary; live writes stay disabled
 - `GET /api/sync/state?userId=local-user`
 - `PUT /api/sync/state`
 
@@ -40,6 +41,7 @@ The same personal key protects:
 - starting/disconnecting X OAuth
 - reading the connected account's owned X data
 - synchronizing Instagram Professional comment engagers
+- the user-approved social execute boundary
 
 Generate the Worker-side hash, for example:
 
@@ -65,16 +67,16 @@ This prevents silent stale-device overwrites. It is still manual snapshot synchr
 
 Snapshots are capped at 2 MB. This is access-controlled synchronization, **not application-level encryption of the state data at rest**.
 
-## Read-only X OAuth
+## Default read-only X OAuth
 
-X OAuth uses Authorization Code with PKCE and the scopes are fixed in source code to:
+X OAuth uses Authorization Code with PKCE. The default connect request is fixed in source code to:
 
 - `tweet.read`
 - `users.read`
 - `follows.read`
 - `offline.access`
 
-No `tweet.write`, `follows.write`, DM-write or other social-action scope is requested. CI parses this list and fails if a write-capable scope is added.
+`tweet.write`, `follows.write`, `dm.read` and `dm.write` exist as a separate optional write set. They are not requested by the default connection. CI fails if the default authorize URL starts requesting that write set, and also fails if a write-capable scope is added to `READ_ONLY_SCOPES`. Grant validation compares the token to the requested set, so extra write scopes cannot silently appear.
 
 Required Worker configuration:
 
@@ -144,7 +146,7 @@ The current sync deliberately reads only:
 1. a bounded set of media owned by the configured account (default 8, maximum 12), then
 2. a bounded set of comments on those media (default 25 per media, maximum 50).
 
-From comment objects it uses commenter identity/username and comment text to build a reusable set of people who have **already chosen to interact with the user's content**. Those people can be promoted into the PWA candidate pool with higher relationship priority, and the related post permalink is retained so the user can return to the real conversation context.
+From comment objects it uses commenter identity/username, latest comment ID, comment text, media ID and the related post permalink. These fields are bound to the **same latest comment event**. Those people can be promoted into the PWA candidate pool with higher relationship priority, and each new actionable comment becomes a `comment_reply` SocialAction.
 
 The adapter:
 
@@ -156,6 +158,12 @@ The adapter:
 - records application-tracked external cost as `$0`; Meta rate limits still apply
 
 For a larger production deployment, comment webhooks are preferable to frequent polling. This initial personal PWA keeps explicit manual sync and caching so the behavior remains easy to inspect.
+
+## User-approved social execute
+
+`POST /api/social/actions/:id/execute` is the generic write boundary. It requires the personal control key, a single action, and a durable `executionId`. Bulk paths are rejected. HANDOFF, completed, expired, identity-conflict and mis-bound actions cannot write.
+
+Live provider writes stay disabled. `SOCIAL_WRITE_MODE=test` can record an idempotent fake success for invariant tests; unknown write prices fail closed. A repeated `executionId` recovers the prior `social_executions` row instead of posting twice.
 
 ## Free social discovery
 
@@ -227,7 +235,8 @@ Provider prices, Owned Read eligibility, Meta permission requirements and free-t
 The root `npm run security:check` is executed in CI and verifies important source-level boundaries:
 
 - provider/quota-bearing routes stay behind the personal-control gate
-- X OAuth keeps its required read-only scopes and gains no write scope
+- X OAuth default connect stays read-only; optional write scopes remain a separate unrequested set
+- SocialAction restore, dedupe, Mission Inbox fallback, execute auth/idempotency and untrusted social prompt policy
 - optimistic D1 state-sync protection remains present
 
 These checks complement TypeScript/build validation so the most important cost/safety rules do not depend on documentation alone.

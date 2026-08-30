@@ -298,6 +298,12 @@ for (const scope of requiredReadScopes) {
 
 const writeScopes = scopes.filter((scope) => scope.includes('.write') || scope === 'dm.write');
 if (writeScopes.length) throw new Error(`Write-capable X OAuth scope detected: ${writeScopes.join(', ')}`);
+if (!xOAuth.includes("const OPTIONAL_WRITE_SCOPES = ['tweet.write', 'follows.write', 'dm.read', 'dm.write']")
+  || !xOAuth.includes('scope: READ_ONLY_SCOPES.join')
+  || xOAuth.includes('scope: OPTIONAL_WRITE_SCOPES.join')
+  || !xOAuth.includes('requestedScopes: readonly string[] = READ_ONLY_SCOPES')) {
+  throw new Error('X OAuth write capabilities are no longer an explicit, opt-in scope set separate from the default read-only connection.');
+}
 if (!xOAuth.includes('validateGrantedScopes(token.scope, existingGrantedScope)')
   || !xOAuth.includes('X OAuth response is missing granted scope metadata')
   || !xOAuth.includes('X OAuth returned unexpected scope(s)')

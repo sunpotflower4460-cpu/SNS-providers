@@ -148,6 +148,34 @@ CREATE TABLE IF NOT EXISTS instagram_engager_snapshots (
   synced_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS social_executions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  action_id TEXT NOT NULL,
+  platform TEXT NOT NULL CHECK(platform IN ('x','instagram')),
+  operation TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  external_result_id TEXT,
+  status TEXT NOT NULL CHECK(status IN ('pending','succeeded','failed')),
+  error_code TEXT,
+  created_at TEXT NOT NULL,
+  completed_at TEXT,
+  UNIQUE(user_id, idempotency_key)
+);
+
+CREATE TABLE IF NOT EXISTS social_events (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  platform TEXT NOT NULL CHECK(platform IN ('x','instagram')),
+  event_type TEXT NOT NULL,
+  external_event_id TEXT NOT NULL,
+  external_user_id TEXT,
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  occurred_at TEXT NOT NULL,
+  received_at TEXT NOT NULL,
+  UNIQUE(user_id, platform, event_type, external_event_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_candidates_user_match ON candidates(user_id, mission_match DESC);
 CREATE INDEX IF NOT EXISTS idx_candidates_stage ON candidates(user_id, stage);
 CREATE INDEX IF NOT EXISTS idx_interactions_candidate ON interactions(candidate_id, occurred_at DESC);
@@ -155,3 +183,5 @@ CREATE INDEX IF NOT EXISTS idx_daily_queue_date ON daily_queue(user_id, queue_da
 CREATE INDEX IF NOT EXISTS idx_budget_month ON budget_ledger(user_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_x_oauth_sessions_created ON x_oauth_sessions(created_at);
 CREATE INDEX IF NOT EXISTS idx_x_follow_cycle_targets_seen ON x_follow_cycle_targets(user_id, cycle, seen);
+CREATE INDEX IF NOT EXISTS idx_social_executions_user ON social_executions(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_social_events_user ON social_events(user_id, occurred_at DESC);
