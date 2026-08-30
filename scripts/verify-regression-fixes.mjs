@@ -324,6 +324,8 @@ if (!xOwnedStore.includes('if (!fromCache)')
 if (!/^name = "sns-providers"$/m.test(pwaWrangler)
   || !pwaWrangler.includes('directory = "./dist"')
   || !pwaWrangler.includes('not_found_handling = "single-page-application"')
+  || !pwaWrangler.includes('binding = "ASSETS"')
+  || !pwaWrangler.includes('main = "./pwa-worker.js"')
   || !/"name"\s*:\s*"social-mission-api"/.test(wrangler)
   || /"name"\s*:\s*"sns-providers"/.test(wrangler)) {
   throw new Error('Cloudflare Workers Builds needs root wrangler.toml named sns-providers for the PWA; the API Worker must stay social-mission-api.');

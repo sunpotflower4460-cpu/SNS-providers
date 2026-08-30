@@ -49,7 +49,15 @@ cd worker && npx wrangler d1 execute social-mission --remote --file=../db/schema
 
 ### Cloudflare Workers Builds (dashboard)
 
-The Git-connected dashboard Worker is named `sns-providers` and deploys the **PWA** from the repository root. Root `wrangler.toml` must use that same `name` and point `[assets].directory` at `./dist`, or the GitHub `Workers Builds: sns-providers` check fails immediately on pull requests (missing entry-point / “Deployment skipped”). Pull-request checks also stay skipped unless the dashboard has **Builds for non-production branches** enabled (Settings → Build → Branch control).
+The Git-connected dashboard Worker is named `sns-providers` and deploys the **PWA** from the repository root. Root `wrangler.toml` must use that same `name`, set `main` to `./pwa-worker.js`, and point `[assets].directory` at `./dist` with `binding = "ASSETS"`, or the GitHub `Workers Builds: sns-providers` check fails immediately on pull requests (missing entry-point / “Deployment skipped”).
+
+Workers Builds **does not honor** `[build]` in `wrangler.toml`. In the Cloudflare dashboard (Worker → Settings → Build) set:
+
+- Build command: `npm run build`
+- Deploy command (production): `npx wrangler deploy`
+- Non-production deploy command: `npx wrangler versions upload`
+
+Until that Build command is set, the Workers Builds check fails on `main` as well as on PRs even when GitHub Actions `web` / `worker` are green. Pull-request checks also stay skipped unless the dashboard has **Builds for non-production branches** enabled (Settings → Build → Branch control).
 
 The API Worker is a separate project: `worker/wrangler.jsonc` keeps `name` as `social-mission-api`. Prefer GitHub Actions Option A for API deploys that also apply `db/schema.sql`. Do not rename the API Worker to `sns-providers`; that would overwrite the PWA deployment.
 
