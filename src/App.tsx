@@ -556,23 +556,18 @@ function Today({ state, onChange, doneToday, onOpen, onTab, capabilityEpoch }: {
       </div>
       <h1>{state.mission.primaryGoal}</h1>
       {extraGoals.length > 0 && (
-        extraGoals.length <= 2 && hasCandidates ? (
+        <details className="mission-more">
+          <summary>ほか {extraGoals.length}件の目的地</summary>
           <ul className="mission-destinations" aria-label="ほかの目的地">
             {extraGoals.map((label, index) => <li key={`${index}:${label}`}>{label}</li>)}
           </ul>
-        ) : (
-          <details className="mission-more">
-            <summary>ほか {extraGoals.length}件の目的地</summary>
-            <ul className="mission-destinations" aria-label="ほかの目的地">
-              {extraGoals.map((label, index) => <li key={`${index}:${label}`}>{label}</li>)}
-            </ul>
-          </details>
-        )
+        </details>
       )}
       {missionNote && (
-        hasCandidates
-          ? <p>{missionNote}</p>
-          : <details className="mission-more"><summary>詳しく</summary><p>{missionNote}</p></details>
+        <details className="mission-more">
+          <summary>詳しく</summary>
+          <p>{missionNote}</p>
+        </details>
       )}
       <div className={hasCandidates ? 'mission-meter' : 'mission-meter is-idle'}>
         <div className="mission-progress-head"><span>今日の進捗</span><strong>{hasCandidates ? `${doneToday} / ${plannedTotal}` : '準備前'}</strong></div>
