@@ -122,6 +122,12 @@ export function normalizeAppState(state: AppState): AppState {
     socialActions,
     budget: {
       monthlyLimitUsd: clampNumber(state?.budget?.monthlyLimitUsd, 0, 10, 3),
+      effectiveLimitUsd: clampNumber(
+        state?.budget?.effectiveLimitUsd,
+        0,
+        10,
+        clampNumber(state?.budget?.monthlyLimitUsd, 0, 10, 3),
+      ),
       hardLimit: true,
       usedUsd: clampNumber(state?.budget?.usedUsd, 0, 1_000_000, 0),
       xUsd: clampNumber(state?.budget?.xUsd, 0, 1_000_000, 0),

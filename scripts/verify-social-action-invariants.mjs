@@ -18,6 +18,7 @@ const instagramOwnedStore = await readFile(new URL('../src/instagramOwnedStore.t
 const instagramAccount = await readFile(new URL('../src/instagramAccount.ts', import.meta.url), 'utf8');
 const router = await readFile(new URL('../worker/src/router.ts', import.meta.url), 'utf8');
 const execute = await readFile(new URL('../worker/src/social/execute.ts', import.meta.url), 'utf8');
+const inboxSync = await readFile(new URL('../worker/src/social/inboxSync.ts', import.meta.url), 'utf8');
 const executeGuard = await readFile(new URL('../worker/src/social/executeGuard.ts', import.meta.url), 'utf8');
 const xOAuth = await readFile(new URL('../worker/src/xOAuth.ts', import.meta.url), 'utf8');
 const providerApi = await readFile(new URL('../worker/src/index.ts', import.meta.url), 'utf8');
@@ -233,5 +234,22 @@ if (!/url\.pathname === '\/api\/social\/capabilities'[\s\S]{0,500}?authorizeSync
 if (execute.includes('parsed.action.platform') || execute.includes('body.action.externalEventId')) {
   throw new Error('Execute still treats client-supplied action targeting fields as authoritative.');
 }
+if (execute.includes('lookupXAuthenticatedUser')) {
+  throw new Error('Execute still performs a live /users/me lookup for fingerprint or adapter actor ID.');
+}
+requireAll(execute, [
+  'authenticatedUserId',
+  'durableXUserId',
+  'resolveFingerprintActorId',
+  'knownLookupReadCost',
+  'failClosedIfLookupRequired',
+], 'Execute lost durable X actor reuse or lookup fail-closed accounting.');
+requireAll(inboxSync, [
+  'Promise.allSettled',
+  'x_mentions_sync',
+  'x_dm_sync',
+  'instagram_comments_sync',
+  'instagram_dm_sync',
+], 'Scheduled inbox sources are no longer started concurrently under source leases.');
 
 console.log('SocialAction source invariants OK: model/state/restore, Mission Inbox fallback, Instagram same-event ingestion, server-authoritative execute, live capabilities, explicit X OAuth capability split, and untrusted social prompt policy.');

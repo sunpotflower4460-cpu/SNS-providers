@@ -19,6 +19,8 @@ const workloadCss = await readFile(new URL('../src/workload.css', import.meta.ur
 const xAccountCss = await readFile(new URL('../src/xAccount.css', import.meta.url), 'utf8');
 const instagramCss = await readFile(new URL('../src/instagramAccount.css', import.meta.url), 'utf8');
 const budgetCeilingSave = await readFile(new URL('../src/budgetCeilingSave.ts', import.meta.url), 'utf8');
+const settingsSave = await readFile(new URL('../src/settingsSave.ts', import.meta.url), 'utf8');
+const store = await readFile(new URL('../src/store.ts', import.meta.url), 'utf8');
 
 function requireAll(source, fragments, message) {
   if (!fragments.every((fragment) => source.includes(fragment))) throw new Error(message);
@@ -134,6 +136,10 @@ requireAll(app, [
   "{saving ? '保存中…' : saved ? '保存しました' : 'この設定を保存'}",
   '予算上限をサーバーへ保存できませんでした',
   'persistServerBudgetCeiling',
+  'completeSettingsBudgetSave',
+  'monthlyLimitUsd: applied.monthlyLimitUsd',
+  'effectiveLimitUsd: applied.effectiveLimitUsd',
+  'editVersionRef',
   'あなたの上限:',
   'サーバー上限:',
   '実効上限:',
@@ -150,8 +156,23 @@ requireAll(budgetCeilingSave, [
   'serverHardLimitUsd',
 ], 'Budget ceiling save helper lost fail-closed server confirmation.');
 
+requireAll(settingsSave, [
+  'shouldApplySettingsSave',
+  'clientBudgetAfterServerSave',
+  'monthlyLimitUsd: result.monthlyBudgetCeilingUsd',
+  'effectiveLimitUsd: result.effectiveLimitUsd',
+  'inputUsd: result.monthlyBudgetCeilingUsd',
+], 'Settings save helper no longer preserves the user ceiling separately from the effective spending limit.');
+
+requireAll(store, [
+  'export function spendingCeilingUsd',
+  'monthlyLimitUsd: userCeiling',
+  'effectiveLimitUsd: effective',
+], 'Client budget sync can again overwrite the saved user ceiling with the server HARD LIMIT.');
+
 requireAll(app, [
-  'const freeOnly = state.budget.monthlyLimitUsd === 0;',
+  'const spendLimit = spendingCeilingUsd(state.budget);',
+  'const freeOnly = spendLimit === 0;',
   'const hasSpend = state.budget.usedUsd > 0.00001;',
   '有料処理OFF',
 ], 'Budget pill can again claim free operation while existing paid spend is present.');

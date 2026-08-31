@@ -377,6 +377,7 @@ function withXMe(run) {
         return { certainty: 'success', externalResultId: '99', metadata: { pendingFollow: true, relationship: 'pending_follow' } };
       },
       xGrantedScopes: ['tweet.read', 'users.read', 'follows.read', 'offline.access', 'follows.write'],
+      authenticatedUserId: '1',
       getXAccessToken: async () => 'tok',
     });
     if (result.status !== 200 || result.body.certainty !== 'success') fail(`Follow execute failed: ${JSON.stringify(result.body)}`);
@@ -416,6 +417,7 @@ function withXMe(run) {
     const liked = await executeSocialAction(env, 'local-user', 'sa-x-like-555', { executionId: 'exec-like-1', draft: '', tweetId: '999' }, {
       likeXTweet: async (input) => { likes.push(input); return { certainty: 'success', externalResultId: '555' }; },
       xGrantedScopes: ['tweet.read', 'users.read', 'follows.read', 'offline.access', 'like.write'],
+      authenticatedUserId: '1',
       getXAccessToken: async () => 'tok',
     });
     if (liked.body.certainty !== 'success' || likes[0].tweetId !== '555') fail('Like execute did not use the canonical tweet ID.');
@@ -445,6 +447,7 @@ function withXMe(run) {
     const sent = await executeSocialAction(env, 'local-user', 'sa-x-dm-1', { executionId: 'exec-dm-1', draft: 'thanks', conversationId: 'tampered' }, {
       sendXDm: async (input) => { dms.push(input); return { certainty: 'success', externalResultId: 'evt-out' }; },
       xGrantedScopes: ['tweet.read', 'users.read', 'follows.read', 'offline.access', 'dm.read', 'dm.write'],
+      authenticatedUserId: '1',
       getXAccessToken: async () => 'tok',
     });
     if (sent.body.certainty !== 'success' || dms[0].conversationId !== 'convo-1') fail(`DM execute used a client conversation ID: ${JSON.stringify(sent.body)}`);
@@ -493,6 +496,7 @@ function withXMe(run) {
         return { certainty: 'failure', retryable: false, errorCode: 'INVALID_ACTION', reason: 'protected' };
       },
       xGrantedScopes: ['tweet.read', 'users.read', 'follows.read', 'offline.access', 'follows.write'],
+      authenticatedUserId: '1',
       getXAccessToken: async () => 'tok',
     });
     if (failed.body.certainty !== 'failure') fail('Confirmed follow failure was not failure.');

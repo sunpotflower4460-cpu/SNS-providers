@@ -17,7 +17,7 @@ import { followXUser, unfollowXUser } from './x/follow';
 import { likeXTweet } from './x/like';
 import { sendXDm } from './x/dm';
 import { replyToXTweet } from './x/execute';
-import { lookupXAuthenticatedUser } from './x/lookup';
+import { X_USER_ID } from './ids';
 import { getValidXAccessToken, xOAuthStatus, type XOAuthEnv } from '../xOAuth';
 import {
   claimActionForExecution,
@@ -47,6 +47,8 @@ export interface SocialExecuteEnv extends XOAuthEnv {
   INSTAGRAM_DM_WRITE_USD?: string;
   X_UNFOLLOW_WRITE_USD?: string;
   X_LIKE_WRITE_USD?: string;
+  X_LOOKUP_READ_USD?: string;
+  X_USER_READ_USD?: string;
   INSTAGRAM_DM_WRITE_ENABLED?: string;
   X_FOLLOW_WRITE_ENABLED?: string;
   X_UNFOLLOW_WRITE_ENABLED?: string;
@@ -80,6 +82,7 @@ export interface SocialExecuteAdapters {
   sendXDm?: typeof sendXDm;
   sendInstagramDm?: typeof sendInstagramDm;
   xGrantedScopes?: readonly string[];
+  authenticatedUserId?: string;
   getXAccessToken?: () => Promise<string>;
 }
 
@@ -121,9 +124,17 @@ export async function executeSocialAction(
   const existing = await loadExecution(env, userId, parsed.executionId);
   if (existing) return recoverExecution(existing, action, operation);
 
-  const xScopes = action.platform === 'x'
-    ? (adapters.xGrantedScopes || (await xOAuthStatus(env, userId)).scopes || [])
-    : [];
+  let storedXUserId: string | null = adapters.authenticatedUserId?.trim() || null;
+  let xScopes: readonly string[] = [];
+  if (action.platform === 'x') {
+    if (adapters.xGrantedScopes) {
+      xScopes = adapters.xGrantedScopes;
+    } else {
+      const oauth = await xOAuthStatus(env, userId);
+      xScopes = oauth.scopes || [];
+      storedXUserId = storedXUserId || oauth.xUserId || null;
+    }
+  }
   const capabilities = action.platform === 'instagram'
     ? liveInstagramCapabilities(env, env.SOCIAL_WRITE_MODE === 'test' ? undefined : await probeInstagramPermissions(env, userId).catch(() => null))
     : liveXCapabilities(env, xScopes, true);
@@ -207,8 +218,36 @@ export async function executeSocialAction(
     return { status: 403, body: { ok: false as const, code: 'WRITE_COST_UNKNOWN', reason: 'Billable social writes fail closed when accounting is unavailable.' } };
   }
 
+  const actorId = resolveFingerprintActorId(env, action.platform, storedXUserId, adapters.authenticatedUserId);
+  if (!actorId) {
+    await completeExecution(env, { ...record, status: 'failed', errorCode: 'CAPABILITY_DENIED', completedAt: new Date().toISOString() });
+    await finalizeActionStatus(env.DB, userId, action.id, 'failed', { retryable: true, nowIso: new Date().toISOString() });
+    return {
+      status: 403,
+      body: {
+        ok: false as const,
+        code: 'CAPABILITY_DENIED',
+        reason: action.platform === 'x'
+          ? 'Durable verified X user ID is missing; live /users/me is not used for fingerprints. Reconnect X OAuth.'
+          : 'Authenticated actor ID is required before a provider write.',
+      },
+    };
+  }
+  const lookupGate = failClosedIfLookupRequired(env, false);
+  if (!lookupGate.ok) {
+    await completeExecution(env, { ...record, status: 'failed', errorCode: 'WRITE_COST_UNKNOWN', completedAt: new Date().toISOString() });
+    await finalizeActionStatus(env.DB, userId, action.id, 'failed', { retryable: true, nowIso: new Date().toISOString() });
+    return { status: 403, body: lookupGate };
+  }
+  const reserveAmount = totalExecutionReserveUsd(cost || 0, false, knownLookupReadCost(env));
+  if (reserveAmount == null && env.SOCIAL_WRITE_MODE !== 'test') {
+    await completeExecution(env, { ...record, status: 'failed', errorCode: 'WRITE_COST_UNKNOWN', completedAt: new Date().toISOString() });
+    await finalizeActionStatus(env.DB, userId, action.id, 'failed', { retryable: true, nowIso: new Date().toISOString() });
+    return { status: 403, body: { ok: false as const, code: 'WRITE_COST_UNKNOWN', reason: 'Execution budget could not be accounted.' } };
+  }
+
   let reservationId: string | null = null;
-  if ((cost || 0) > 0) {
+  if ((reserveAmount || 0) > 0) {
     const usage = await readActiveMonthUsage(env.DB, userId);
     if (!usage.available) {
       await completeExecution(env, { ...record, status: 'failed', errorCode: 'WRITE_COST_UNKNOWN', completedAt: new Date().toISOString() });
@@ -223,7 +262,7 @@ export async function executeSocialAction(
       userId,
       provider: action.platform,
       operation,
-      amountUsd: cost || 0,
+      amountUsd: reserveAmount || 0,
       effectiveLimit,
       occurredAt: new Date().toISOString(),
     });
@@ -240,25 +279,6 @@ export async function executeSocialAction(
   let result: ProviderWriteResult;
   try {
     const boundTarget = resolveWriteTarget(action, event);
-    let accessToken = '';
-    if (action.platform === 'x' && env.SOCIAL_WRITE_MODE !== 'test') {
-      accessToken = adapters.getXAccessToken
-        ? await adapters.getXAccessToken()
-        : await getValidXAccessToken(env, userId);
-    }
-    let actorId = action.platform === 'instagram' ? env.INSTAGRAM_USER_ID?.trim() : undefined;
-    if (action.platform === 'x') {
-      if (env.SOCIAL_WRITE_MODE === 'test' && !accessToken) {
-        actorId = actorId || 'test-actor';
-      } else {
-        const me = await lookupXAuthenticatedUser(accessToken);
-        actorId = me?.id;
-      }
-    }
-    if (env.SOCIAL_WRITE_MODE === 'test' && !actorId) actorId = 'test-actor';
-    if (!actorId) {
-      throw new Error('Authenticated actor ID is required before a provider write.');
-    }
     const targetId = isExecuteGuardErr(boundTarget)
       ? (action.externalEventId || action.platformUserId || action.id)
       : boundTarget.externalEventId;
@@ -272,7 +292,7 @@ export async function executeSocialAction(
     });
     await persistExecutionFingerprintOrThrow(env.DB, userId, parsed.executionId, fingerprint);
     providerCallStarted = true;
-    result = await performProviderWrite(env, context, operation, adapters);
+    result = await performProviderWrite(env, context, operation, adapters, actorId);
   } catch (error) {
     if (!providerCallStarted && reservationId) {
       await voidBudgetReservation(env.DB, { id: reservationId, userId });
@@ -430,6 +450,7 @@ async function performProviderWrite(
   context: CanonicalExecuteContext,
   operation: string,
   adapters: SocialExecuteAdapters,
+  authenticatedUserId: string,
 ): Promise<ProviderWriteResult> {
   if (env.SOCIAL_WRITE_MODE === 'test') {
     return {
@@ -467,18 +488,17 @@ async function performProviderWrite(
     : getValidXAccessToken(env, context.action.userId);
   if (operation === 'x_follow_write' || operation === 'x_unfollow_write' || operation === 'x_like_write') {
     const accessToken = await xToken();
-    const me = await lookupXAuthenticatedUser(accessToken);
-    if (!me) {
-      return { certainty: 'failure', retryable: false, errorCode: 'CAPABILITY_DENIED', reason: 'Authenticated X user ID could not be resolved from the server token.' };
+    if (!durableXUserId(authenticatedUserId)) {
+      return { certainty: 'failure', retryable: false, errorCode: 'CAPABILITY_DENIED', reason: 'Durable verified X user ID is required; live /users/me is not used during writes.' };
     }
     if (operation === 'x_like_write') {
       const like = adapters.likeXTweet || likeXTweet;
-      return like({ sourceUserId: me.id, tweetId: target.externalEventId, accessToken });
+      return like({ sourceUserId: authenticatedUserId, tweetId: target.externalEventId, accessToken });
     }
     const follow = operation === 'x_follow_write'
       ? (adapters.followXUser || followXUser)
       : (adapters.unfollowXUser || unfollowXUser);
-    return follow({ sourceUserId: me.id, targetUserId: target.externalEventId, accessToken });
+    return follow({ sourceUserId: authenticatedUserId, targetUserId: target.externalEventId, accessToken });
   }
   if (operation === 'x_dm_write') {
     if (!target.conversationId) {
@@ -544,6 +564,61 @@ export function knownWriteCost(env: SocialExecuteEnv, operation: string) {
   if (!Number.isFinite(amount) || amount < 0) return null;
   if (operation === 'instagram_comment_reply' || operation === 'instagram_dm_write') return amount;
   return amount > 0 ? amount : null;
+}
+
+export function knownLookupReadCost(env: Pick<SocialExecuteEnv, 'X_LOOKUP_READ_USD' | 'X_USER_READ_USD'>) {
+  const raw = env.X_LOOKUP_READ_USD ?? env.X_USER_READ_USD;
+  if (raw == null || String(raw).trim() === '') return null;
+  const amount = Number(raw);
+  if (!Number.isFinite(amount) || amount < 0) return null;
+  return amount;
+}
+
+export function failClosedIfLookupRequired(
+  env: Pick<SocialExecuteEnv, 'X_LOOKUP_READ_USD' | 'X_USER_READ_USD'>,
+  lookupRequired: boolean,
+): { ok: true } | { ok: false; code: 'WRITE_COST_UNKNOWN'; reason: string } {
+  if (!lookupRequired) return { ok: true };
+  if (knownLookupReadCost(env) == null) {
+    return {
+      ok: false,
+      code: 'WRITE_COST_UNKNOWN',
+      reason: 'X authenticated-user lookup is required but X_LOOKUP_READ_USD is unset.',
+    };
+  }
+  return { ok: true };
+}
+
+export function totalExecutionReserveUsd(
+  writeCost: number,
+  lookupRequired: boolean,
+  lookupCost: number | null,
+) {
+  if (!Number.isFinite(writeCost) || writeCost < 0) return null;
+  if (!lookupRequired) return writeCost;
+  if (lookupCost == null || !Number.isFinite(lookupCost) || lookupCost < 0) return null;
+  return writeCost + lookupCost;
+}
+
+export function durableXUserId(raw: string | null | undefined) {
+  const id = (raw || '').trim();
+  return X_USER_ID.test(id) ? id : null;
+}
+
+export function resolveFingerprintActorId(
+  env: Pick<SocialExecuteEnv, 'SOCIAL_WRITE_MODE' | 'INSTAGRAM_USER_ID'>,
+  platform: string,
+  storedXUserId: string | null | undefined,
+  adapterUserId?: string,
+) {
+  if (platform === 'instagram') {
+    const ig = env.INSTAGRAM_USER_ID?.trim() || '';
+    return ig || (env.SOCIAL_WRITE_MODE === 'test' ? 'test-actor' : '');
+  }
+  const durable = durableXUserId(adapterUserId) || durableXUserId(storedXUserId);
+  if (durable) return durable;
+  if (env.SOCIAL_WRITE_MODE === 'test') return 'test-actor';
+  return '';
 }
 
 async function attachReservation(env: SocialExecuteEnv, userId: string, executionId: string, reservationId: string) {

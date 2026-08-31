@@ -16,12 +16,22 @@ export interface InstagramCommentSyncEnv {
   INSTAGRAM_COMMENT_REPLY_ENABLED?: string;
   INSTAGRAM_WEBHOOK_VERIFY_TOKEN?: string;
   INSTAGRAM_APP_SECRET?: string;
+  INSTAGRAM_COMMENT_WEBHOOK_CONFIRMED?: string;
 }
 
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 const MAX_MEDIA_PER_PAGE = 8;
 const MAX_MEDIA_PAGES = 4;
 const MAX_COMMENT_PAGES = 8;
+export const MAX_PENDING_MEDIA = 48;
+
+export interface PendingInstagramMedia {
+  id: string;
+  permalink: string | null;
+  timestamp?: string;
+  commentAfter?: string;
+  knownCommentId?: string;
+}
 
 export function instagramRecentMediaUrl(version: string, igUserId: string, after?: string) {
   const params = new URLSearchParams({ fields: 'id,permalink,timestamp', limit: String(MAX_MEDIA_PER_PAGE) });
@@ -42,6 +52,70 @@ export function instagramMediaCommentsUrl(version: string, mediaId: string, afte
 
 export function instagramWebhookSecretsConfigured(env: { INSTAGRAM_WEBHOOK_VERIFY_TOKEN?: string; INSTAGRAM_APP_SECRET?: string }) {
   return Boolean(env.INSTAGRAM_WEBHOOK_VERIFY_TOKEN?.trim() && env.INSTAGRAM_APP_SECRET?.trim());
+}
+
+export function instagramCommentWebhookConfirmed(env: { INSTAGRAM_COMMENT_WEBHOOK_CONFIRMED?: string }) {
+  const raw = env.INSTAGRAM_COMMENT_WEBHOOK_CONFIRMED?.trim().toLowerCase();
+  return raw === 'true' || raw === '1' || raw === 'yes';
+}
+
+export function instagramWebhookRegistrationStatus(secretsConfigured: boolean, confirmed: boolean) {
+  return {
+    receiverCode: 'READY' as const,
+    secrets: secretsConfigured ? 'READY' as const : 'MISSING' as const,
+    dashboardRegistration: confirmed ? 'CONFIRMED' as const : 'UNCONFIRMED' as const,
+    sourceLabel: secretsConfigured && confirmed ? 'WEBHOOK REGISTERED' : secretsConfigured ? 'UNCONFIRMED' : 'DISABLED',
+  };
+}
+
+export function parsePendingMedia(value: unknown): PendingInstagramMedia[] {
+  const items: PendingInstagramMedia[] = [];
+  const seen = new Set<string>();
+  const push = (item: PendingInstagramMedia) => {
+    if (!item.id || seen.has(item.id)) return;
+    seen.add(item.id);
+    items.push(item);
+  };
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      if (typeof entry === 'string' && entry) {
+        push({ id: entry, permalink: null });
+        continue;
+      }
+      if (!isRecord(entry)) continue;
+      const id = typeof entry.id === 'string' ? entry.id : '';
+      if (!id) continue;
+      push({
+        id,
+        permalink: typeof entry.permalink === 'string' && entry.permalink ? entry.permalink : null,
+        timestamp: typeof entry.timestamp === 'string' ? entry.timestamp : undefined,
+        commentAfter: typeof entry.commentAfter === 'string' ? entry.commentAfter : undefined,
+        knownCommentId: typeof entry.knownCommentId === 'string' ? entry.knownCommentId : undefined,
+      });
+    }
+    return items;
+  }
+  if (isRecord(value)) {
+    for (const [id, entry] of Object.entries(value)) {
+      if (!id) continue;
+      if (typeof entry === 'string') {
+        push({ id, permalink: entry || null });
+        continue;
+      }
+      if (!isRecord(entry)) {
+        push({ id, permalink: null });
+        continue;
+      }
+      push({
+        id,
+        permalink: typeof entry.permalink === 'string' && entry.permalink ? entry.permalink : null,
+        timestamp: typeof entry.timestamp === 'string' ? entry.timestamp : undefined,
+        commentAfter: typeof entry.commentAfter === 'string' ? entry.commentAfter : undefined,
+        knownCommentId: typeof entry.knownCommentId === 'string' ? entry.knownCommentId : undefined,
+      });
+    }
+  }
+  return items;
 }
 
 export async function paginateInstagramComments(input: {
@@ -100,7 +174,7 @@ export async function paginateInstagramMedia(input: {
   igUserId: string;
   token: string;
   mediaAfter?: string;
-  webhookConfigured: boolean;
+  webhookRegistrationConfirmed: boolean;
   cycleComplete?: boolean;
   maxPages?: number;
   getJson: (url: string) => Promise<{
@@ -124,7 +198,7 @@ export async function paginateInstagramMedia(input: {
   }
 
   let catchUpAfter = input.mediaAfter || '';
-  if (!catchUpAfter && newestNext && !(input.webhookConfigured && input.cycleComplete)) {
+  if (!catchUpAfter && newestNext && !(input.webhookRegistrationConfirmed && input.cycleComplete)) {
     catchUpAfter = newestNext;
   }
 
@@ -209,34 +283,50 @@ export async function syncInstagramComments(
   const extra = loaded.checkpoint?.extra && typeof loaded.checkpoint.extra === 'object' ? loaded.checkpoint.extra : {};
   const mediaNewest = stringMap(extra.mediaNewestCommentId);
   const commentAfterMap = stringMap(extra.commentAfter);
-  const pendingMedia = Array.isArray(extra.pendingMedia)
-    ? extra.pendingMedia.filter((item): item is string => typeof item === 'string' && Boolean(item))
-    : [];
+  const pendingMedia = parsePendingMedia(extra.pendingMedia);
+  const overflowPending = pendingMedia.slice(MAX_PENDING_MEDIA);
+  const pendingToWalk = pendingMedia.slice(0, MAX_PENDING_MEDIA);
+  for (const pending of pendingToWalk) {
+    if (pending.commentAfter && !commentAfterMap[pending.id]) commentAfterMap[pending.id] = pending.commentAfter;
+    if (pending.knownCommentId && !mediaNewest[pending.id]) mediaNewest[pending.id] = pending.knownCommentId;
+  }
   const nextNewest: Record<string, string> = { ...mediaNewest };
   const nextAfter: Record<string, string> = { ...commentAfterMap };
   const comments: PersistableInstagramEngager[] = [];
   let commentsIncomplete = false;
   const getJson = adapters.getJson || igGet;
-  const webhookConfigured = instagramWebhookSecretsConfigured(env);
+  const webhookSecrets = instagramWebhookSecretsConfigured(env);
+  const webhookConfirmed = webhookSecrets && instagramCommentWebhookConfirmed(env);
   const mediaWalk = await paginateInstagramMedia({
     version,
     igUserId,
     token,
     mediaAfter: typeof extra.mediaAfter === 'string' ? extra.mediaAfter : '',
-    webhookConfigured,
+    webhookRegistrationConfirmed: webhookConfirmed,
     cycleComplete: extra.cycleComplete === true,
     getJson: (url) => getJson(url, token),
   });
 
-  const mediaQueue = [...mediaWalk.media];
-  for (const pendingId of pendingMedia) {
-    if (!mediaQueue.some((item) => item.id === pendingId)) mediaQueue.push({ id: pendingId });
+  const mediaQueue: Array<{ id: string; permalink?: string; timestamp?: string }> = [...mediaWalk.media];
+  for (const pending of pendingToWalk) {
+    const existing = mediaQueue.find((item) => item.id === pending.id);
+    if (existing) {
+      if (!existing.permalink && pending.permalink) existing.permalink = pending.permalink;
+      if (!existing.timestamp && pending.timestamp) existing.timestamp = pending.timestamp;
+    } else {
+      mediaQueue.push({
+        id: pending.id,
+        permalink: pending.permalink || undefined,
+        timestamp: pending.timestamp,
+      });
+    }
   }
 
-  const stillPending: string[] = [];
+  const stillPending: PendingInstagramMedia[] = [...overflowPending];
   for (const item of mediaQueue) {
     const mediaId = item.id;
-    const known = mediaNewest[mediaId] || '';
+    const known = mediaNewest[mediaId] || pendingToWalk.find((row) => row.id === mediaId)?.knownCommentId || '';
+    const permalink = item.permalink || pendingToWalk.find((row) => row.id === mediaId)?.permalink || null;
     const newestWalk = await paginateInstagramComments({
       version,
       mediaId,
@@ -244,22 +334,23 @@ export async function syncInstagramComments(
       ownUserId: igUserId,
       after: '',
       knownCommentId: known,
-      permalink: item.permalink || null,
+      permalink,
       receivedAt,
       getJson: (url) => getJson(url, token),
     });
     comments.push(...newestWalk.comments);
     let olderWalkComplete = newestWalk.reachedKnown || !newestWalk.nextAfter;
     let newestId = newestWalk.newestId;
-    if (!olderWalkComplete && commentAfterMap[mediaId]) {
+    const resumeAfter = commentAfterMap[mediaId] || pendingToWalk.find((row) => row.id === mediaId)?.commentAfter || nextAfter[mediaId] || '';
+    if (!olderWalkComplete && resumeAfter) {
       const olderWalk = await paginateInstagramComments({
         version,
         mediaId,
         token,
         ownUserId: igUserId,
-        after: commentAfterMap[mediaId],
+        after: resumeAfter,
         knownCommentId: known,
-        permalink: item.permalink || null,
+        permalink,
         receivedAt,
         getJson: (url) => getJson(url, token),
       });
@@ -276,7 +367,13 @@ export async function syncInstagramComments(
     if (olderWalkComplete && newestId) nextNewest[mediaId] = newestId;
     if (!olderWalkComplete) {
       commentsIncomplete = true;
-      stillPending.push(mediaId);
+      stillPending.push({
+        id: mediaId,
+        permalink,
+        timestamp: item.timestamp,
+        commentAfter: nextAfter[mediaId],
+        knownCommentId: known || newestId || undefined,
+      });
     }
   }
 
@@ -289,7 +386,7 @@ export async function syncInstagramComments(
     commentAfter: nextAfter,
     pendingMedia: stillPending,
     cycleComplete: !catalogIncomplete && !commentsIncomplete,
-    webhookPrimary: webhookConfigured,
+    webhookPrimary: webhookConfirmed,
   };
   const complete = extraPayload.cycleComplete === true;
   const persisted = complete

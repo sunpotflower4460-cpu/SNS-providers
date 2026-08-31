@@ -5,6 +5,7 @@ import { setLiveSocialCapabilities, getLiveSocialCapabilities } from './socialCa
 import { syncInstagramEngagers } from './instagramAccount';
 import { applyInstagramEngagers } from './instagramOwnedStore';
 import type { AppState, AppStateUpdater } from './types';
+import { spendingCeilingUsd } from './store';
 import './instagramAccount.css';
 
 export default function InstagramAccountControls({ state, onChange }: { state: AppState; onChange: AppStateUpdater }) {
@@ -62,7 +63,7 @@ export default function InstagramAccountControls({ state, onChange }: { state: A
     setDmSyncing(true);
     setNote('InstagramのDMを確認しています…');
     try {
-      const result = await syncInstagramDirectMessages('local-user', state.budget.monthlyLimitUsd);
+      const result = await syncInstagramDirectMessages('local-user', spendingCeilingUsd(state.budget));
       if (!result.enabled) {
         setNote(result.reason || 'Instagram DMを同期できません');
         return;

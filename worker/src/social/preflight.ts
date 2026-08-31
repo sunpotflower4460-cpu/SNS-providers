@@ -1,6 +1,7 @@
 import { utcMonthWindow } from '../budgetIntegrity';
 import { liveSocialCapabilities, operationWriteEnabled } from './capabilities';
 import { probeInstagramPermissions } from './instagram/probe';
+import { instagramCommentWebhookConfirmed, instagramWebhookRegistrationStatus, instagramWebhookSecretsConfigured } from './instagram/commentSync';
 import { readSchemaVersion, EXPECTED_SCHEMA_VERSION } from './schemaVersion';
 import { loadUserBudgetCeilingUsd, serverHardLimitUsd } from './budgetCeiling';
 import { loadSyncCheckpoint } from './syncCheckpoints';
@@ -17,6 +18,7 @@ export interface PreflightEnv extends XOAuthEnv {
   INSTAGRAM_DM_READ_ENABLED?: string;
   INSTAGRAM_WEBHOOK_VERIFY_TOKEN?: string;
   INSTAGRAM_APP_SECRET?: string;
+  INSTAGRAM_COMMENT_WEBHOOK_CONFIRMED?: string;
   X_REPLY_WRITE_ENABLED?: string;
   X_FOLLOW_WRITE_ENABLED?: string;
   X_UNFOLLOW_WRITE_ENABLED?: string;
@@ -131,10 +133,16 @@ export async function buildProductionPreflight(env: PreflightEnv, userId: string
     }
   }
 
-  const webhookReady = Boolean(env.INSTAGRAM_WEBHOOK_VERIFY_TOKEN?.trim() && env.INSTAGRAM_APP_SECRET?.trim());
-  checks.push(webhookReady
-    ? ok('instagramReceiverReady', 'Instagram webhook receiver secrets are present. Dashboard subscription is still manual.')
-    : warn('instagramReceiverReady', 'Webhook receiver code is present but verify token / app secret are unset.', 'Set INSTAGRAM_WEBHOOK_VERIFY_TOKEN and INSTAGRAM_APP_SECRET, then register the callback in Meta App Dashboard.'));
+  const webhookSecrets = instagramWebhookSecretsConfigured(env);
+  const webhookConfirmed = webhookSecrets && instagramCommentWebhookConfirmed(env);
+  const webhookStatus = instagramWebhookRegistrationStatus(webhookSecrets, webhookConfirmed);
+  checks.push(ok('instagramWebhookReceiverCode', 'Webhook receiver code: READY.'));
+  checks.push(webhookSecrets
+    ? ok('instagramWebhookSecrets', 'Webhook secrets: READY.')
+    : warn('instagramWebhookSecrets', 'Webhook secrets: MISSING.', 'Set INSTAGRAM_WEBHOOK_VERIFY_TOKEN and INSTAGRAM_APP_SECRET, then register comments + live_comments in Meta App Dashboard.'));
+  checks.push(webhookConfirmed
+    ? ok('instagramWebhookDashboardRegistration', 'Webhook dashboard registration: CONFIRMED.')
+    : warn('instagramWebhookDashboardRegistration', 'Webhook dashboard registration: UNCONFIRMED. Secret presence is not evidence of a Meta subscription.', 'After confirming comments and live_comments in Meta App Dashboard, set INSTAGRAM_COMMENT_WEBHOOK_CONFIRMED=true.'));
 
   const userCeiling = await loadUserBudgetCeilingUsd(env.DB, userId);
   const hardLimit = serverHardLimitUsd(env);
@@ -142,7 +150,7 @@ export async function buildProductionPreflight(env: PreflightEnv, userId: string
     ? `No stored user ceiling; effective limit is the server HARD LIMIT $${hardLimit}.`
     : `User ceiling $${userCeiling}; effective limit $${Math.min(hardLimit, userCeiling)} (HARD LIMIT $${hardLimit}).`));
 
-  const sources = await sourceStatuses(env, userId, oauth.connected, scopes, probe, webhookReady);
+  const sources = await sourceStatuses(env, userId, oauth.connected, scopes, probe, webhookSecrets, webhookConfirmed);
   for (const source of sources) checks.push(source.check);
 
   const blocked = checks.filter((item) => item.severity === 'block');
@@ -187,8 +195,12 @@ export async function buildProductionPreflight(env: PreflightEnv, userId: string
       unknownPrices,
     },
     webhooks: {
-      instagramReceiverReady: webhookReady,
+      instagramReceiverCodeReady: true,
+      instagramReceiverSecretsReady: webhookSecrets,
+      instagramDashboardRegistrationConfirmed: webhookConfirmed,
+      instagramReceiverReady: webhookSecrets,
       registrationDetectedIfPossible: false,
+      registrationStatus: webhookStatus.dashboardRegistration,
     },
     inboxSources: Object.fromEntries(sources.map((item) => [item.id, { status: item.status, reason: item.check.reason, nextStep: item.check.nextStep }])),
     app: {
@@ -287,7 +299,8 @@ async function sourceStatuses(
   xConnected: boolean,
   scopes: string[],
   probe: Awaited<ReturnType<typeof probeInstagramPermissions>>,
-  webhookReady: boolean,
+  webhookSecrets: boolean,
+  webhookConfirmed: boolean,
 ) {
   const xMentionsReady = xConnected && scopes.includes('tweet.read') && env.X_INBOUND_SYNC_ENABLED === 'true' && Boolean(env.X_INBOUND_READ_USD?.trim());
   const xDmReady = xConnected && scopes.includes('dm.read') && env.X_DM_READ_ENABLED === 'true' && Boolean(env.X_DM_READ_USD?.trim());
@@ -299,6 +312,7 @@ async function sourceStatuses(
   const igDmCheckpoint = await loadSyncCheckpoint(env.DB, userId, 'instagram_dm');
   const checkpointHealth = [mentionCheckpoint, xDmCheckpoint, igCommentCheckpoint, igDmCheckpoint];
   const checkpointQueryFailed = checkpointHealth.some((item) => !item.available);
+  const webhookLabel = instagramWebhookRegistrationStatus(webhookSecrets, webhookConfirmed).sourceLabel;
   return [
     sourceCheck('xMentions', 'X mentions', xMentionsReady ? 'READY' : (env.X_INBOUND_SYNC_ENABLED === 'true' ? 'BLOCKED' : 'DISABLED'), xMentionsReady
       ? `X mention/reply polling is ready${mentionCheckpoint.available && mentionCheckpoint.checkpoint?.continuationCursor ? ' (continuation cursor stored).' : '.'}`
@@ -306,14 +320,16 @@ async function sourceStatuses(
     sourceCheck('xDm', 'X DM', xDmReady ? 'READY' : (env.X_DM_READ_ENABLED === 'true' ? 'BLOCKED' : 'DISABLED'), xDmReady
       ? 'X DM read is ready.'
       : 'X DM read is not ready.', xDmReady ? undefined : 'Settings → X → DM権限を追加, then X_DM_READ_ENABLED=true and X_DM_READ_USD.'),
-    sourceCheck('instagramCommentsWebhook', 'Instagram comments webhook', webhookReady && igCommentsPoll ? 'WEBHOOK READY' : webhookReady ? 'BLOCKED' : 'DISABLED', webhookReady && igCommentsPoll
-      ? 'Comment webhook is the realtime primary. Dashboard subscription is still manual.'
-      : 'Comment webhook is not fully ready.', 'Register comments + live_comments in Meta App Dashboard after secrets exist.'),
+    sourceCheck('instagramCommentsWebhook', 'Instagram comments webhook', webhookLabel, webhookConfirmed && igCommentsPoll
+      ? 'Comment webhook is the realtime primary. Dashboard registration was confirmed by INSTAGRAM_COMMENT_WEBHOOK_CONFIRMED.'
+      : webhookSecrets
+        ? 'Webhook secrets are present, but Meta dashboard registration is UNCONFIRMED. Bounded poll catch-up continues.'
+        : 'Comment webhook is not fully ready.', webhookConfirmed ? undefined : 'Register comments + live_comments in Meta App Dashboard, then set INSTAGRAM_COMMENT_WEBHOOK_CONFIRMED=true.'),
     sourceCheck('instagramCommentsPoll', 'Instagram comments polling', igCommentsPoll ? 'POLLING READY' : 'BLOCKED', igCommentsPoll
-      ? (webhookReady
-        ? 'Polling is a bounded catch-up fallback. Webhook secrets are present; dashboard registration is still manual.'
-        : 'Polling fallback covers bounded paginated catch-up of owned media. For reliable comments on older media, Meta webhook registration is required.')
-      : 'Comment polling is blocked until comment permission is verified.', webhookReady ? 'Register comments + live_comments in Meta App Dashboard.' : 'Set webhook secrets and register the callback in Meta App Dashboard for reliable older-media comments. Settings → Instagram → 権限状態を確認.'),
+      ? (webhookConfirmed
+        ? 'Polling is a bounded catch-up fallback. Webhook dashboard registration is confirmed.'
+        : 'Polling fallback covers bounded paginated catch-up of owned media. Webhook secrets are not treated as confirmed registration.')
+      : 'Comment polling is blocked until comment permission is verified.', webhookConfirmed ? undefined : 'Confirm comments + live_comments in Meta App Dashboard, then set INSTAGRAM_COMMENT_WEBHOOK_CONFIRMED=true.'),
     sourceCheck('instagramDm', 'Instagram DM', igDmReady ? 'READY' : 'BLOCKED', igDmReady
       ? 'Instagram DM read is ready. Official API details cover the 20 most recent messages per conversation; older message bodies are a Meta limitation. Incomplete threads from our page budget are never marked processed.'
       : 'Instagram DM read is blocked.', 'Verify message permission, set INSTAGRAM_DM_READ_ENABLED=true and INSTAGRAM_DM_READ_USD. Register the messaging webhook for realtime DMs.'),
@@ -326,7 +342,8 @@ async function sourceStatuses(
 function sourceCheck(id: string, label: string, status: string, reason: string, nextStep?: string) {
   const blocked = status === 'BLOCKED';
   const disabled = status === 'DISABLED';
-  const severity: Check['severity'] = blocked || disabled ? 'warn' : 'ok';
+  const unconfirmed = status === 'UNCONFIRMED';
+  const severity: Check['severity'] = blocked || disabled || unconfirmed ? 'warn' : 'ok';
   return {
     id,
     status,
