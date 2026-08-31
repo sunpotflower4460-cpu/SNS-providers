@@ -291,8 +291,11 @@ export async function executeSocialAction(
       operation,
     });
     await persistExecutionFingerprintOrThrow(env.DB, userId, parsed.executionId, fingerprint);
+    const xAccessToken = env.SOCIAL_WRITE_MODE !== 'test' && xWriteNeedsAccessToken(operation)
+      ? await resolveXWriteAccessToken(env, userId, adapters)
+      : undefined;
     providerCallStarted = true;
-    result = await performProviderWrite(env, context, operation, adapters, actorId);
+    result = await performProviderWrite(env, context, operation, adapters, actorId, xAccessToken);
   } catch (error) {
     if (!providerCallStarted && reservationId) {
       await voidBudgetReservation(env.DB, { id: reservationId, userId });
@@ -451,6 +454,7 @@ async function performProviderWrite(
   operation: string,
   adapters: SocialExecuteAdapters,
   authenticatedUserId: string,
+  xAccessToken?: string,
 ): Promise<ProviderWriteResult> {
   if (env.SOCIAL_WRITE_MODE === 'test') {
     return {
@@ -474,23 +478,17 @@ async function performProviderWrite(
   }
   if (operation === 'x_reply_write') {
     const reply = adapters.replyToXTweet || replyToXTweet;
-    const accessToken = adapters.getXAccessToken
-      ? await adapters.getXAccessToken()
-      : await getValidXAccessToken(env, context.action.userId);
     return reply({
       tweetId: target.externalEventId,
       message: context.draft,
-      accessToken,
+      accessToken: xAccessToken || '',
     });
   }
-  const xToken = async () => adapters.getXAccessToken
-    ? adapters.getXAccessToken()
-    : getValidXAccessToken(env, context.action.userId);
   if (operation === 'x_follow_write' || operation === 'x_unfollow_write' || operation === 'x_like_write') {
-    const accessToken = await xToken();
     if (!durableXUserId(authenticatedUserId)) {
       return { certainty: 'failure', retryable: false, errorCode: 'CAPABILITY_DENIED', reason: 'Durable verified X user ID is required; live /users/me is not used during writes.' };
     }
+    const accessToken = xAccessToken || '';
     if (operation === 'x_like_write') {
       const like = adapters.likeXTweet || likeXTweet;
       return like({ sourceUserId: authenticatedUserId, tweetId: target.externalEventId, accessToken });
@@ -505,7 +503,7 @@ async function performProviderWrite(
       return { certainty: 'failure', retryable: false, errorCode: 'BINDING_MISMATCH', reason: 'X DM requires a canonical conversation ID from server evidence.' };
     }
     const send = adapters.sendXDm || sendXDm;
-    return send({ conversationId: target.conversationId, message: context.draft, accessToken: await xToken() });
+    return send({ conversationId: target.conversationId, message: context.draft, accessToken: xAccessToken || '' });
   }
   if (operation === 'instagram_dm_write') {
     const recipientId = context.action.platformUserId || context.event?.externalUserId || '';
@@ -603,6 +601,26 @@ export function totalExecutionReserveUsd(
 export function durableXUserId(raw: string | null | undefined) {
   const id = (raw || '').trim();
   return X_USER_ID.test(id) ? id : null;
+}
+
+export function xWriteNeedsAccessToken(operation: string) {
+  return operation === 'x_reply_write'
+    || operation === 'x_follow_write'
+    || operation === 'x_unfollow_write'
+    || operation === 'x_like_write'
+    || operation === 'x_dm_write';
+}
+
+export async function resolveXWriteAccessToken(
+  env: SocialExecuteEnv,
+  userId: string,
+  adapters: SocialExecuteAdapters,
+) {
+  const token = adapters.getXAccessToken
+    ? await adapters.getXAccessToken()
+    : await getValidXAccessToken(env, userId);
+  if (!token?.trim()) throw new Error('X access token is unavailable.');
+  return token;
 }
 
 export function resolveFingerprintActorId(

@@ -68,6 +68,17 @@ export function instagramWebhookRegistrationStatus(secretsConfigured: boolean, c
   };
 }
 
+export function instagramCommentsWebhookSourceStatus(input: {
+  secretsConfigured: boolean;
+  dashboardConfirmed: boolean;
+  readComments: boolean;
+}) {
+  if (!input.secretsConfigured) return 'DISABLED' as const;
+  if (!input.dashboardConfirmed) return 'UNCONFIRMED' as const;
+  if (!input.readComments) return 'BLOCKED' as const;
+  return 'WEBHOOK REGISTERED' as const;
+}
+
 export function parsePendingMedia(value: unknown): PendingInstagramMedia[] {
   const items: PendingInstagramMedia[] = [];
   const seen = new Set<string>();
@@ -288,7 +299,11 @@ export async function syncInstagramComments(
   const pendingToWalk = pendingMedia.slice(0, MAX_PENDING_MEDIA);
   for (const pending of pendingToWalk) {
     if (pending.commentAfter && !commentAfterMap[pending.id]) commentAfterMap[pending.id] = pending.commentAfter;
-    if (pending.knownCommentId && !mediaNewest[pending.id]) mediaNewest[pending.id] = pending.knownCommentId;
+    // In-progress continuation must not promote the newest-seen ID into the completed
+    // high-water mark. That would make the next newest walk stop immediately and skip older pages.
+    if (pending.knownCommentId && !mediaNewest[pending.id] && !pending.commentAfter && !commentAfterMap[pending.id]) {
+      mediaNewest[pending.id] = pending.knownCommentId;
+    }
   }
   const nextNewest: Record<string, string> = { ...mediaNewest };
   const nextAfter: Record<string, string> = { ...commentAfterMap };
@@ -325,7 +340,7 @@ export async function syncInstagramComments(
   const stillPending: PendingInstagramMedia[] = [...overflowPending];
   for (const item of mediaQueue) {
     const mediaId = item.id;
-    const known = mediaNewest[mediaId] || pendingToWalk.find((row) => row.id === mediaId)?.knownCommentId || '';
+    const originalKnown = mediaNewest[mediaId] || '';
     const permalink = item.permalink || pendingToWalk.find((row) => row.id === mediaId)?.permalink || null;
     const newestWalk = await paginateInstagramComments({
       version,
@@ -333,46 +348,51 @@ export async function syncInstagramComments(
       token,
       ownUserId: igUserId,
       after: '',
-      knownCommentId: known,
+      knownCommentId: originalKnown || undefined,
       permalink,
       receivedAt,
       getJson: (url) => getJson(url, token),
     });
     comments.push(...newestWalk.comments);
-    let olderWalkComplete = newestWalk.reachedKnown || !newestWalk.nextAfter;
     let newestId = newestWalk.newestId;
-    const resumeAfter = commentAfterMap[mediaId] || pendingToWalk.find((row) => row.id === mediaId)?.commentAfter || nextAfter[mediaId] || '';
-    if (!olderWalkComplete && resumeAfter) {
+    const savedAfter = commentAfterMap[mediaId] || pendingToWalk.find((row) => row.id === mediaId)?.commentAfter || '';
+    let continuationComplete = !savedAfter;
+    let continuationAfter = savedAfter;
+    if (savedAfter) {
       const olderWalk = await paginateInstagramComments({
         version,
         mediaId,
         token,
         ownUserId: igUserId,
-        after: resumeAfter,
-        knownCommentId: known,
+        after: savedAfter,
+        knownCommentId: originalKnown || undefined,
         permalink,
         receivedAt,
         getJson: (url) => getJson(url, token),
       });
       comments.push(...olderWalk.comments);
       newestId = maxNumericProviderId(newestId, olderWalk.newestId) || newestId;
-      olderWalkComplete = olderWalk.reachedKnown || !olderWalk.nextAfter;
-      if (!olderWalkComplete && olderWalk.nextAfter) nextAfter[mediaId] = olderWalk.nextAfter;
-      else delete nextAfter[mediaId];
-    } else if (!olderWalkComplete && newestWalk.nextAfter) {
-      nextAfter[mediaId] = newestWalk.nextAfter;
-    } else {
-      delete nextAfter[mediaId];
+      continuationComplete = olderWalk.reachedKnown || !olderWalk.nextAfter;
+      continuationAfter = continuationComplete ? '' : (olderWalk.nextAfter || savedAfter);
+    } else if (!newestWalk.reachedKnown && newestWalk.nextAfter) {
+      continuationComplete = false;
+      continuationAfter = newestWalk.nextAfter;
     }
-    if (olderWalkComplete && newestId) nextNewest[mediaId] = newestId;
-    if (!olderWalkComplete) {
+    if (continuationAfter) nextAfter[mediaId] = continuationAfter;
+    else delete nextAfter[mediaId];
+    const newestCaughtUp = originalKnown
+      ? (newestWalk.reachedKnown || !newestWalk.nextAfter)
+      : continuationComplete;
+    const walkComplete = newestCaughtUp && continuationComplete;
+    if (walkComplete && newestId) nextNewest[mediaId] = newestId;
+    if (!walkComplete) {
       commentsIncomplete = true;
       stillPending.push({
         id: mediaId,
         permalink,
         timestamp: item.timestamp,
         commentAfter: nextAfter[mediaId],
-        knownCommentId: known || newestId || undefined,
+        knownCommentId: originalKnown || undefined,
       });
     }
   }

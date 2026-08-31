@@ -122,12 +122,7 @@ export function normalizeAppState(state: AppState): AppState {
     socialActions,
     budget: {
       monthlyLimitUsd: clampNumber(state?.budget?.monthlyLimitUsd, 0, 10, 3),
-      effectiveLimitUsd: clampNumber(
-        state?.budget?.effectiveLimitUsd,
-        0,
-        10,
-        clampNumber(state?.budget?.monthlyLimitUsd, 0, 10, 3),
-      ),
+      effectiveLimitUsd: clampedEffectiveLimitUsd(state?.budget?.monthlyLimitUsd, state?.budget?.effectiveLimitUsd),
       hardLimit: true,
       usedUsd: clampNumber(state?.budget?.usedUsd, 0, 1_000_000, 0),
       xUsd: clampNumber(state?.budget?.xUsd, 0, 1_000_000, 0),
@@ -514,6 +509,12 @@ function clampInteger(value: unknown, min: number, max: number, fallback: number
 function clampNumber(value: unknown, min: number, max: number, fallback: number) {
   const number = Number(value);
   return Number.isFinite(number) ? Math.max(min, Math.min(max, number)) : fallback;
+}
+
+export function clampedEffectiveLimitUsd(monthlyLimitUsd: unknown, effectiveLimitUsd: unknown) {
+  const monthly = clampNumber(monthlyLimitUsd, 0, 10, 3);
+  const effective = clampNumber(effectiveLimitUsd, 0, 10, monthly);
+  return Math.min(monthly, effective);
 }
 
 function optionalScore(value: unknown) {

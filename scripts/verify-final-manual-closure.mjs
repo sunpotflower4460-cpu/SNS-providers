@@ -77,7 +77,7 @@ const { persistInstagramCommentEvidence } = await import(pathToFileURL(`${outDir
 const { persistInstagramDmEvidence } = await import(pathToFileURL(`${outDir}/social/instagram/persistDm.js`).href);
 const { loadSyncCheckpoint, saveSyncContinuation, commitSyncCheckpoint } = await import(pathToFileURL(`${outDir}/social/syncCheckpoints.js`).href);
 const { walkInstagramConversationMessages, instagramDmMapsFromExtra, emptyInstagramDmThreadMaps, instagramDmThreadIsFullyProcessed } = await import(pathToFileURL(`${outDir}/social/instagram/dmSync.js`).href);
-const { paginateInstagramMedia, paginateInstagramComments, parsePendingMedia, instagramCommentWebhookConfirmed, instagramWebhookSecretsConfigured, instagramWebhookRegistrationStatus, syncInstagramComments } = await import(pathToFileURL(`${outDir}/social/instagram/commentSync.js`).href);
+const { paginateInstagramMedia, paginateInstagramComments, parsePendingMedia, instagramCommentWebhookConfirmed, instagramWebhookSecretsConfigured, instagramWebhookRegistrationStatus, instagramCommentsWebhookSourceStatus, syncInstagramComments } = await import(pathToFileURL(`${outDir}/social/instagram/commentSync.js`).href);
 const { paginateXMentions } = await import(pathToFileURL(`${outDir}/social/x/sync.js`).href);
 const { persistServerBudgetCeiling, parseRuntimeBudgetResponse, BUDGET_SAVE_FAILED_MESSAGE } = await import(pathToFileURL(`${outDir}/budgetCeilingSave.js`).href);
 const { completeSettingsBudgetSave, clientBudgetAfterServerSave, shouldApplySettingsSave } = await import(pathToFileURL(`${outDir}/settingsSave.js`).href);
@@ -1061,6 +1061,38 @@ function reconcileEnv(db, extra = {}) {
   }
 }
 
+{
+  const db = executionDb();
+  db._actions.set('local-user::sa-x-follow-99', {
+    id: 'sa-x-follow-99', user_id: 'local-user', platform: 'x', candidate_id: '99',
+    action_type: 'follow', status: 'ready', execution_mode: 'in_app', source: 'x_follow',
+    external_event_id: '99', conversation_id: null, parent_content_id: null,
+    target_url: null, observed_at: '2026-08-30T12:00:00.000Z', created_at: '2026-08-30T12:00:00.000Z',
+    updated_at: '2026-08-30T12:00:00.000Z', completed_at: null, platform_user_id: '99',
+    username: 'bob', identity_conflict: 0, retryable: 1,
+  });
+  let writes = 0;
+  const denied = await executeSocialAction({
+    DB: db,
+    SOCIAL_WRITE_MODE: '',
+    SOCIAL_WRITE_ENABLED: 'true',
+    X_FOLLOW_WRITE_ENABLED: 'true',
+    X_FOLLOW_WRITE_USD: '0.02',
+    DEFAULT_MONTHLY_BUDGET_USD: '3',
+  }, 'local-user', 'sa-x-follow-99', { executionId: 'exec-x-token-fail-1', draft: '' }, {
+    followXUser: async () => { writes += 1; return { certainty: 'success', externalResultId: '99' }; },
+    xGrantedScopes: ['tweet.read', 'users.read', 'follows.read', 'offline.access', 'follows.write'],
+    authenticatedUserId: '4242',
+    getXAccessToken: async () => { throw new Error('X account is not connected'); },
+  });
+  if (writes !== 0) fail('X token failure still invoked the write adapter.');
+  if (denied.body.code === 'UNKNOWN_RESULT' || denied.body.certainty === 'unknown') {
+    fail('X token failure was recorded as UNKNOWN and retained the write lock.');
+  }
+  if (denied.body.code !== 'CAPABILITY_DENIED') fail(`X token failure did not fail closed: ${JSON.stringify(denied.body)}`);
+  if (db._ledger.length !== 0) fail('X token failure retained a write reservation.');
+}
+
 if (durableXUserId('4242') !== '4242' || durableXUserId('nope') || durableXUserId('')) {
   fail('durableXUserId accepted a non-X ID.');
 }
@@ -1133,6 +1165,12 @@ if (!instagramCommentWebhookConfirmed({ INSTAGRAM_COMMENT_WEBHOOK_CONFIRMED: 'tr
   }
   const confirmed = instagramWebhookRegistrationStatus(true, true);
   if (confirmed.sourceLabel !== 'WEBHOOK REGISTERED') fail('Confirmed webhook was not labeled WEBHOOK REGISTERED.');
+  if (instagramCommentsWebhookSourceStatus({ secretsConfigured: true, dashboardConfirmed: true, readComments: false }) !== 'BLOCKED') {
+    fail('Confirmed webhook without comment permission was not BLOCKED.');
+  }
+  if (instagramCommentsWebhookSourceStatus({ secretsConfigured: true, dashboardConfirmed: true, readComments: true }) !== 'WEBHOOK REGISTERED') {
+    fail('Confirmed webhook with comment permission was not WEBHOOK REGISTERED.');
+  }
 }
 
 {
@@ -1289,6 +1327,58 @@ function commentSyncDb(extra = {}) {
     try { return JSON.parse(row.payload_json); } catch { return {}; }
   }).find((item) => item.permalink === 'https://instagram.com/p/kept' || item.latestMediaPermalink === 'https://instagram.com/p/kept');
   if (!payload) fail('Pending old media permalink was not preserved on the comment Action/Event.');
+}
+
+{
+  function commentPage(after) {
+    const index = after ? Number(String(after).replace('after-', '')) : 0;
+    const id = String(1090 - index);
+    const next = index < 8 ? `after-${index + 1}` : '';
+    return {
+      data: [{ id, from: { id: `u${id}`, username: `u${id}` }, text: `c${id}`, timestamp: '2026-08-30T12:00:00.000Z' }],
+      paging: next ? { cursors: { after: next } } : { cursors: {} },
+    };
+  }
+  const requested = [];
+  const db = commentSyncDb({});
+  const env = {
+    DB: db,
+    INSTAGRAM_ACCESS_TOKEN: 't',
+    INSTAGRAM_USER_ID: '1',
+    INSTAGRAM_API_VERSION: 'v24.0',
+    SOCIAL_WRITE_MODE: 'test',
+  };
+  const adapters = {
+    getJson: async (url) => {
+      if (url.includes('/media?')) {
+        return { data: [{ id: 'media-long', permalink: 'https://instagram.com/p/long', timestamp: '2026-08-30T00:00:00.000Z' }], paging: { cursors: {} } };
+      }
+      if (url.includes('/media-long/comments')) {
+        const after = new URL(url).searchParams.get('after') || '';
+        requested.push(after);
+        return commentPage(after);
+      }
+      return { data: [], paging: { cursors: {} } };
+    },
+  };
+  await syncInstagramComments(env, { userId: 'local-user' }, adapters);
+  const firstExtra = JSON.parse([...db._checkpoints.values()][0].extra_json);
+  const pending = parsePendingMedia(firstExtra.pendingMedia);
+  if (!pending.some((item) => item.id === 'media-long' && item.commentAfter === 'after-8')) {
+    fail('Nine-page comment walk did not store a continuation cursor.');
+  }
+  if (pending.some((item) => item.id === 'media-long' && item.knownCommentId === '1090')) {
+    fail('Incomplete comment walk stored the newest comment as the known boundary.');
+  }
+  if (firstExtra.mediaNewestCommentId?.['media-long'] === '1090') {
+    fail('Incomplete comment walk promoted newest ID into the completed high-water mark.');
+  }
+  requested.length = 0;
+  const second = await syncInstagramComments(env, { userId: 'local-user' }, adapters);
+  if (!requested.includes('after-8')) fail('Resume walk never requested the remaining older comment page.');
+  if (!second.events.some((event) => event.externalEventId === '1082')) {
+    fail('Older comments beyond the first eight pages were permanently skipped.');
+  }
 }
 
 {

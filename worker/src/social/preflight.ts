@@ -1,7 +1,7 @@
 import { utcMonthWindow } from '../budgetIntegrity';
 import { liveSocialCapabilities, operationWriteEnabled } from './capabilities';
 import { probeInstagramPermissions } from './instagram/probe';
-import { instagramCommentWebhookConfirmed, instagramWebhookRegistrationStatus, instagramWebhookSecretsConfigured } from './instagram/commentSync';
+import { instagramCommentWebhookConfirmed, instagramCommentsWebhookSourceStatus, instagramWebhookRegistrationStatus, instagramWebhookSecretsConfigured } from './instagram/commentSync';
 import { readSchemaVersion, EXPECTED_SCHEMA_VERSION } from './schemaVersion';
 import { loadUserBudgetCeilingUsd, serverHardLimitUsd } from './budgetCeiling';
 import { loadSyncCheckpoint } from './syncCheckpoints';
@@ -312,7 +312,11 @@ async function sourceStatuses(
   const igDmCheckpoint = await loadSyncCheckpoint(env.DB, userId, 'instagram_dm');
   const checkpointHealth = [mentionCheckpoint, xDmCheckpoint, igCommentCheckpoint, igDmCheckpoint];
   const checkpointQueryFailed = checkpointHealth.some((item) => !item.available);
-  const webhookLabel = instagramWebhookRegistrationStatus(webhookSecrets, webhookConfirmed).sourceLabel;
+  const webhookLabel = instagramCommentsWebhookSourceStatus({
+    secretsConfigured: webhookSecrets,
+    dashboardConfirmed: webhookConfirmed,
+    readComments: igCommentsPoll,
+  });
   return [
     sourceCheck('xMentions', 'X mentions', xMentionsReady ? 'READY' : (env.X_INBOUND_SYNC_ENABLED === 'true' ? 'BLOCKED' : 'DISABLED'), xMentionsReady
       ? `X mention/reply polling is ready${mentionCheckpoint.available && mentionCheckpoint.checkpoint?.continuationCursor ? ' (continuation cursor stored).' : '.'}`
@@ -320,11 +324,13 @@ async function sourceStatuses(
     sourceCheck('xDm', 'X DM', xDmReady ? 'READY' : (env.X_DM_READ_ENABLED === 'true' ? 'BLOCKED' : 'DISABLED'), xDmReady
       ? 'X DM read is ready.'
       : 'X DM read is not ready.', xDmReady ? undefined : 'Settings → X → DM権限を追加, then X_DM_READ_ENABLED=true and X_DM_READ_USD.'),
-    sourceCheck('instagramCommentsWebhook', 'Instagram comments webhook', webhookLabel, webhookConfirmed && igCommentsPoll
+    sourceCheck('instagramCommentsWebhook', 'Instagram comments webhook', webhookLabel, webhookLabel === 'WEBHOOK REGISTERED'
       ? 'Comment webhook is the realtime primary. Dashboard registration was confirmed by INSTAGRAM_COMMENT_WEBHOOK_CONFIRMED.'
-      : webhookSecrets
-        ? 'Webhook secrets are present, but Meta dashboard registration is UNCONFIRMED. Bounded poll catch-up continues.'
-        : 'Comment webhook is not fully ready.', webhookConfirmed ? undefined : 'Register comments + live_comments in Meta App Dashboard, then set INSTAGRAM_COMMENT_WEBHOOK_CONFIRMED=true.'),
+      : webhookLabel === 'BLOCKED'
+        ? 'Webhook dashboard registration is confirmed, but comment permission is not verified. Inbox webhook is not ready.'
+        : webhookSecrets
+          ? 'Webhook secrets are present, but Meta dashboard registration is UNCONFIRMED. Bounded poll catch-up continues.'
+          : 'Comment webhook is not fully ready.', webhookLabel === 'WEBHOOK REGISTERED' ? undefined : webhookLabel === 'BLOCKED' ? 'Complete Meta comment permission, then re-run preflight.' : 'Register comments + live_comments in Meta App Dashboard, then set INSTAGRAM_COMMENT_WEBHOOK_CONFIRMED=true.'),
     sourceCheck('instagramCommentsPoll', 'Instagram comments polling', igCommentsPoll ? 'POLLING READY' : 'BLOCKED', igCommentsPoll
       ? (webhookConfirmed
         ? 'Polling is a bounded catch-up fallback. Webhook dashboard registration is confirmed.'

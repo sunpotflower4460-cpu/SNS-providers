@@ -168,6 +168,7 @@ requireAll(store, [
   'export function spendingCeilingUsd',
   'monthlyLimitUsd: userCeiling',
   'effectiveLimitUsd: effective',
+  'return Math.min(userCeiling, budget.effectiveLimitUsd)',
 ], 'Client budget sync can again overwrite the saved user ceiling with the server HARD LIMIT.');
 
 requireAll(app, [

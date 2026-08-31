@@ -47,6 +47,7 @@ requireAll(store, [
 requireAll(backup, [
   'normalizeSocialActions(state?.socialActions)',
   '!Array.isArray(state.socialActions)',
+  'clampedEffectiveLimitUsd',
 ], 'Backup/restore no longer normalizes or validates socialActions.');
 
 requireAll(socialAction, [
@@ -145,8 +146,12 @@ requireAll(execute, [
   'x_reply_write',
   'replyToXTweet',
   'persistExecutionFingerprintOrThrow',
+  'resolveXWriteAccessToken',
   'providerCallStarted = true',
 ], 'Execution idempotency, binding mismatch recovery, canonical server resolution, or fail-closed live writes are missing.');
+if (execute.indexOf('await resolveXWriteAccessToken') > execute.indexOf('providerCallStarted = true')) {
+  throw new Error('X write token is still acquired after providerCallStarted, so token failures retain UNKNOWN reservations.');
+}
 
 requireAll(schema, [
   'CREATE TABLE IF NOT EXISTS social_executions',

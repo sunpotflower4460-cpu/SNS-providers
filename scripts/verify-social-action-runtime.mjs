@@ -44,7 +44,7 @@ const { completeSocialAction,
 } = await import(pathToFileURL(`${outDir}/socialAction.js`).href);
 const { buildMissionInbox, fallbackDailyQueue, hasDeferredSocialWork } = await import(pathToFileURL(`${outDir}/missionInbox.js`).href);
 const { applyXInboundEvents } = await import(pathToFileURL(`${outDir}/xInboundStore.js`).href);
-const { normalizeAppState, validateAppState } = await import(pathToFileURL(`${outDir}/backup.js`).href);
+const { normalizeAppState, validateAppState, clampedEffectiveLimitUsd } = await import(pathToFileURL(`${outDir}/backup.js`).href);
 const { INSTAGRAM_PROFESSIONAL_CAPABILITIES, xCapabilitiesFromScopes, DISABLED_SOCIAL_CAPABILITIES } = await import(pathToFileURL(`${outDir}/capabilities.js`).href);
 const { instagramCommentEvent, sameLatestCommentEvent } = await import(pathToFileURL(`${outDir}/inbound.js`).href);
 const { normalizeXInboundEvents } = await import(pathToFileURL(`${outDir}/xInbound.js`).href);
@@ -98,6 +98,16 @@ if (!Array.isArray(restored.socialActions) || restored.socialActions.length !== 
   fail('Old backup without socialActions did not restore to an empty array.');
 }
 validateAppState(restored);
+
+if (clampedEffectiveLimitUsd(0, 10) !== 0) fail('Restored effective budget was not clamped to the user ceiling.');
+{
+  const poisoned = normalizeAppState({
+    ...emptyState,
+    budget: { monthlyLimitUsd: 0, effectiveLimitUsd: 10, hardLimit: true, usedUsd: 0, xUsd: 0, llmUsd: 0, searchUsd: 0, mode: 'balanced' },
+  });
+  if (poisoned.budget.monthlyLimitUsd !== 0) fail('Restored user ceiling of $0 was rewritten.');
+  if (poisoned.budget.effectiveLimitUsd !== 0) fail('Restored effectiveLimitUsd=10 was not clamped to user ceiling $0.');
+}
 
 const malformed = normalizeSocialActions([
   { id: 'bad', platform: 'tiktok', candidateId: 'ig-1', type: 'comment_reply', source: 'instagram_comment' },

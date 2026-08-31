@@ -160,10 +160,11 @@ export function applySelfAnalysis(state: AppState, result: RankResult | undefine
 }
 
 export function spendingCeilingUsd(budget: BudgetState) {
+  const userCeiling = Number.isFinite(budget.monthlyLimitUsd) ? Math.max(0, budget.monthlyLimitUsd) : 0;
   if (typeof budget.effectiveLimitUsd === 'number' && Number.isFinite(budget.effectiveLimitUsd) && budget.effectiveLimitUsd >= 0) {
-    return budget.effectiveLimitUsd;
+    return Math.min(userCeiling, budget.effectiveLimitUsd);
   }
-  return budget.monthlyLimitUsd;
+  return userCeiling;
 }
 
 export function syncBudget(state: AppState, usedUsd: number, serverLimitUsd: number): AppState {
