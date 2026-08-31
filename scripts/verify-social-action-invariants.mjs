@@ -177,6 +177,8 @@ requireAll(xOAuth, [
   "intent === 'engagement'",
   "intent === 'dm'",
   'expected_x_user_id',
+  'xRefreshInFlight',
+  "reserveSyncLease(env.DB, userId, 'x_oauth_refresh'",
 ], 'X OAuth write escalation is no longer an explicit cumulative same-account upgrade.');
 if (xOAuth.includes('scope: OPTIONAL_WRITE_SCOPES.join')) {
   throw new Error('Default X OAuth start silently requested optional write scopes.');
@@ -255,6 +257,7 @@ requireAll(inboxSync, [
   'x_dm_sync',
   'instagram_comments_sync',
   'instagram_dm_sync',
+  'getValidXAccessToken',
 ], 'Scheduled inbox sources are no longer started concurrently under source leases.');
 
 console.log('SocialAction source invariants OK: model/state/restore, Mission Inbox fallback, Instagram same-event ingestion, server-authoritative execute, live capabilities, explicit X OAuth capability split, and untrusted social prompt policy.');

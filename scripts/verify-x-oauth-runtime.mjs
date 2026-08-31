@@ -36,6 +36,7 @@ const {
   validateGrantedScopes,
   startXOAuth,
   completeXOAuth,
+  getValidXAccessToken,
 } = await import(pathToFileURL(`${outDir}/xOAuth.js`).href);
 
 function fail(message) {
@@ -285,6 +286,23 @@ function oauthEnv() {
     if (!followUrl.searchParams.get('scope').includes('tweet.write') || !followUrl.searchParams.get('scope').includes('follows.write')) {
       fail('Follow upgrade after reply dropped tweet.write.');
     }
+
+    env.DB._tokens.get('local-user').expires_at = new Date(Date.now() + 10_000).toISOString();
+    let refreshCalls = 0;
+    const countingFetch = globalThis.fetch;
+    globalThis.fetch = async (url, init) => {
+      const href = String(url);
+      if (href.includes('/2/oauth2/token') && String(init?.body || '').includes('grant_type=refresh_token')) {
+        refreshCalls += 1;
+      }
+      return countingFetch(url, init);
+    };
+    const [first, second] = await Promise.all([
+      getValidXAccessToken(env, 'local-user'),
+      getValidXAccessToken(env, 'local-user'),
+    ]);
+    if (refreshCalls !== 1) fail(`Parallel X token refresh was not deduplicated (${refreshCalls} refresh calls).`);
+    if (first !== second || !first) fail('Parallel X token refresh did not return the same access token.');
   } finally {
     globalThis.fetch = originalFetch;
   }

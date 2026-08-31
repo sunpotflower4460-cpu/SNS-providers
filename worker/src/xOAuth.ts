@@ -47,6 +47,10 @@ const KNOWN_SCOPE_SET = new Set<string>([...READ_ONLY_SCOPES, ...OPTIONAL_WRITE_
 const SESSION_TTL_MS = 10 * 60 * 1000;
 const REFRESH_EARLY_MS = 60 * 1000;
 const X_IDENTITY_LEASE_MS = 3 * 60 * 1000;
+const X_REFRESH_LEASE_MS = 60 * 1000;
+const X_REFRESH_WAIT_MS = 50;
+const X_REFRESH_WAIT_ATTEMPTS = 40;
+const xRefreshInFlight = new Map<string, Promise<string>>();
 
 export type XOAuthIntent = 'read' | 'reply' | 'relationship' | 'engagement' | 'dm';
 
@@ -214,6 +218,16 @@ export async function xOAuthStatus(env: XOAuthEnv, userId = 'local-user') {
 
 export async function getValidXAccessToken(env: XOAuthEnv, userId = 'local-user') {
   assertConfigured(env);
+  const existing = xRefreshInFlight.get(userId);
+  if (existing) return existing;
+  const pending = loadOrRefreshXAccessToken(env, userId).finally(() => {
+    if (xRefreshInFlight.get(userId) === pending) xRefreshInFlight.delete(userId);
+  });
+  xRefreshInFlight.set(userId, pending);
+  return pending;
+}
+
+async function loadOrRefreshXAccessToken(env: XOAuthEnv, userId: string) {
   const row = await loadStoredToken(env, userId);
   if (!row) throw new Error('X account is not connected');
   validateGrantedScopes(row.scope, { allowStoredOptionalWrites: true });
@@ -222,19 +236,44 @@ export async function getValidXAccessToken(env: XOAuthEnv, userId = 'local-user'
   if (expiresAt > Date.now() + REFRESH_EARLY_MS) return decryptToken(env, row.access_token_enc);
   if (!row.refresh_token_enc) throw new Error('X access token expired and no refresh token is available');
 
-  const refreshToken = await decryptToken(env, row.refresh_token_enc);
-  const refreshed = await refreshAccessToken(env, refreshToken);
+  const lease = await reserveSyncLease(env.DB, userId, 'x_oauth_refresh', X_REFRESH_LEASE_MS);
   try {
-    await persistTokenResponse(env, userId, refreshed, row.refresh_token_enc, row.scope, undefined, row.x_user_id);
-  } catch {
-    // OAuth providers may rotate/invalidate the old refresh token as soon as a refresh
-    // succeeds. 古い資格情報を再利用しないため、the stale D1 row is invalidated
-    // best-effort before any paid owned-read is allowed to start.
-    await invalidateStoredConnectionAfterRefreshPersistenceFailure(env, userId);
-    throw new Error('Xの接続更新は完了しましたが、新しい認証情報を安全に保存できませんでした。Xを接続し直してから再度お試しください。');
+    if (!lease.ok) return waitForFreshXAccessToken(env, userId);
+    const row = await loadStoredToken(env, userId);
+    if (!row) throw new Error('X account is not connected');
+    validateGrantedScopes(row.scope, { allowStoredOptionalWrites: true });
+    if (parseStoredExpiry(row.expires_at) > Date.now() + REFRESH_EARLY_MS) {
+      return decryptToken(env, row.access_token_enc);
+    }
+    if (!row.refresh_token_enc) throw new Error('X access token expired and no refresh token is available');
+    const refreshToken = await decryptToken(env, row.refresh_token_enc);
+    const refreshed = await refreshAccessToken(env, refreshToken);
+    try {
+      await persistTokenResponse(env, userId, refreshed, row.refresh_token_enc, row.scope, undefined, row.x_user_id);
+    } catch {
+      // OAuth providers may rotate/invalidate the old refresh token as soon as a refresh
+      // succeeds. 古い資格情報を再利用しないため、the stale D1 row is invalidated
+      // best-effort before any paid owned-read is allowed to start.
+      await invalidateStoredConnectionAfterRefreshPersistenceFailure(env, userId);
+      throw new Error('Xの接続更新は完了しましたが、新しい認証情報を安全に保存できませんでした。Xを接続し直してから再度お試しください。');
+    }
+    if (!refreshed.access_token) throw new Error('X refresh response did not include access_token');
+    return refreshed.access_token;
+  } finally {
+    if (lease.ok) await releaseSyncLease(env.DB, lease.lease);
   }
-  if (!refreshed.access_token) throw new Error('X refresh response did not include access_token');
-  return refreshed.access_token;
+}
+
+async function waitForFreshXAccessToken(env: XOAuthEnv, userId: string) {
+  for (let attempt = 0; attempt < X_REFRESH_WAIT_ATTEMPTS; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, X_REFRESH_WAIT_MS));
+    const row = await loadStoredToken(env, userId);
+    if (!row) throw new Error('X account is not connected');
+    if (parseStoredExpiry(row.expires_at) > Date.now() + REFRESH_EARLY_MS) {
+      return decryptToken(env, row.access_token_enc);
+    }
+  }
+  throw new Error('X接続の更新中です。完了後にもう一度お試しください。');
 }
 
 export async function disconnectXOAuth(env: XOAuthEnv, userId = 'local-user') {

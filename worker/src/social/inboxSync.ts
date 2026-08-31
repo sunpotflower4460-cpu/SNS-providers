@@ -40,6 +40,8 @@ export async function syncSocialInboxIsolated(
   const dm = adapters.syncXDirectMessages || syncXDirectMessages;
   const comments = adapters.syncInstagramComments || syncInstagramComments;
   const igDm = adapters.syncInstagramDirectMessages || syncInstagramDirectMessages;
+  // X mention and DM stay concurrent for provider reads. Token refresh is
+  // deduplicated in getValidXAccessToken (same-isolate in-flight + x_oauth_refresh lease).
   const [xMentions, xDm, instagramComments, instagramDm] = await Promise.allSettled([
     runIsolated(() => runWithSourceLease(env.DB, userId, 'x_mentions_sync', SOURCE_LEASE_TTL_MS, () => mentions(env, body))),
     runIsolated(() => runWithSourceLease(env.DB, userId, 'x_dm_sync', SOURCE_LEASE_TTL_MS, () => dm(env, body))),
