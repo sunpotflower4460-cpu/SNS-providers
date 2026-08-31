@@ -7,6 +7,7 @@ import { applyOwnedXSyncWithDiscovery } from './xOwnedStore';
 import { disconnectXOAuth, fetchXOAuthStatus, startXOAuth, syncOwnedXData, type XOAuthStatus } from './xAccount';
 import { setLiveSocialCapabilities } from './socialCapabilities';
 import type { AppState, AppStateUpdater } from './types';
+import { spendingCeilingUsd } from './store';
 import './xAccount.css';
 
 const emptyStatus: XOAuthStatus = {
@@ -107,7 +108,7 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
     setSyncing(true);
     setNote('プロフィール・最近の投稿・フォロー関係を確認しています…');
     try {
-      const result = await syncOwnedXData(state.budget.monthlyLimitUsd, state.candidates);
+      const result = await syncOwnedXData(spendingCeilingUsd(state.budget), state.candidates);
       if (!result.enabled) {
         setNote(result.reason || '現在はXデータを同期できません');
         return;
@@ -154,7 +155,7 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
     setInboundSyncing(true);
     setNote('Xのメンションと返信を確認しています…');
     try {
-      const result = await syncXInbound('local-user', state.budget.monthlyLimitUsd);
+      const result = await syncXInbound('local-user', spendingCeilingUsd(state.budget));
       if (!result.enabled) {
         setNote(result.reason || '現在はXの受信メンションを同期できません');
         return;
@@ -172,7 +173,7 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
     setDmSyncing(true);
     setNote('XのDMを確認しています…');
     try {
-      const result = await syncXDirectMessages('local-user', state.budget.monthlyLimitUsd);
+      const result = await syncXDirectMessages('local-user', spendingCeilingUsd(state.budget));
       if (!result.enabled) {
         setNote(result.reason || '現在はXのDMを同期できません');
         return;

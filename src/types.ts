@@ -169,6 +169,7 @@ export interface SocialEvent {
 
 export interface BudgetState {
   monthlyLimitUsd: number;
+  effectiveLimitUsd?: number;
   hardLimit: boolean;
   usedUsd: number;
   xUsd: number;

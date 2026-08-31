@@ -645,6 +645,7 @@ async function seedX(db, executionMode = 'in_app') {
     }, {
       replyToXTweet: fakeX,
       xGrantedScopes: xWriteScopes,
+      authenticatedUserId: '42',
       getXAccessToken: async () => 'x-user-token',
     });
     if (result.status !== 200 || result.body.certainty !== 'success') fail(`Live X execute failed: ${JSON.stringify(result.body)}`);
@@ -656,6 +657,7 @@ async function seedX(db, executionMode = 'in_app') {
     }, {
       replyToXTweet: fakeX,
       xGrantedScopes: xWriteScopes,
+      authenticatedUserId: '42',
       getXAccessToken: async () => 'x-user-token',
     });
     if (xCalls.length !== 1) fail('X network retry duplicated the provider write.');

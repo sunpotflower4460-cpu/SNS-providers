@@ -47,6 +47,11 @@ const KNOWN_SCOPE_SET = new Set<string>([...READ_ONLY_SCOPES, ...OPTIONAL_WRITE_
 const SESSION_TTL_MS = 10 * 60 * 1000;
 const REFRESH_EARLY_MS = 60 * 1000;
 const X_IDENTITY_LEASE_MS = 3 * 60 * 1000;
+const X_REFRESH_LEASE_MS = 60 * 1000;
+export const X_REFRESH_HTTP_TIMEOUT_MS = 20_000;
+export const X_REFRESH_WAIT_BUDGET_MS = X_REFRESH_HTTP_TIMEOUT_MS + 5_000;
+const X_REFRESH_WAIT_MS = 250;
+const xRefreshInFlight = new Map<string, Promise<string>>();
 
 export type XOAuthIntent = 'read' | 'reply' | 'relationship' | 'engagement' | 'dm';
 
@@ -214,6 +219,16 @@ export async function xOAuthStatus(env: XOAuthEnv, userId = 'local-user') {
 
 export async function getValidXAccessToken(env: XOAuthEnv, userId = 'local-user') {
   assertConfigured(env);
+  const existing = xRefreshInFlight.get(userId);
+  if (existing) return existing;
+  const pending = loadOrRefreshXAccessToken(env, userId).finally(() => {
+    if (xRefreshInFlight.get(userId) === pending) xRefreshInFlight.delete(userId);
+  });
+  xRefreshInFlight.set(userId, pending);
+  return pending;
+}
+
+async function loadOrRefreshXAccessToken(env: XOAuthEnv, userId: string) {
   const row = await loadStoredToken(env, userId);
   if (!row) throw new Error('X account is not connected');
   validateGrantedScopes(row.scope, { allowStoredOptionalWrites: true });
@@ -222,6 +237,23 @@ export async function getValidXAccessToken(env: XOAuthEnv, userId = 'local-user'
   if (expiresAt > Date.now() + REFRESH_EARLY_MS) return decryptToken(env, row.access_token_enc);
   if (!row.refresh_token_enc) throw new Error('X access token expired and no refresh token is available');
 
+  const lease = await reserveSyncLease(env.DB, userId, 'x_oauth_refresh', X_REFRESH_LEASE_MS);
+  try {
+    if (!lease.ok) return waitForFreshXAccessToken(env, userId);
+    return await refreshXAccessTokenLocked(env, userId);
+  } finally {
+    if (lease.ok) await releaseSyncLease(env.DB, lease.lease);
+  }
+}
+
+async function refreshXAccessTokenLocked(env: XOAuthEnv, userId: string) {
+  const row = await loadStoredToken(env, userId);
+  if (!row) throw new Error('X account is not connected');
+  validateGrantedScopes(row.scope, { allowStoredOptionalWrites: true });
+  if (parseStoredExpiry(row.expires_at) > Date.now() + REFRESH_EARLY_MS) {
+    return decryptToken(env, row.access_token_enc);
+  }
+  if (!row.refresh_token_enc) throw new Error('X access token expired and no refresh token is available');
   const refreshToken = await decryptToken(env, row.refresh_token_enc);
   const refreshed = await refreshAccessToken(env, refreshToken);
   try {
@@ -235,6 +267,26 @@ export async function getValidXAccessToken(env: XOAuthEnv, userId = 'local-user'
   }
   if (!refreshed.access_token) throw new Error('X refresh response did not include access_token');
   return refreshed.access_token;
+}
+
+async function waitForFreshXAccessToken(env: XOAuthEnv, userId: string) {
+  const deadline = Date.now() + X_REFRESH_WAIT_BUDGET_MS;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, X_REFRESH_WAIT_MS));
+    const row = await loadStoredToken(env, userId);
+    if (!row) throw new Error('X account is not connected');
+    if (parseStoredExpiry(row.expires_at) > Date.now() + REFRESH_EARLY_MS) {
+      return decryptToken(env, row.access_token_enc);
+    }
+    const lease = await reserveSyncLease(env.DB, userId, 'x_oauth_refresh', X_REFRESH_LEASE_MS);
+    if (!lease.ok) continue;
+    try {
+      return await refreshXAccessTokenLocked(env, userId);
+    } finally {
+      await releaseSyncLease(env.DB, lease.lease);
+    }
+  }
+  throw new Error('X接続の更新中です。完了後にもう一度お試しください。');
 }
 
 export async function disconnectXOAuth(env: XOAuthEnv, userId = 'local-user') {
@@ -539,7 +591,7 @@ async function tokenRequest(env: XOAuthEnv, form: URLSearchParams, operation: st
       'content-type': 'application/x-www-form-urlencoded',
     },
     body: form.toString(),
-  }, 20_000, `X OAuth ${operation}`);
+  }, X_REFRESH_HTTP_TIMEOUT_MS, `X OAuth ${operation}`);
   if (!response.ok) throw new Error(`X OAuth ${operation} returned ${response.status}`);
   const body = await response.json().catch(() => null) as XTokenResponse | null;
   if (!body || typeof body !== 'object') throw new Error(`X OAuth ${operation} returned invalid JSON`);

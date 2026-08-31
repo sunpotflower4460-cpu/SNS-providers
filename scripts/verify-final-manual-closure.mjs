@@ -64,6 +64,7 @@ const files = [
   ['social/instagram/dmSync.js', '../worker/src/social/instagram/dmSync.ts'],
   ['social/inboxSync.js', '../worker/src/social/inboxSync.ts'],
   ['budgetCeilingSave.js', '../src/budgetCeilingSave.ts'],
+  ['settingsSave.js', '../src/settingsSave.ts'],
 ];
 for (const [dest, src] of files) {
   await emit(dest, new URL(src, import.meta.url));
@@ -71,14 +72,17 @@ for (const [dest, src] of files) {
 
 const { compareNumericProviderIds, isNewerNumericProviderId, maxNumericProviderIdFrom } = await import(pathToFileURL(`${outDir}/social/providerIds.js`).href);
 const { persistExecutionFingerprintOrThrow, buildExecutionFingerprint, parseExecutionFingerprint } = await import(pathToFileURL(`${outDir}/social/fingerprint.js`).href);
-const { executeSocialAction } = await import(pathToFileURL(`${outDir}/social/execute.js`).href);
+const { executeSocialAction, knownLookupReadCost, failClosedIfLookupRequired, totalExecutionReserveUsd, resolveFingerprintActorId, durableXUserId } = await import(pathToFileURL(`${outDir}/social/execute.js`).href);
 const { persistInstagramCommentEvidence } = await import(pathToFileURL(`${outDir}/social/instagram/persist.js`).href);
 const { persistInstagramDmEvidence } = await import(pathToFileURL(`${outDir}/social/instagram/persistDm.js`).href);
 const { loadSyncCheckpoint, saveSyncContinuation, commitSyncCheckpoint } = await import(pathToFileURL(`${outDir}/social/syncCheckpoints.js`).href);
 const { walkInstagramConversationMessages, instagramDmMapsFromExtra, emptyInstagramDmThreadMaps, instagramDmThreadIsFullyProcessed } = await import(pathToFileURL(`${outDir}/social/instagram/dmSync.js`).href);
-const { paginateInstagramMedia, paginateInstagramComments } = await import(pathToFileURL(`${outDir}/social/instagram/commentSync.js`).href);
+const { paginateInstagramMedia, paginateInstagramComments, parsePendingMedia, instagramCommentWebhookConfirmed, instagramWebhookSecretsConfigured, instagramWebhookRegistrationStatus, instagramCommentsWebhookSourceStatus, syncInstagramComments } = await import(pathToFileURL(`${outDir}/social/instagram/commentSync.js`).href);
 const { paginateXMentions } = await import(pathToFileURL(`${outDir}/social/x/sync.js`).href);
 const { persistServerBudgetCeiling, parseRuntimeBudgetResponse, BUDGET_SAVE_FAILED_MESSAGE } = await import(pathToFileURL(`${outDir}/budgetCeilingSave.js`).href);
+const { completeSettingsBudgetSave, clientBudgetAfterServerSave, shouldApplySettingsSave, settingsBudgetIdentity, shouldInvalidatePendingSettingsSave } = await import(pathToFileURL(`${outDir}/settingsSave.js`).href);
+const { X_REFRESH_WAIT_BUDGET_MS, X_REFRESH_HTTP_TIMEOUT_MS } = await import(pathToFileURL(`${outDir}/xOAuth.js`).href);
+const { probeInstagramPermissions } = await import(pathToFileURL(`${outDir}/social/instagram/probe.js`).href);
 const { reserveSyncLease, releaseSyncLease, runWithSourceLease } = await import(pathToFileURL(`${outDir}/syncLease.js`).href);
 const { syncSocialInboxIsolated } = await import(pathToFileURL(`${outDir}/social/inboxSync.js`).href);
 const { reconcileExecution } = await import(pathToFileURL(`${outDir}/social/reconcile.js`).href);
@@ -188,10 +192,23 @@ function executionDb(options = {}) {
                 return { meta: { changes: 1 } };
               }
               if (normalized.includes('INSERT INTO budget_ledger') || normalized.startsWith('WITH')) {
-                ledger.push({ id: params[0] || params[3] });
+                const id = normalized.startsWith('WITH') ? params[3] : params[0];
+                const userId = normalized.startsWith('WITH') ? params[4] : params[1];
+                const provider = normalized.startsWith('WITH') ? params[5] : params[2];
+                const operation = normalized.startsWith('WITH') ? params[6] : params[3];
+                const cost = normalized.startsWith('WITH') ? params[7] : params[4];
+                ledger.push({ id, user_id: userId, provider, operation, cost_usd: cost });
                 return { meta: { changes: 1 } };
               }
-              if (normalized.includes('DELETE FROM budget_ledger')) return { meta: { changes: 1 } };
+              if (normalized.includes('DELETE FROM budget_ledger')) {
+                const before = ledger.length;
+                for (let i = ledger.length - 1; i >= 0; i -= 1) {
+                  if (ledger[i].id === params[0] && (params[1] == null || ledger[i].user_id === params[1])) {
+                    ledger.splice(i, 1);
+                  }
+                }
+                return { meta: { changes: before === ledger.length ? 0 : 1 } };
+              }
               return { meta: { changes: 0 } };
             },
           };
@@ -564,7 +581,7 @@ function messagePages() {
     version: 'v24.0',
     igUserId: '1',
     token: 't',
-    webhookConfigured: false,
+    webhookRegistrationConfirmed: false,
     getJson: async (url) => {
       const after = new URL(url).searchParams.get('after') || 'none';
       return mediaPages[after];
@@ -580,7 +597,7 @@ function messagePages() {
     igUserId: '1',
     token: 't',
     mediaAfter: 'page2',
-    webhookConfigured: false,
+    webhookRegistrationConfirmed: false,
     getJson: async (url) => {
       const after = new URL(url).searchParams.get('after');
       if (after === 'page2') return { data: [{ id: '99' }], paging: { cursors: {} } };
@@ -793,4 +810,692 @@ function leaseMemory() {
   if (walked.newestId !== '100') fail(`Lexical ID bug survived: newestId=${walked.newestId}`);
 }
 
-console.log('Final manual-only closure tests OK: durable fingerprint, budget authority, Instagram DM/comment checkpoints, source locks, checkpoint fail-closed, numeric IDs.');
+function seedUnknownExecution(db, options = {}) {
+  const now = '2026-08-30T12:00:00.000Z';
+  db._actions.set('local-user::sa-ig-comment-111', {
+    id: 'sa-ig-comment-111', user_id: 'local-user', platform: 'instagram', candidate_id: 'u1',
+    action_type: 'comment_reply', status: 'executing', execution_mode: 'in_app', source: 'instagram_comment',
+    external_event_id: '111', conversation_id: null, parent_content_id: '222',
+    target_url: 'https://instagram.com/p/x', observed_at: now, created_at: now, updated_at: now,
+    completed_at: null, platform_user_id: 'u1', username: 'alice', identity_conflict: 0, retryable: 1,
+  });
+  db._executions.set('local-user::exec-reconcile-1', {
+    id: 'ex', user_id: 'local-user', action_id: 'sa-ig-comment-111', platform: 'instagram',
+    operation: 'instagram_comment_reply', idempotency_key: 'exec-reconcile-1',
+    external_result_id: null, status: 'pending', error_code: 'UNKNOWN_RESULT',
+    created_at: now, completed_at: null, reservation_id: options.writeReservationId || null,
+    result_metadata_json: options.resultMetadataJson || null,
+    fingerprint_json: options.fingerprintJson === undefined ? null : options.fingerprintJson,
+  });
+}
+
+function reconcileEnv(db, extra = {}) {
+  return {
+    DB: db,
+    SOCIAL_WRITE_MODE: '',
+    SOCIAL_RECONCILE_READ_USD: '0.02',
+    DEFAULT_MONTHLY_BUDGET_USD: '3',
+    INSTAGRAM_ACCESS_TOKEN: 't',
+    INSTAGRAM_USER_ID: '12345678',
+    INSTAGRAM_API_VERSION: 'v24.0',
+    ...extra,
+  };
+}
+
+{
+  const db = executionDb();
+  seedUnknownExecution(db, { fingerprintJson: null });
+  let providerReads = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    providerReads += 1;
+    return { ok: true, status: 200, json: async () => ({ data: [] }) };
+  };
+  try {
+    const result = await reconcileExecution(reconcileEnv(db), 'local-user', 'exec-reconcile-1');
+    if (providerReads !== 0) fail('Missing fingerprint still performed a provider read.');
+    if (result.body.code !== 'UNKNOWN_RESULT') fail('Missing fingerprint did not stay UNKNOWN.');
+    if (db._ledger.some((row) => row.operation === 'social_reconcile_read')) {
+      fail('Missing fingerprint retained a SOCIAL_RECONCILE_READ_USD reservation.');
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+{
+  const db = executionDb();
+  seedUnknownExecution(db, { fingerprintJson: '{not-json' });
+  let providerReads = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    providerReads += 1;
+    return { ok: true, status: 200, json: async () => ({ data: [] }) };
+  };
+  try {
+    await reconcileExecution(reconcileEnv(db), 'local-user', 'exec-reconcile-1');
+    if (providerReads !== 0) fail('Malformed fingerprint still performed a provider read.');
+    if (db._ledger.length !== 0) fail('Malformed fingerprint created a reconcile reservation.');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+{
+  const db = executionDb();
+  const fp = await buildExecutionFingerprint({
+    draft: 'thanks',
+    canonicalTargetId: '999',
+    actorId: '12345678',
+    operation: 'instagram_comment_reply',
+  });
+  seedUnknownExecution(db, { fingerprintJson: JSON.stringify(fp) });
+  let providerReads = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    providerReads += 1;
+    return { ok: true, status: 200, json: async () => ({ data: [] }) };
+  };
+  try {
+    await reconcileExecution(reconcileEnv(db), 'local-user', 'exec-reconcile-1');
+    if (providerReads !== 0) fail('Fingerprint target mismatch still called the provider.');
+    if (db._ledger.length !== 0) fail('Fingerprint target mismatch reserved reconcile budget.');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+{
+  const db = executionDb();
+  const fp = await buildExecutionFingerprint({
+    draft: 'thanks',
+    canonicalTargetId: '111',
+    actorId: '12345678',
+    operation: 'instagram_comment_reply',
+  });
+  seedUnknownExecution(db, { fingerprintJson: JSON.stringify(fp) });
+  let providerReads = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    providerReads += 1;
+    return { ok: true, status: 200, json: async () => ({ data: [] }) };
+  };
+  try {
+    await reconcileExecution(reconcileEnv(db), 'local-user', 'exec-reconcile-1');
+    if (providerReads !== 1) fail(`Valid fingerprint must reserve and read exactly once, got ${providerReads}.`);
+    const reserved = db._ledger.filter((row) => row.operation === 'social_reconcile_read');
+    if (reserved.length !== 1) fail(`Valid fingerprint reservation count=${reserved.length}.`);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+{
+  const db = executionDb();
+  const fp = await buildExecutionFingerprint({
+    draft: 'thanks',
+    canonicalTargetId: '111',
+    actorId: '12345678',
+    operation: 'instagram_comment_reply',
+  });
+  seedUnknownExecution(db, { fingerprintJson: JSON.stringify(fp) });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new Error('timeout');
+  };
+  try {
+    await reconcileExecution(reconcileEnv(db), 'local-user', 'exec-reconcile-1');
+    if (!db._ledger.some((row) => row.operation === 'social_reconcile_read')) {
+      fail('Provider timeout released the conservative reconcile reservation.');
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+{
+  const db = executionDb();
+  const fp = await buildExecutionFingerprint({
+    draft: 'thanks',
+    canonicalTargetId: '111',
+    actorId: '999',
+    operation: 'instagram_comment_reply',
+  });
+  seedUnknownExecution(db, { fingerprintJson: JSON.stringify(fp) });
+  let providerReads = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    providerReads += 1;
+    return { ok: true, status: 200, json: async () => ({ data: [] }) };
+  };
+  try {
+    await reconcileExecution(reconcileEnv(db), 'local-user', 'exec-reconcile-1');
+    if (providerReads !== 0) fail('Actor mismatch still called the provider.');
+    if (db._ledger.length !== 0) fail('Pre-provider actor mismatch retained a reconcile reservation.');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+{
+  const db = executionDb();
+  await seedIgComment(db);
+  let meCalls = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('/2/users/me')) meCalls += 1;
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  try {
+    db._actions.set('local-user::sa-x-follow-99', {
+      id: 'sa-x-follow-99', user_id: 'local-user', platform: 'x', candidate_id: '99',
+      action_type: 'follow', status: 'ready', execution_mode: 'in_app', source: 'x_follow',
+      external_event_id: '99', conversation_id: null, parent_content_id: null,
+      target_url: null, observed_at: '2026-08-30T12:00:00.000Z', created_at: '2026-08-30T12:00:00.000Z',
+      updated_at: '2026-08-30T12:00:00.000Z', completed_at: null, platform_user_id: '99',
+      username: 'bob', identity_conflict: 0, retryable: 1,
+    });
+    const writes = [];
+    const result = await executeSocialAction({
+      DB: db,
+      SOCIAL_WRITE_MODE: '',
+      SOCIAL_WRITE_ENABLED: 'true',
+      X_FOLLOW_WRITE_ENABLED: 'true',
+      X_FOLLOW_WRITE_USD: '0.02',
+      DEFAULT_MONTHLY_BUDGET_USD: '3',
+    }, 'local-user', 'sa-x-follow-99', { executionId: 'exec-x-durable-1', draft: '' }, {
+      followXUser: async (input) => {
+        writes.push(input);
+        return { certainty: 'success', externalResultId: '99' };
+      },
+      xGrantedScopes: ['tweet.read', 'users.read', 'follows.read', 'offline.access', 'follows.write'],
+      authenticatedUserId: '4242',
+      getXAccessToken: async () => 'tok',
+    });
+    if (meCalls !== 0) fail('Durable x_user_id still triggered /users/me for fingerprint.');
+    if (result.body.certainty !== 'success') fail(`Durable X actor execute failed: ${JSON.stringify(result.body)}`);
+    if (writes.length !== 1 || writes[0].sourceUserId !== '4242') fail('Follow adapter did not reuse the durable X ID.');
+    const stored = parseExecutionFingerprint(db._executions.get('local-user::exec-x-durable-1').fingerprint_json);
+    if (!stored || stored.actorId !== '4242') fail('Fingerprint actorId was not the stored verified X ID.');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+{
+  const db = executionDb();
+  db._actions.set('local-user::sa-x-follow-99', {
+    id: 'sa-x-follow-99', user_id: 'local-user', platform: 'x', candidate_id: '99',
+    action_type: 'follow', status: 'ready', execution_mode: 'in_app', source: 'x_follow',
+    external_event_id: '99', conversation_id: null, parent_content_id: null,
+    target_url: null, observed_at: '2026-08-30T12:00:00.000Z', created_at: '2026-08-30T12:00:00.000Z',
+    updated_at: '2026-08-30T12:00:00.000Z', completed_at: null, platform_user_id: '99',
+    username: 'bob', identity_conflict: 0, retryable: 1,
+  });
+  let writes = 0;
+  let meCalls = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('/2/users/me')) {
+      meCalls += 1;
+      return { ok: true, status: 200, json: async () => ({ data: { id: '1', username: 'me' } }) };
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  try {
+    const denied = await executeSocialAction({
+      DB: db,
+      SOCIAL_WRITE_MODE: '',
+      SOCIAL_WRITE_ENABLED: 'true',
+      X_FOLLOW_WRITE_ENABLED: 'true',
+      X_FOLLOW_WRITE_USD: '0.02',
+      DEFAULT_MONTHLY_BUDGET_USD: '3',
+    }, 'local-user', 'sa-x-follow-99', { executionId: 'exec-x-noid-1', draft: '' }, {
+      followXUser: async () => { writes += 1; return { certainty: 'success', externalResultId: '99' }; },
+      xGrantedScopes: ['tweet.read', 'users.read', 'follows.read', 'offline.access', 'follows.write'],
+      getXAccessToken: async () => 'tok',
+    });
+    if (writes !== 0) fail('Missing durable X ID still performed a social write.');
+    if (meCalls !== 0) fail('Missing durable X ID fell back to /users/me.');
+    if (denied.body.code !== 'CAPABILITY_DENIED') fail('Missing durable X ID did not fail closed.');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+{
+  const db = executionDb();
+  db._actions.set('local-user::sa-x-follow-99', {
+    id: 'sa-x-follow-99', user_id: 'local-user', platform: 'x', candidate_id: '99',
+    action_type: 'follow', status: 'ready', execution_mode: 'in_app', source: 'x_follow',
+    external_event_id: '99', conversation_id: null, parent_content_id: null,
+    target_url: null, observed_at: '2026-08-30T12:00:00.000Z', created_at: '2026-08-30T12:00:00.000Z',
+    updated_at: '2026-08-30T12:00:00.000Z', completed_at: null, platform_user_id: '99',
+    username: 'bob', identity_conflict: 0, retryable: 1,
+  });
+  let writes = 0;
+  const denied = await executeSocialAction({
+    DB: db,
+    SOCIAL_WRITE_MODE: '',
+    SOCIAL_WRITE_ENABLED: 'true',
+    X_FOLLOW_WRITE_ENABLED: 'true',
+    X_FOLLOW_WRITE_USD: '0.02',
+    DEFAULT_MONTHLY_BUDGET_USD: '3',
+  }, 'local-user', 'sa-x-follow-99', { executionId: 'exec-x-token-fail-1', draft: '' }, {
+    followXUser: async () => { writes += 1; return { certainty: 'success', externalResultId: '99' }; },
+    xGrantedScopes: ['tweet.read', 'users.read', 'follows.read', 'offline.access', 'follows.write'],
+    authenticatedUserId: '4242',
+    getXAccessToken: async () => { throw new Error('X account is not connected'); },
+  });
+  if (writes !== 0) fail('X token failure still invoked the write adapter.');
+  if (denied.body.code === 'UNKNOWN_RESULT' || denied.body.certainty === 'unknown') {
+    fail('X token failure was recorded as UNKNOWN and retained the write lock.');
+  }
+  if (denied.body.code !== 'CAPABILITY_DENIED') fail(`X token failure did not fail closed: ${JSON.stringify(denied.body)}`);
+  if (db._ledger.length !== 0) fail('X token failure retained a write reservation.');
+}
+
+if (durableXUserId('4242') !== '4242' || durableXUserId('nope') || durableXUserId('')) {
+  fail('durableXUserId accepted a non-X ID.');
+}
+if (resolveFingerprintActorId({ SOCIAL_WRITE_MODE: '' }, 'x', '4242') !== '4242') {
+  fail('Stored verified X ID was not reused for fingerprint actor.');
+}
+if (resolveFingerprintActorId({ SOCIAL_WRITE_MODE: '' }, 'x', null)) {
+  fail('Missing durable X ID resolved an actor for a live write.');
+}
+if (knownLookupReadCost({}) != null) fail('Missing X_LOOKUP_READ_USD was treated as known.');
+if (knownLookupReadCost({ X_LOOKUP_READ_USD: '0.01' }) !== 0.01) fail('Configured lookup price was ignored.');
+if (failClosedIfLookupRequired({}, true).ok) fail('Required lookup with missing price did not fail closed.');
+if (!failClosedIfLookupRequired({ X_LOOKUP_READ_USD: '0.01' }, true).ok) fail('Priced required lookup fail-closed incorrectly.');
+if (totalExecutionReserveUsd(0.02, false, null) !== 0.02) fail('No-lookup write did not reserve write cost only.');
+if (totalExecutionReserveUsd(0.02, true, 0.01) !== 0.03) fail('Unavoidable lookup was not added to the ledger reservation.');
+if (totalExecutionReserveUsd(0.02, true, null) != null) fail('Unavoidable lookup with missing price was treated as accounted.');
+
+{
+  const server = parseRuntimeBudgetResponse({ monthlyBudgetCeilingUsd: 5, serverHardLimitUsd: 3, effectiveLimitUsd: 3 });
+  if (!server.ok) fail('User ceiling 5 / hard 3 / effective 3 was rejected.');
+  const client = clientBudgetAfterServerSave(server);
+  if (client.monthlyLimitUsd !== 5 || client.inputUsd !== 5) fail('Editable user ceiling was replaced by the effective limit.');
+  if (client.effectiveLimitUsd !== 3) fail('Spending authority was not the effective limit.');
+  const stale = completeSettingsBudgetSave({
+    editVersion: 2,
+    saveVersion: 1,
+    result: server,
+  });
+  if (stale.apply || stale.saved) fail('Unrelated later Settings edit was marked saved by a stale budget response.');
+  const fresh = completeSettingsBudgetSave({
+    editVersion: 1,
+    saveVersion: 1,
+    result: server,
+  });
+  if (!fresh.saved || fresh.monthlyLimitUsd !== 5) fail('Successful save did not keep user ceiling 5.');
+  const second = completeSettingsBudgetSave({
+    editVersion: 2,
+    saveVersion: 2,
+    result: parseRuntimeBudgetResponse({ monthlyBudgetCeilingUsd: 5, serverHardLimitUsd: 3, effectiveLimitUsd: 3 }),
+  });
+  if (!second.saved || second.inputUsd !== 5) fail('Latest Settings save did not keep the user ceiling.');
+}
+
+if (shouldApplySettingsSave(1, 1) !== true) fail('Matching save version was rejected.');
+if (shouldApplySettingsSave(2, 1) !== false) fail('Edit during save was treated as saved.');
+
+{
+  const first = completeSettingsBudgetSave({
+    editVersion: 3,
+    saveVersion: 2,
+    result: parseRuntimeBudgetResponse({ monthlyBudgetCeilingUsd: 3, serverHardLimitUsd: 3, effectiveLimitUsd: 3 }),
+  });
+  if (first.apply) fail('Older request completed after a newer edit and overwrote budget state.');
+}
+
+{
+  const before = settingsBudgetIdentity({ monthlyLimitUsd: 5, effectiveLimitUsd: 3 });
+  const restored = settingsBudgetIdentity({ monthlyLimitUsd: 0, effectiveLimitUsd: 0 });
+  if (!shouldInvalidatePendingSettingsSave(before, restored)) {
+    fail('Restored budget identity did not invalidate a pending Settings save.');
+  }
+  if (shouldInvalidatePendingSettingsSave(before, before)) {
+    fail('Unchanged budget identity invalidated a pending Settings save.');
+  }
+  const saveVersion = 4;
+  let editVersion = saveVersion;
+  if (shouldInvalidatePendingSettingsSave(before, restored)) editVersion += 1;
+  const afterRestore = completeSettingsBudgetSave({
+    editVersion,
+    saveVersion,
+    result: parseRuntimeBudgetResponse({ monthlyBudgetCeilingUsd: 5, serverHardLimitUsd: 3, effectiveLimitUsd: 3 }),
+  });
+  if (afterRestore.apply || afterRestore.saved) {
+    fail('Pending Settings save overwrote restored budget ceilings.');
+  }
+}
+
+if (X_REFRESH_WAIT_BUDGET_MS < X_REFRESH_HTTP_TIMEOUT_MS) {
+  fail('X refresh wait budget is shorter than the token endpoint timeout.');
+}
+
+{
+  const probes = new Map();
+  const db = {
+    prepare(sql) {
+      const normalized = String(sql).replace(/\s+/g, ' ').trim();
+      return {
+        bind(...params) {
+          return {
+            async first() {
+              if (normalized.includes('FROM instagram_permission_probes')) return probes.get(params[0]) || null;
+              return null;
+            },
+            async run() {
+              if (normalized.includes('instagram_permission_probes')) {
+                probes.set(params[0], {
+                  user_id: params[0],
+                  checked_at: params[1],
+                  payload_json: params[2],
+                  permissions_verified: params[3],
+                });
+              }
+              return { meta: { changes: 1 } };
+            },
+          };
+        },
+      };
+    },
+  };
+  let accountCalls = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const href = String(url);
+    if (href.includes('graph.instagram.com') && href.includes('fields=id')) {
+      accountCalls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return { ok: true, status: 200, json: async () => ({ id: '12345', username: 'me', account_type: 'BUSINESS' }) };
+    }
+    if (href.includes('/me/permissions')) {
+      return { ok: true, status: 200, json: async () => ({ data: [{ permission: 'instagram_business_manage_comments', status: 'granted' }] }) };
+    }
+    fail(`Unexpected Instagram probe fetch: ${href}`);
+  };
+  try {
+    const env = {
+      DB: db,
+      INSTAGRAM_ACCESS_TOKEN: 't',
+      INSTAGRAM_USER_ID: '12345',
+      INSTAGRAM_API_VERSION: 'v24.0',
+    };
+    const [first, second] = await Promise.all([
+      probeInstagramPermissions(env, 'local-user'),
+      probeInstagramPermissions(env, 'local-user'),
+    ]);
+    if (accountCalls !== 1) fail(`Parallel Instagram permission probes were not deduplicated (${accountCalls} account reads).`);
+    if (!first.permissionsVerified || !second.permissionsVerified) fail('Deduped Instagram probe lost the verified snapshot.');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+if (instagramWebhookSecretsConfigured({ INSTAGRAM_WEBHOOK_VERIFY_TOKEN: 't', INSTAGRAM_APP_SECRET: 's' }) !== true) {
+  fail('Webhook secrets were not detected.');
+}
+if (instagramCommentWebhookConfirmed({ INSTAGRAM_COMMENT_WEBHOOK_CONFIRMED: 'false' })) {
+  fail('false confirmation was treated as registered.');
+}
+if (instagramCommentWebhookConfirmed({})) fail('Missing confirmation flag was treated as registered.');
+if (!instagramCommentWebhookConfirmed({ INSTAGRAM_COMMENT_WEBHOOK_CONFIRMED: 'true' })) {
+  fail('true confirmation flag was ignored.');
+}
+{
+  const secretsOnly = instagramWebhookRegistrationStatus(true, false);
+  if (secretsOnly.sourceLabel === 'WEBHOOK REGISTERED' || secretsOnly.dashboardRegistration !== 'UNCONFIRMED') {
+    fail('Secrets-only webhook was displayed as registered.');
+  }
+  const confirmed = instagramWebhookRegistrationStatus(true, true);
+  if (confirmed.sourceLabel !== 'WEBHOOK REGISTERED') fail('Confirmed webhook was not labeled WEBHOOK REGISTERED.');
+  if (instagramCommentsWebhookSourceStatus({ secretsConfigured: true, dashboardConfirmed: true, readComments: false }) !== 'BLOCKED') {
+    fail('Confirmed webhook without comment permission was not BLOCKED.');
+  }
+  if (instagramCommentsWebhookSourceStatus({ secretsConfigured: true, dashboardConfirmed: true, readComments: true }) !== 'WEBHOOK REGISTERED') {
+    fail('Confirmed webhook with comment permission was not WEBHOOK REGISTERED.');
+  }
+}
+
+{
+  const mediaPages = {
+    none: {
+      data: Array.from({ length: 8 }, (_, index) => ({ id: String(index + 1), timestamp: `2026-08-30T12:0${index}:00.000Z` })),
+      paging: { cursors: { after: 'page2' } },
+    },
+    page2: {
+      data: Array.from({ length: 8 }, (_, index) => ({ id: String(index + 9), timestamp: `2026-08-29T12:0${index}:00.000Z` })),
+      paging: { cursors: {} },
+    },
+  };
+  const secretsOnly = await paginateInstagramMedia({
+    version: 'v24.0',
+    igUserId: '1',
+    token: 't',
+    webhookRegistrationConfirmed: false,
+    cycleComplete: true,
+    getJson: async (url) => mediaPages[new URL(url).searchParams.get('after') || 'none'],
+  });
+  if (!secretsOnly.media.some((item) => item.id === '9')) fail('Secrets-only webhook stopped old-media catch-up.');
+  const confirmed = await paginateInstagramMedia({
+    version: 'v24.0',
+    igUserId: '1',
+    token: 't',
+    webhookRegistrationConfirmed: true,
+    cycleComplete: true,
+    getJson: async (url) => mediaPages[new URL(url).searchParams.get('after') || 'none'],
+  });
+  if (confirmed.media.some((item) => item.id === '9')) fail('Confirmed webhook still forced page2 catch-up.');
+}
+
+{
+  const parsed = parsePendingMedia([
+    { id: 'old-media', permalink: 'https://instagram.com/p/old', commentAfter: 'c2' },
+  ]);
+  if (parsed[0].permalink !== 'https://instagram.com/p/old') fail('Pending media permalink was dropped.');
+}
+
+function commentSyncDb(extra = {}) {
+  const checkpoints = new Map();
+  const events = new Map();
+  const actions = new Map();
+  const probes = new Map();
+  const now = new Date().toISOString();
+  probes.set('local-user', {
+    user_id: 'local-user',
+    checked_at: now,
+    payload_json: JSON.stringify({
+      configured: true, tokenValid: true, professionalAccount: true,
+      readComments: true, sendCommentReply: true, readDm: false, sendDm: false,
+      permissionsVerified: true, grantedPermissions: ['instagram_business_manage_comments'], checkedAt: now,
+    }),
+    permissions_verified: 1,
+  });
+  if (extra.pending) {
+    checkpoints.set('local-user::instagram_comments_poll', {
+      user_id: 'local-user',
+      source: 'instagram_comments_poll',
+      newest_seen_id: null,
+      continuation_cursor: null,
+      extra_json: JSON.stringify({
+        pendingMedia: extra.pending,
+        commentAfter: extra.commentAfter || { 'old-media': 'c2' },
+        mediaNewestCommentId: extra.mediaNewest || {},
+        cycleComplete: false,
+      }),
+      committed_at: null,
+      updated_at: now,
+    });
+  }
+  return {
+    _checkpoints: checkpoints,
+    _events: events,
+    _actions: actions,
+    prepare(sql) {
+      const normalized = String(sql).replace(/\s+/g, ' ').trim();
+      return {
+        bind(...params) {
+          return {
+            async first() {
+              if (normalized.includes('FROM instagram_permission_probes')) return probes.get(params[0]) || null;
+              if (normalized.includes('FROM instagram_engager_snapshots')) return null;
+              if (normalized.includes('FROM social_sync_checkpoints')) return checkpoints.get(`${params[0]}::${params[1]}`) || null;
+              if (normalized.includes('FROM social_events')) return events.get(`${params[0]}::${params[1]}::${params[2]}::${params[3]}`) || null;
+              if (normalized.includes('FROM social_actions')) return actions.get(`${params[0]}::${params[1]}`) || null;
+              return null;
+            },
+            async all() { return { results: [] }; },
+            async run() {
+              if (normalized.includes('INSERT INTO social_sync_checkpoints') || normalized.startsWith('INSERT INTO social_sync_checkpoints') || normalized.includes('social_sync_checkpoints')) {
+                const extraJson = params.find((item) => typeof item === 'string' && item.startsWith('{')) || params[4];
+                checkpoints.set(`${params[0]}::${params[1]}`, {
+                  user_id: params[0],
+                  source: params[1],
+                  newest_seen_id: params[2],
+                  continuation_cursor: params[3],
+                  extra_json: extraJson,
+                  committed_at: params[5],
+                  updated_at: params[6],
+                });
+                return { meta: { changes: 1 } };
+              }
+              if (normalized.startsWith('INSERT INTO social_events') || normalized.includes('INSERT INTO social_events')) {
+                events.set(`${params[1]}::${params[2]}::${params[3]}::${params[4]}`, {
+                  id: params[0], user_id: params[1], platform: params[2], event_type: params[3],
+                  external_event_id: params[4], payload_json: params[6],
+                });
+                return { meta: { changes: 1 } };
+              }
+              if (normalized.includes('social_actions')) {
+                actions.set(`${params[1]}::${params[0]}`, {
+                  id: params[0], user_id: params[1], target_url: params[11] || params.find((item) => typeof item === 'string' && String(item).startsWith('http')),
+                });
+                return { meta: { changes: 1 } };
+              }
+              return { meta: { changes: 1 } };
+            },
+          };
+        },
+      };
+    },
+  };
+}
+
+{
+  const db = commentSyncDb({
+    pending: [{ id: 'old-media', permalink: 'https://instagram.com/p/kept', commentAfter: 'c2' }],
+  });
+  const result = await syncInstagramComments({
+    DB: db,
+    INSTAGRAM_ACCESS_TOKEN: 't',
+    INSTAGRAM_USER_ID: '1',
+    INSTAGRAM_API_VERSION: 'v24.0',
+    SOCIAL_WRITE_MODE: 'test',
+  }, { userId: 'local-user' }, {
+    getJson: async (url) => {
+      if (url.includes('/media?')) {
+        return { data: [{ id: 'new-1', permalink: 'https://instagram.com/p/new', timestamp: '2026-08-31T00:00:00.000Z' }], paging: { cursors: {} } };
+      }
+      if (url.includes('/old-media/comments')) {
+        return {
+          data: [{ id: 'c9', from: { id: 'u9', username: 'bob' }, text: 'hi', timestamp: '2026-08-30T12:00:00.000Z' }],
+          paging: { cursors: {} },
+        };
+      }
+      return { data: [], paging: { cursors: {} } };
+    },
+  });
+  if (!result.events.some((event) => event.externalEventId === 'c9')) fail('Pending old media comments did not resume.');
+  const stored = [...db._actions.values()].find((row) => String(row.id || '').includes('c9') || String(row.target_url || '').includes('kept'));
+  const payload = [...db._events.values()].map((row) => {
+    try { return JSON.parse(row.payload_json); } catch { return {}; }
+  }).find((item) => item.permalink === 'https://instagram.com/p/kept' || item.latestMediaPermalink === 'https://instagram.com/p/kept');
+  if (!payload) fail('Pending old media permalink was not preserved on the comment Action/Event.');
+}
+
+{
+  function commentPage(after) {
+    const index = after ? Number(String(after).replace('after-', '')) : 0;
+    const id = String(1090 - index);
+    const next = index < 8 ? `after-${index + 1}` : '';
+    return {
+      data: [{ id, from: { id: `u${id}`, username: `u${id}` }, text: `c${id}`, timestamp: '2026-08-30T12:00:00.000Z' }],
+      paging: next ? { cursors: { after: next } } : { cursors: {} },
+    };
+  }
+  const requested = [];
+  const db = commentSyncDb({});
+  const env = {
+    DB: db,
+    INSTAGRAM_ACCESS_TOKEN: 't',
+    INSTAGRAM_USER_ID: '1',
+    INSTAGRAM_API_VERSION: 'v24.0',
+    SOCIAL_WRITE_MODE: 'test',
+  };
+  const adapters = {
+    getJson: async (url) => {
+      if (url.includes('/media?')) {
+        return { data: [{ id: 'media-long', permalink: 'https://instagram.com/p/long', timestamp: '2026-08-30T00:00:00.000Z' }], paging: { cursors: {} } };
+      }
+      if (url.includes('/media-long/comments')) {
+        const after = new URL(url).searchParams.get('after') || '';
+        requested.push(after);
+        return commentPage(after);
+      }
+      return { data: [], paging: { cursors: {} } };
+    },
+  };
+  await syncInstagramComments(env, { userId: 'local-user' }, adapters);
+  const firstExtra = JSON.parse([...db._checkpoints.values()][0].extra_json);
+  const pending = parsePendingMedia(firstExtra.pendingMedia);
+  if (!pending.some((item) => item.id === 'media-long' && item.commentAfter === 'after-8')) {
+    fail('Nine-page comment walk did not store a continuation cursor.');
+  }
+  if (pending.some((item) => item.id === 'media-long' && item.knownCommentId === '1090')) {
+    fail('Incomplete comment walk stored the newest comment as the known boundary.');
+  }
+  if (firstExtra.mediaNewestCommentId?.['media-long'] === '1090') {
+    fail('Incomplete comment walk promoted newest ID into the completed high-water mark.');
+  }
+  requested.length = 0;
+  const second = await syncInstagramComments(env, { userId: 'local-user' }, adapters);
+  if (!requested.includes('after-8')) fail('Resume walk never requested the remaining older comment page.');
+  if (!second.events.some((event) => event.externalEventId === '1082')) {
+    fail('Older comments beyond the first eight pages were permanently skipped.');
+  }
+}
+
+{
+  const started = [];
+  const db = leaseMemory();
+  await syncSocialInboxIsolated({ DB: db }, {}, {
+    syncXInboundMentions: async () => {
+      started.push({ name: 'mentions', at: Date.now() });
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      return { status: 'success', events: [] };
+    },
+    syncXDirectMessages: async () => {
+      started.push({ name: 'xDm', at: Date.now() });
+      return { status: 'success', events: [] };
+    },
+    syncInstagramComments: async () => {
+      started.push({ name: 'comments', at: Date.now() });
+      throw new Error('comments failed');
+    },
+    syncInstagramDirectMessages: async () => {
+      started.push({ name: 'igDm', at: Date.now() });
+      return { status: 'success', events: [] };
+    },
+  });
+  const names = started.map((item) => item.name).sort().join(',');
+  if (names !== 'comments,igDm,mentions,xDm') fail(`Scheduled sources did not all start: ${names}`);
+  const mentionStart = started.find((item) => item.name === 'mentions').at;
+  const later = started.filter((item) => item.name !== 'mentions');
+  if (later.some((item) => item.at - mentionStart > 40)) fail('A slow source delayed the start of other scheduled sources.');
+}
+
+console.log('Final manual-only closure tests OK: durable fingerprint, budget authority, Instagram DM/comment checkpoints, source locks, checkpoint fail-closed, numeric IDs, Codex P1/P2 review closure.');

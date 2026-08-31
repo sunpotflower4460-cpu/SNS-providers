@@ -40,16 +40,25 @@ export async function syncSocialInboxIsolated(
   const dm = adapters.syncXDirectMessages || syncXDirectMessages;
   const comments = adapters.syncInstagramComments || syncInstagramComments;
   const igDm = adapters.syncInstagramDirectMessages || syncInstagramDirectMessages;
-  const xMentions = await runIsolated(() => runWithSourceLease(env.DB, userId, 'x_mentions_sync', SOURCE_LEASE_TTL_MS, () => mentions(env, body)));
-  const xDm = await runIsolated(() => runWithSourceLease(env.DB, userId, 'x_dm_sync', SOURCE_LEASE_TTL_MS, () => dm(env, body)));
-  const instagramComments = await runIsolated(() => runWithSourceLease(env.DB, userId, 'instagram_comments_sync', SOURCE_LEASE_TTL_MS, () => comments(env, body)));
-  const instagramDm = await runIsolated(() => runWithSourceLease(env.DB, userId, 'instagram_dm_sync', SOURCE_LEASE_TTL_MS, () => igDm(env, body)));
+  // X mention and DM stay concurrent for provider reads. Token refresh is
+  // deduplicated in getValidXAccessToken (same-isolate in-flight + x_oauth_refresh lease).
+  const [xMentions, xDm, instagramComments, instagramDm] = await Promise.allSettled([
+    runIsolated(() => runWithSourceLease(env.DB, userId, 'x_mentions_sync', SOURCE_LEASE_TTL_MS, () => mentions(env, body))),
+    runIsolated(() => runWithSourceLease(env.DB, userId, 'x_dm_sync', SOURCE_LEASE_TTL_MS, () => dm(env, body))),
+    runIsolated(() => runWithSourceLease(env.DB, userId, 'instagram_comments_sync', SOURCE_LEASE_TTL_MS, () => comments(env, body))),
+    runIsolated(() => runWithSourceLease(env.DB, userId, 'instagram_dm_sync', SOURCE_LEASE_TTL_MS, () => igDm(env, body))),
+  ]);
   return {
-    xMentions: wrap(xMentions),
-    xDm: wrap(xDm),
-    instagramComments: wrap(instagramComments),
-    instagramDm: wrap(instagramDm),
+    xMentions: wrap(fromSettled(xMentions)),
+    xDm: wrap(fromSettled(xDm)),
+    instagramComments: wrap(fromSettled(instagramComments)),
+    instagramDm: wrap(fromSettled(instagramDm)),
   };
+}
+
+function fromSettled(result: PromiseSettledResult<SourceResult>): SourceResult {
+  if (result.status === 'fulfilled') return result.value;
+  return isolatedError(result.reason instanceof Error ? result.reason.message : 'Inbox source failed');
 }
 
 async function runIsolated(work: () => Promise<SourceResult>): Promise<SourceResult> {

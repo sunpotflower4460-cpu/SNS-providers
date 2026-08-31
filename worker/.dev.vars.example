@@ -59,6 +59,9 @@ INSTAGRAM_DM_WRITE_ENABLED=false
 INSTAGRAM_DM_READ_ENABLED=false
 INSTAGRAM_WEBHOOK_VERIFY_TOKEN=
 INSTAGRAM_APP_SECRET=
+# Set true only after a human confirms comments + live_comments in Meta App Dashboard.
+# Secret presence is not treated as confirmed registration.
+INSTAGRAM_COMMENT_WEBHOOK_CONFIRMED=false
 X_REPLY_WRITE_ENABLED=false
 X_FOLLOW_WRITE_ENABLED=false
 X_UNFOLLOW_WRITE_ENABLED=false

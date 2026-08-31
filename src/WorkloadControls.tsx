@@ -1,4 +1,5 @@
 import type { AppState, AppStateUpdater, RelationshipPolicy } from './types';
+import { spendingCeilingUsd } from './store';
 import './workload.css';
 
 interface Props {
@@ -18,7 +19,7 @@ interface WorkloadValues {
 export default function WorkloadControls({ state, onChange }: Props) {
   const values = valuesFromPolicy(state.relationshipPolicy);
   const suggestion = suggestWorkload(state);
-  const remainingBudget = Math.max(0, state.budget.monthlyLimitUsd - state.budget.usedUsd);
+  const remainingBudget = Math.max(0, spendingCeilingUsd(state.budget) - state.budget.usedUsd);
   const highMatch = state.candidates.filter((candidate) => !candidate.skipped && candidate.match >= 75).length;
   const supply = actionableSupply(state);
   const relationshipTarget = Math.max(0, values.total - values.self);
@@ -149,7 +150,7 @@ function suggestWorkload(state: AppState): WorkloadValues {
   const light = highMatch.filter((candidate) => candidate.recommendedAction === 'like' && Boolean(candidate.engagementUrl)).length;
   const cleanup = candidates.filter((candidate) => candidate.recommendedAction === 'unfollow_review').length;
 
-  const limit = state.budget.monthlyLimitUsd;
+  const limit = spendingCeilingUsd(state.budget);
   const usedRatio = limit > 0 ? Math.min(1, state.budget.usedUsd / limit) : 0;
   const budgetFactor = limit === 0 ? 0.82 : usedRatio >= 0.9 ? 0.72 : usedRatio >= 0.7 ? 0.86 : 1;
   const self = state.insights.length > 0 ? 1 : 0;

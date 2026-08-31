@@ -75,9 +75,9 @@ Implemented server responsibilities:
 - isolated inbox ingest for X mentions, X DM, Instagram comments, and Instagram DM with source-level leases and durable checkpoints (a page cap never commits newest-seen; checkpoint query failure is distinct from a missing row and fails closed). Instagram DM message details are limited by Meta to the 20 most recent messages per conversation; that is a provider limitation, not an unfinished catch-up.
 - Instagram comment reply and Instagram Professional DM adapters behind explicit production write flags and runtime permission probes
 - X reply, follow, unfollow, like, and DM adapters behind explicit OAuth upgrades and production write flags
-- Instagram webhook verification/signature receiver as the realtime primary, plus bounded polling catch-up of paginated owned media; comment/live_comment and messaging webhooks persist events without treating recipient.id as a conversation id
+- Instagram webhook verification/signature receiver as the realtime primary, plus bounded polling catch-up of paginated owned media; secret presence is not treated as confirmed dashboard registration (`INSTAGRAM_COMMENT_WEBHOOK_CONFIRMED` is a human confirmation). comment/live_comment and messaging webhooks persist events without treating recipient.id as a conversation id
 - versioned D1 migrations (`db/migrations/`) and production preflight diagnostics that block writes when the fingerprint column, budget table, checkpoint table, or schema version is missing
-- persisted user budget ceiling (`user_runtime_settings`) under the server HARD LIMIT; Settings treats a ceiling as saved only after the server returns monthlyBudgetCeilingUsd / serverHardLimitUsd / effectiveLimitUsd
+- persisted user budget ceiling (`user_runtime_settings`) under the server HARD LIMIT; Settings keeps the editable user ceiling separate from `effectiveLimitUsd` used for spending, and a stale async save cannot mark newer edits as saved
 
 Manual-only remaining work is listed in `docs/MANUAL_GO_LIVE_CHECKLIST.md`. Instagram follow and arbitrary like stay HANDOFF because the official Professional management API does not provide those writes.
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { analyzeSelfProfile, apiConfigured, discoverSocialCandidates, enrichXProfiles, fetchBudget, fetchCanonicalSocialActions, fetchSocialCapabilities, putRuntimeSettings, rankCandidates, syncSocialInbox } from './api';
 import { persistServerBudgetCeiling } from './budgetCeilingSave';
+import { completeSettingsBudgetSave, settingsBudgetIdentity, shouldInvalidatePendingSettingsSave } from './settingsSave';
 import BackupControls from './BackupControls';
 import { getSyncToken } from './controlToken';
 import { buildDailyQueue } from './daily';
@@ -11,7 +12,7 @@ import MissionInbox from './MissionInbox';
 import Onboarding from './Onboarding';
 import { hasSeenOnboarding, markOnboardingSeen } from './onboardingState';
 import { resolveVisibleResult } from './resultResolution';
-import { addCandidateFromReference, applyMissionDestinations, applyRankResults, applySelfAnalysis, applyXProfiles, destinationsFromMission, loadState, MAX_MISSION_DESTINATIONS, saveState, setFollowBackStatus, syncBudget, updateCandidateDraft, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
+import { addCandidateFromReference, applyMissionDestinations, applyRankResults, applySelfAnalysis, applyXProfiles, destinationsFromMission, loadState, MAX_MISSION_DESTINATIONS, saveState, setFollowBackStatus, spendingCeilingUsd, syncBudget, updateCandidateDraft, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
 import { copyDraft, openCandidate, openSocialAction, platformLabel } from './social';
 import { applyCanonicalServerActions } from './socialAction';
 import { setLiveSocialCapabilities, SOCIAL_CAPABILITIES_CHANGED } from './socialCapabilities';
@@ -80,8 +81,8 @@ function App() {
   const autoReplenishRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastInboxSyncRef = useRef(0);
   const inboxSyncingRef = useRef(false);
-  const budgetLimitRef = useRef(state.budget.monthlyLimitUsd);
-  budgetLimitRef.current = state.budget.monthlyLimitUsd;
+  const budgetLimitRef = useRef(spendingCeilingUsd(state.budget));
+  budgetLimitRef.current = spendingCeilingUsd(state.budget);
   const localDay = useLocalDayKey();
   const statusNote = persistenceError || apiNote;
 
@@ -255,7 +256,7 @@ function App() {
       setApiNote(`未評価候補 ${existingRankTargets.length}件を無料で自動評価中…`);
       void (async () => {
         try {
-          const ranked = await rankCandidates(snapshot.mission, existingRankTargets, snapshot.budget.monthlyLimitUsd, 'local-user', false);
+          const ranked = await rankCandidates(snapshot.mission, existingRankTargets, spendingCeilingUsd(snapshot.budget), 'local-user', false);
           // autoDraftReplies must not change rankCandidates' argument list here: it is
           // pinned verbatim by scripts/verify-action-supply-invariants.mjs. Honor the
           // toggle by stripping drafts from the response instead.
@@ -318,7 +319,7 @@ function App() {
 
         // Automatic replenishment is explicitly free-only. Free Groq may be used when
         // configured; otherwise the Worker falls back to deterministic local ranking.
-        const ranked = await rankCandidates(merged.mission, rankTargets, merged.budget.monthlyLimitUsd, 'local-user', false);
+        const ranked = await rankCandidates(merged.mission, rankTargets, spendingCeilingUsd(merged.budget), 'local-user', false);
         // autoDraftReplies must not change rankCandidates' argument list here: it is
         // pinned verbatim by scripts/verify-action-supply-invariants.mjs. Honor the
         // toggle by stripping drafts from the response instead.
@@ -402,7 +403,7 @@ function App() {
     setRanking(true);
     setApiNote('Mission基準で候補を再評価中…');
     try {
-      const result = await rankCandidates(state.mission, targets, state.budget.monthlyLimitUsd, 'local-user', true, state.relationshipPolicy.autoDraftReplies !== false);
+      const result = await rankCandidates(state.mission, targets, spendingCeilingUsd(state.budget), 'local-user', true, state.relationshipPolicy.autoDraftReplies !== false);
       setState((current) => applyRankResults(current, result.results, result.costUsd));
       setApiNote(`${result.provider}で${result.results.length}件評価${result.paid ? ` · $${result.costUsd.toFixed(4)}` : ' · $0'}`);
     } catch (error) {
@@ -471,7 +472,7 @@ function App() {
     setEnrichingX(true);
     setApiNote(`X公式情報を${targets.length}件まとめて確認中…`);
     try {
-      const result = await enrichXProfiles(targets, state.budget.monthlyLimitUsd);
+      const result = await enrichXProfiles(targets, spendingCeilingUsd(state.budget));
       if (!result.enabled) {
         setApiNote(result.reason || 'Xプロフィール補完は現在無効です');
         return;
@@ -499,7 +500,7 @@ function App() {
     setAnalyzingSelf(true);
     setApiNote('自分のアカウントをMissionから逆算して分析中…');
     try {
-      const result = await analyzeSelfProfile(state.mission, profileText, recentPostsText, state.budget.monthlyLimitUsd);
+      const result = await analyzeSelfProfile(state.mission, profileText, recentPostsText, spendingCeilingUsd(state.budget));
       // Inputs were already persisted before the request. Re-applying the request-time
       // text here would overwrite a newer X sync/restore that completed while AI was busy.
       setState((current) => applySelfAnalysis(current, result.results[0], result.costUsd));
@@ -549,12 +550,13 @@ function App() {
 }
 
 function BudgetPill({ state }: { state: AppState }) {
-  const freeOnly = state.budget.monthlyLimitUsd === 0;
+  const spendLimit = spendingCeilingUsd(state.budget);
+  const freeOnly = spendLimit === 0;
   const hasSpend = state.budget.usedUsd > 0.00001;
   return <div className="budget-pill" title="今月のAI / API利用額">
     <small>今月</small>
     <strong>{freeOnly && !hasSpend ? '無料運用' : `$${state.budget.usedUsd.toFixed(2)}`}</strong>
-    {freeOnly ? (hasSpend && <span>有料処理OFF</span>) : <span>/ ${state.budget.monthlyLimitUsd.toFixed(0)}</span>}
+    {freeOnly ? (hasSpend && <span>有料処理OFF</span>) : <span>/ ${spendLimit.toFixed(0)}</span>}
   </div>;
 }
 
@@ -855,42 +857,74 @@ function Settings({ state, onChange, onOpenManual }: { state: AppState; onChange
   const [saving, setSaving] = useState(false);
   const [budgetSaveError, setBudgetSaveError] = useState<string | null>(null);
   const [budgetAuthority, setBudgetAuthority] = useState<{ monthlyBudgetCeilingUsd: number; serverHardLimitUsd: number; effectiveLimitUsd: number } | null>(null);
+  const editVersionRef = useRef(0);
+  const inFlightSavesRef = useRef(0);
+  const appliedBudgetIdentityRef = useRef(settingsBudgetIdentity(state.budget));
   const storedDestinations = destinationsFromMission(state.mission).join('\n');
 
   useEffect(() => setMissionText(state.mission.text), [state.mission.text]);
   useEffect(() => setDestinations(destinationsFromMission(state.mission)), [storedDestinations]);
   useEffect(() => setCommunicationDNA(state.mission.communicationDNA), [state.mission.communicationDNA]);
-  useEffect(() => setBudget(state.budget.monthlyLimitUsd), [state.budget.monthlyLimitUsd]);
+  useEffect(() => {
+    setBudget(state.budget.monthlyLimitUsd);
+    const nextIdentity = settingsBudgetIdentity(state.budget);
+    if (!shouldInvalidatePendingSettingsSave(appliedBudgetIdentityRef.current, nextIdentity)) return;
+    appliedBudgetIdentityRef.current = nextIdentity;
+    editVersionRef.current += 1;
+    setSaved(false);
+  }, [state.budget.monthlyLimitUsd, state.budget.effectiveLimitUsd]);
   useEffect(() => setFollowBackDays(state.relationshipPolicy.followBackReviewAfterDays), [state.relationshipPolicy.followBackReviewAfterDays]);
 
   async function persist() {
+    const saveVersion = editVersionRef.current;
+    inFlightSavesRef.current += 1;
     setSaving(true);
     setBudgetSaveError(null);
+    const requestedCeiling = Math.max(0, budget);
     onChange((current) => {
       let next = updateMission(current, applyMissionDestinations({ ...current.mission, text: missionText, communicationDNA }, destinations));
       next = updateRelationshipPolicy(next, { ...next.relationshipPolicy, followBackReviewAfterDays: Math.max(7, Math.min(90, Math.round(followBackDays || 30))) });
       return next;
     });
-    const budgetResult = await persistServerBudgetCeiling({
-      requestedUsd: Math.max(0, budget),
-      putRuntimeSettings,
-    });
-    setSaving(false);
-    if (!budgetResult.ok) {
-      setBudgetSaveError(budgetResult.reason);
-      setSaved(false);
-      return;
+    try {
+      const budgetResult = await persistServerBudgetCeiling({
+        requestedUsd: requestedCeiling,
+        putRuntimeSettings,
+      });
+      const applied = completeSettingsBudgetSave({
+        editVersion: editVersionRef.current,
+        saveVersion,
+        result: budgetResult,
+      });
+      if (!applied.apply) {
+        if (applied.error) setBudgetSaveError(applied.error);
+        setSaved(false);
+        return;
+      }
+      setBudgetAuthority(applied.authority || null);
+      setBudget(applied.inputUsd ?? requestedCeiling);
+      appliedBudgetIdentityRef.current = settingsBudgetIdentity({
+        monthlyLimitUsd: applied.monthlyLimitUsd ?? requestedCeiling,
+        effectiveLimitUsd: applied.effectiveLimitUsd,
+      });
+      onChange((current) => ({
+        ...current,
+        budget: {
+          ...current.budget,
+          monthlyLimitUsd: applied.monthlyLimitUsd ?? requestedCeiling,
+          effectiveLimitUsd: applied.effectiveLimitUsd ?? spendingCeilingUsd(current.budget),
+          hardLimit: true,
+        },
+      }));
+      setSaved(true);
+    } finally {
+      inFlightSavesRef.current -= 1;
+      if (inFlightSavesRef.current === 0) setSaving(false);
     }
-    setBudgetAuthority(budgetResult);
-    setBudget(budgetResult.effectiveLimitUsd);
-    onChange((current) => ({
-      ...current,
-      budget: { ...current.budget, monthlyLimitUsd: budgetResult.effectiveLimitUsd, hardLimit: true },
-    }));
-    setSaved(true);
   }
 
   function markEdited() {
+    editVersionRef.current += 1;
     setSaved(false);
   }
 

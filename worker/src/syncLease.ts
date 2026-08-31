@@ -18,6 +18,7 @@ const MAX_LEASE_CLOCK_SKEW_MS = 5 * 60 * 1000;
  */
 export type SourceSyncLeaseOperation =
   | 'x_owned_sync'
+  | 'x_oauth_refresh'
   | 'instagram_owned_sync'
   | 'x_mentions_sync'
   | 'x_dm_sync'

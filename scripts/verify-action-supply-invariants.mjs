@@ -93,7 +93,7 @@ requireAll(app, [
   'demand.current >= demand.lowWater',
   'Math.ceil(remainingTarget * 0.7)',
   "discoverSocialCandidates(snapshot.mission, 'local-user', true)",
-  "rankCandidates(merged.mission, rankTargets, merged.budget.monthlyLimitUsd, 'local-user', false)",
+  "rankCandidates(merged.mission, rankTargets, spendingCeilingUsd(merged.budget), 'local-user', false)",
   "candidate.recommendedAction !== 'review'",
   'relationshipTarget - completedToday',
 ], 'Automatic replenishment can again overfill completed work, run without a low-water threshold, or use a paid ranking path.');

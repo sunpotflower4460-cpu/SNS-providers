@@ -12,6 +12,7 @@ Do not turn production writes on until the matching official permission, price, 
    - X OAuth: `X_CLIENT_ID`, `X_CLIENT_SECRET`, `X_OAUTH_CALLBACK_URL`, `PWA_RETURN_URL`, `OAUTH_TOKEN_ENCRYPTION_KEY_B64`
    - Instagram: `INSTAGRAM_ACCESS_TOKEN`, `INSTAGRAM_USER_ID`, `INSTAGRAM_API_VERSION`
    - Optional webhook: `INSTAGRAM_WEBHOOK_VERIFY_TOKEN`, `INSTAGRAM_APP_SECRET`
+   - After Meta Dashboard confirms `comments` and `live_comments` subscriptions: `INSTAGRAM_COMMENT_WEBHOOK_CONFIRMED=true`
 3. Run GitHub Action **Migrate production D1** (`workflow_dispatch`) against production.
 4. Cloudflare dashboard Worker `sns-providers` → Settings → Build:
    - Enable **Builds for non-production branches** (Branch control). Pull-request `Workers Builds: sns-providers` stays `Deployment skipped` until this is on. The repo cannot flip that dashboard toggle.
@@ -24,7 +25,7 @@ Do not turn production writes on until the matching official permission, price, 
 
 7. Complete Meta App permissions / App Review for comment and messaging scopes used by the current Instagram Login flow.
 8. Issue a live Professional account token and set Worker secrets.
-9. Register the Instagram webhook callback in Meta App Dashboard (`GET|POST /api/instagram/webhook`). Webhook is the realtime primary for comments and new DMs. Polling fallback covers bounded paginated catch-up of owned media. For reliable comments on older media, Meta webhook registration is required. Instagram DM polling uses the official conversations/messages edges; Meta only returns details for the 20 most recent messages in a conversation, so older message bodies cannot be recovered by paging.
+9. Register the Instagram webhook callback in Meta App Dashboard (`GET|POST /api/instagram/webhook`). Webhook receiver code is always present. Secrets (`INSTAGRAM_WEBHOOK_VERIFY_TOKEN`, `INSTAGRAM_APP_SECRET`) only mean the Worker can verify requests — they are not proof that Meta has the `comments` / `live_comments` subscription. After you confirm those subscriptions in the dashboard, set `INSTAGRAM_COMMENT_WEBHOOK_CONFIRMED=true`. Until that flag is on, bounded poll catch-up of older media continues. Instagram DM polling uses the official conversations/messages edges; Meta only returns details for the 20 most recent messages in a conversation, so older message bodies cannot be recovered by paging.
 10. Confirm the connected account is BUSINESS / CREATOR / MEDIA_CREATOR.
 
 ## X Developer

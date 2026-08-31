@@ -87,6 +87,32 @@ export function fingerprintRequiresConversation(operation: string) {
   return operation === 'instagram_dm_write' || operation === 'x_dm_write';
 }
 
+export function fingerprintMatchesAction(
+  fingerprint: ExecutionFingerprint,
+  action: {
+    type: string;
+    platform: string;
+    externalEventId?: string;
+    platformUserId?: string;
+    conversationId?: string;
+  },
+  expectedOperation: string,
+) {
+  try {
+    assertDurableFingerprint(fingerprint);
+  } catch {
+    return false;
+  }
+  if (fingerprint.operation !== expectedOperation) return false;
+  const target = action.externalEventId || action.platformUserId || '';
+  if (target && fingerprint.canonicalTargetId !== target) return false;
+  if (fingerprintRequiresConversation(fingerprint.operation)) {
+    if (!fingerprint.conversationId) return false;
+    if (action.conversationId && fingerprint.conversationId !== action.conversationId) return false;
+  }
+  return true;
+}
+
 export function assertDurableFingerprint(fingerprint: ExecutionFingerprint) {
   if (!fingerprint.canonicalTargetId) {
     throw new Error('Execution fingerprint is missing canonicalTargetId');

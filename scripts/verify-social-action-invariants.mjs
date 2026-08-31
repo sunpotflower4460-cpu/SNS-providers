@@ -18,6 +18,7 @@ const instagramOwnedStore = await readFile(new URL('../src/instagramOwnedStore.t
 const instagramAccount = await readFile(new URL('../src/instagramAccount.ts', import.meta.url), 'utf8');
 const router = await readFile(new URL('../worker/src/router.ts', import.meta.url), 'utf8');
 const execute = await readFile(new URL('../worker/src/social/execute.ts', import.meta.url), 'utf8');
+const inboxSync = await readFile(new URL('../worker/src/social/inboxSync.ts', import.meta.url), 'utf8');
 const executeGuard = await readFile(new URL('../worker/src/social/executeGuard.ts', import.meta.url), 'utf8');
 const xOAuth = await readFile(new URL('../worker/src/xOAuth.ts', import.meta.url), 'utf8');
 const providerApi = await readFile(new URL('../worker/src/index.ts', import.meta.url), 'utf8');
@@ -46,6 +47,7 @@ requireAll(store, [
 requireAll(backup, [
   'normalizeSocialActions(state?.socialActions)',
   '!Array.isArray(state.socialActions)',
+  'clampedEffectiveLimitUsd',
 ], 'Backup/restore no longer normalizes or validates socialActions.');
 
 requireAll(socialAction, [
@@ -144,8 +146,12 @@ requireAll(execute, [
   'x_reply_write',
   'replyToXTweet',
   'persistExecutionFingerprintOrThrow',
+  'resolveXWriteAccessToken',
   'providerCallStarted = true',
 ], 'Execution idempotency, binding mismatch recovery, canonical server resolution, or fail-closed live writes are missing.');
+if (execute.indexOf('await resolveXWriteAccessToken') > execute.indexOf('providerCallStarted = true')) {
+  throw new Error('X write token is still acquired after providerCallStarted, so token failures retain UNKNOWN reservations.');
+}
 
 requireAll(schema, [
   'CREATE TABLE IF NOT EXISTS social_executions',
@@ -171,6 +177,9 @@ requireAll(xOAuth, [
   "intent === 'engagement'",
   "intent === 'dm'",
   'expected_x_user_id',
+  'xRefreshInFlight',
+  "reserveSyncLease(env.DB, userId, 'x_oauth_refresh'",
+  'X_REFRESH_WAIT_BUDGET_MS',
 ], 'X OAuth write escalation is no longer an explicit cumulative same-account upgrade.');
 if (xOAuth.includes('scope: OPTIONAL_WRITE_SCOPES.join')) {
   throw new Error('Default X OAuth start silently requested optional write scopes.');
@@ -233,5 +242,23 @@ if (!/url\.pathname === '\/api\/social\/capabilities'[\s\S]{0,500}?authorizeSync
 if (execute.includes('parsed.action.platform') || execute.includes('body.action.externalEventId')) {
   throw new Error('Execute still treats client-supplied action targeting fields as authoritative.');
 }
+if (execute.includes('lookupXAuthenticatedUser')) {
+  throw new Error('Execute still performs a live /users/me lookup for fingerprint or adapter actor ID.');
+}
+requireAll(execute, [
+  'authenticatedUserId',
+  'durableXUserId',
+  'resolveFingerprintActorId',
+  'knownLookupReadCost',
+  'failClosedIfLookupRequired',
+], 'Execute lost durable X actor reuse or lookup fail-closed accounting.');
+requireAll(inboxSync, [
+  'Promise.allSettled',
+  'x_mentions_sync',
+  'x_dm_sync',
+  'instagram_comments_sync',
+  'instagram_dm_sync',
+  'getValidXAccessToken',
+], 'Scheduled inbox sources are no longer started concurrently under source leases.');
 
 console.log('SocialAction source invariants OK: model/state/restore, Mission Inbox fallback, Instagram same-event ingestion, server-authoritative execute, live capabilities, explicit X OAuth capability split, and untrusted social prompt policy.');

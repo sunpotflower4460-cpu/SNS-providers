@@ -3,7 +3,7 @@ import { normalizeAppState } from './backup';
 import { candidateRequestKey, missionRequestKey, selfRequestKey, xProfileRequestKey } from './requestContext';
 import type { XOwnedSyncResponse } from './xAccount';
 import { completeSocialAction, dismissMatchingSocialActions, dismissSocialAction, markSocialActionsCompleted, snoozeSocialAction } from './socialAction';
-import type { AppState, Candidate, Interaction, Mission, Platform, RecommendedAction, RelationshipPolicy } from './types';
+import type { AppState, BudgetState, Candidate, Interaction, Mission, Platform, RecommendedAction, RelationshipPolicy } from './types';
 
 const KEY = 'sns-providers:v1';
 const X_RESERVED_PATHS = new Set(['home', 'explore', 'notifications', 'messages', 'search', 'i', 'settings', 'compose', 'intent']);
@@ -21,6 +21,7 @@ const defaultState: AppState = {
   socialActions: [],
   budget: {
     monthlyLimitUsd: 3,
+    effectiveLimitUsd: 3,
     hardLimit: true,
     usedUsd: 0,
     xUsd: 0,
@@ -158,6 +159,14 @@ export function applySelfAnalysis(state: AppState, result: RankResult | undefine
   };
 }
 
+export function spendingCeilingUsd(budget: BudgetState) {
+  const userCeiling = Number.isFinite(budget.monthlyLimitUsd) ? Math.max(0, budget.monthlyLimitUsd) : 0;
+  if (typeof budget.effectiveLimitUsd === 'number' && Number.isFinite(budget.effectiveLimitUsd) && budget.effectiveLimitUsd >= 0) {
+    return Math.min(userCeiling, budget.effectiveLimitUsd);
+  }
+  return userCeiling;
+}
+
 export function syncBudget(state: AppState, usedUsd: number, serverLimitUsd: number): AppState {
   const nextUsed = Math.max(0, usedUsd);
   const previousUsed = Math.max(0, state.budget.usedUsd);
@@ -167,6 +176,8 @@ export function syncBudget(state: AppState, usedUsd: number, serverLimitUsd: num
   const xUsd = previousUsed > 0 ? Math.max(0, state.budget.xUsd) * scale : 0;
   const llmUsd = previousUsed > 0 ? Math.max(0, state.budget.llmUsd) * scale : 0;
   const searchUsd = previousUsed > 0 ? Math.max(0, state.budget.searchUsd) * scale : 0;
+  const userCeiling = state.budget.monthlyLimitUsd;
+  const effective = Math.min(userCeiling, Math.max(0, serverLimitUsd));
   return {
     ...state,
     budget: {
@@ -175,7 +186,8 @@ export function syncBudget(state: AppState, usedUsd: number, serverLimitUsd: num
       xUsd,
       llmUsd,
       searchUsd,
-      monthlyLimitUsd: Math.min(state.budget.monthlyLimitUsd, Math.max(0, serverLimitUsd)),
+      monthlyLimitUsd: userCeiling,
+      effectiveLimitUsd: effective,
     },
   };
 }
