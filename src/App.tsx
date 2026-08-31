@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { analyzeSelfProfile, apiConfigured, discoverSocialCandidates, enrichXProfiles, fetchBudget, fetchCanonicalSocialActions, fetchSocialCapabilities, putRuntimeSettings, rankCandidates, syncSocialInbox } from './api';
 import { persistServerBudgetCeiling } from './budgetCeilingSave';
-import { completeSettingsBudgetSave } from './settingsSave';
+import { completeSettingsBudgetSave, settingsBudgetIdentity, shouldInvalidatePendingSettingsSave } from './settingsSave';
 import BackupControls from './BackupControls';
 import { getSyncToken } from './controlToken';
 import { buildDailyQueue } from './daily';
@@ -859,12 +859,20 @@ function Settings({ state, onChange, onOpenManual }: { state: AppState; onChange
   const [budgetAuthority, setBudgetAuthority] = useState<{ monthlyBudgetCeilingUsd: number; serverHardLimitUsd: number; effectiveLimitUsd: number } | null>(null);
   const editVersionRef = useRef(0);
   const inFlightSavesRef = useRef(0);
+  const appliedBudgetIdentityRef = useRef(settingsBudgetIdentity(state.budget));
   const storedDestinations = destinationsFromMission(state.mission).join('\n');
 
   useEffect(() => setMissionText(state.mission.text), [state.mission.text]);
   useEffect(() => setDestinations(destinationsFromMission(state.mission)), [storedDestinations]);
   useEffect(() => setCommunicationDNA(state.mission.communicationDNA), [state.mission.communicationDNA]);
-  useEffect(() => setBudget(state.budget.monthlyLimitUsd), [state.budget.monthlyLimitUsd]);
+  useEffect(() => {
+    setBudget(state.budget.monthlyLimitUsd);
+    const nextIdentity = settingsBudgetIdentity(state.budget);
+    if (!shouldInvalidatePendingSettingsSave(appliedBudgetIdentityRef.current, nextIdentity)) return;
+    appliedBudgetIdentityRef.current = nextIdentity;
+    editVersionRef.current += 1;
+    setSaved(false);
+  }, [state.budget.monthlyLimitUsd, state.budget.effectiveLimitUsd]);
   useEffect(() => setFollowBackDays(state.relationshipPolicy.followBackReviewAfterDays), [state.relationshipPolicy.followBackReviewAfterDays]);
 
   async function persist() {
@@ -895,6 +903,10 @@ function Settings({ state, onChange, onOpenManual }: { state: AppState; onChange
       }
       setBudgetAuthority(applied.authority || null);
       setBudget(applied.inputUsd ?? requestedCeiling);
+      appliedBudgetIdentityRef.current = settingsBudgetIdentity({
+        monthlyLimitUsd: applied.monthlyLimitUsd ?? requestedCeiling,
+        effectiveLimitUsd: applied.effectiveLimitUsd,
+      });
       onChange((current) => ({
         ...current,
         budget: {

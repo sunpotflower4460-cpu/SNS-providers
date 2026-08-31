@@ -140,6 +140,8 @@ requireAll(app, [
   'monthlyLimitUsd: applied.monthlyLimitUsd',
   'effectiveLimitUsd: applied.effectiveLimitUsd',
   'editVersionRef',
+  'appliedBudgetIdentityRef',
+  'settingsBudgetIdentity',
   'あなたの上限:',
   'サーバー上限:',
   '実効上限:',
@@ -162,6 +164,8 @@ requireAll(settingsSave, [
   'monthlyLimitUsd: result.monthlyBudgetCeilingUsd',
   'effectiveLimitUsd: result.effectiveLimitUsd',
   'inputUsd: result.monthlyBudgetCeilingUsd',
+  'settingsBudgetIdentity',
+  'shouldInvalidatePendingSettingsSave',
 ], 'Settings save helper no longer preserves the user ceiling separately from the effective spending limit.');
 
 requireAll(store, [

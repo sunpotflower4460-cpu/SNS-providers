@@ -10,6 +10,14 @@ export function shouldApplySettingsSave(editVersion: number, saveVersion: number
   return editVersion === saveVersion;
 }
 
+export function settingsBudgetIdentity(budget: { monthlyLimitUsd: number; effectiveLimitUsd?: number }) {
+  return `${budget.monthlyLimitUsd}:${budget.effectiveLimitUsd ?? ''}`;
+}
+
+export function shouldInvalidatePendingSettingsSave(previousIdentity: string, nextIdentity: string) {
+  return previousIdentity !== nextIdentity;
+}
+
 export function clientBudgetAfterServerSave(result: RuntimeBudgetSaveSuccess): ClientBudgetAfterSave {
   return {
     monthlyLimitUsd: result.monthlyBudgetCeilingUsd,

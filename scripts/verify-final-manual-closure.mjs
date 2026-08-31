@@ -80,7 +80,9 @@ const { walkInstagramConversationMessages, instagramDmMapsFromExtra, emptyInstag
 const { paginateInstagramMedia, paginateInstagramComments, parsePendingMedia, instagramCommentWebhookConfirmed, instagramWebhookSecretsConfigured, instagramWebhookRegistrationStatus, instagramCommentsWebhookSourceStatus, syncInstagramComments } = await import(pathToFileURL(`${outDir}/social/instagram/commentSync.js`).href);
 const { paginateXMentions } = await import(pathToFileURL(`${outDir}/social/x/sync.js`).href);
 const { persistServerBudgetCeiling, parseRuntimeBudgetResponse, BUDGET_SAVE_FAILED_MESSAGE } = await import(pathToFileURL(`${outDir}/budgetCeilingSave.js`).href);
-const { completeSettingsBudgetSave, clientBudgetAfterServerSave, shouldApplySettingsSave } = await import(pathToFileURL(`${outDir}/settingsSave.js`).href);
+const { completeSettingsBudgetSave, clientBudgetAfterServerSave, shouldApplySettingsSave, settingsBudgetIdentity, shouldInvalidatePendingSettingsSave } = await import(pathToFileURL(`${outDir}/settingsSave.js`).href);
+const { X_REFRESH_WAIT_BUDGET_MS, X_REFRESH_HTTP_TIMEOUT_MS } = await import(pathToFileURL(`${outDir}/xOAuth.js`).href);
+const { probeInstagramPermissions } = await import(pathToFileURL(`${outDir}/social/instagram/probe.js`).href);
 const { reserveSyncLease, releaseSyncLease, runWithSourceLease } = await import(pathToFileURL(`${outDir}/syncLease.js`).href);
 const { syncSocialInboxIsolated } = await import(pathToFileURL(`${outDir}/social/inboxSync.js`).href);
 const { reconcileExecution } = await import(pathToFileURL(`${outDir}/social/reconcile.js`).href);
@@ -1146,6 +1148,92 @@ if (shouldApplySettingsSave(2, 1) !== false) fail('Edit during save was treated 
     result: parseRuntimeBudgetResponse({ monthlyBudgetCeilingUsd: 3, serverHardLimitUsd: 3, effectiveLimitUsd: 3 }),
   });
   if (first.apply) fail('Older request completed after a newer edit and overwrote budget state.');
+}
+
+{
+  const before = settingsBudgetIdentity({ monthlyLimitUsd: 5, effectiveLimitUsd: 3 });
+  const restored = settingsBudgetIdentity({ monthlyLimitUsd: 0, effectiveLimitUsd: 0 });
+  if (!shouldInvalidatePendingSettingsSave(before, restored)) {
+    fail('Restored budget identity did not invalidate a pending Settings save.');
+  }
+  if (shouldInvalidatePendingSettingsSave(before, before)) {
+    fail('Unchanged budget identity invalidated a pending Settings save.');
+  }
+  const saveVersion = 4;
+  let editVersion = saveVersion;
+  if (shouldInvalidatePendingSettingsSave(before, restored)) editVersion += 1;
+  const afterRestore = completeSettingsBudgetSave({
+    editVersion,
+    saveVersion,
+    result: parseRuntimeBudgetResponse({ monthlyBudgetCeilingUsd: 5, serverHardLimitUsd: 3, effectiveLimitUsd: 3 }),
+  });
+  if (afterRestore.apply || afterRestore.saved) {
+    fail('Pending Settings save overwrote restored budget ceilings.');
+  }
+}
+
+if (X_REFRESH_WAIT_BUDGET_MS < X_REFRESH_HTTP_TIMEOUT_MS) {
+  fail('X refresh wait budget is shorter than the token endpoint timeout.');
+}
+
+{
+  const probes = new Map();
+  const db = {
+    prepare(sql) {
+      const normalized = String(sql).replace(/\s+/g, ' ').trim();
+      return {
+        bind(...params) {
+          return {
+            async first() {
+              if (normalized.includes('FROM instagram_permission_probes')) return probes.get(params[0]) || null;
+              return null;
+            },
+            async run() {
+              if (normalized.includes('instagram_permission_probes')) {
+                probes.set(params[0], {
+                  user_id: params[0],
+                  checked_at: params[1],
+                  payload_json: params[2],
+                  permissions_verified: params[3],
+                });
+              }
+              return { meta: { changes: 1 } };
+            },
+          };
+        },
+      };
+    },
+  };
+  let accountCalls = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const href = String(url);
+    if (href.includes('graph.instagram.com') && href.includes('fields=id')) {
+      accountCalls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return { ok: true, status: 200, json: async () => ({ id: '12345', username: 'me', account_type: 'BUSINESS' }) };
+    }
+    if (href.includes('/me/permissions')) {
+      return { ok: true, status: 200, json: async () => ({ data: [{ permission: 'instagram_business_manage_comments', status: 'granted' }] }) };
+    }
+    fail(`Unexpected Instagram probe fetch: ${href}`);
+  };
+  try {
+    const env = {
+      DB: db,
+      INSTAGRAM_ACCESS_TOKEN: 't',
+      INSTAGRAM_USER_ID: '12345',
+      INSTAGRAM_API_VERSION: 'v24.0',
+    };
+    const [first, second] = await Promise.all([
+      probeInstagramPermissions(env, 'local-user'),
+      probeInstagramPermissions(env, 'local-user'),
+    ]);
+    if (accountCalls !== 1) fail(`Parallel Instagram permission probes were not deduplicated (${accountCalls} account reads).`);
+    if (!first.permissionsVerified || !second.permissionsVerified) fail('Deduped Instagram probe lost the verified snapshot.');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 }
 
 if (instagramWebhookSecretsConfigured({ INSTAGRAM_WEBHOOK_VERIFY_TOKEN: 't', INSTAGRAM_APP_SECRET: 's' }) !== true) {

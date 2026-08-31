@@ -25,6 +25,7 @@ const MESSAGE_PERMISSIONS = new Set([
 ]);
 const PROFESSIONAL_TYPES = new Set(['BUSINESS', 'CREATOR', 'MEDIA_CREATOR']);
 const PROBE_TTL_MS = 15 * 60 * 1000;
+const probeInFlight = new Map<string, Promise<InstagramPermissionSnapshot>>();
 
 export async function probeInstagramPermissions(env: {
   DB: D1Database;
@@ -34,10 +35,6 @@ export async function probeInstagramPermissions(env: {
   SOCIAL_WRITE_MODE?: string;
 }, userId = 'local-user'): Promise<InstagramPermissionSnapshot> {
   const checkedAt = new Date().toISOString();
-  const token = env.INSTAGRAM_ACCESS_TOKEN?.trim() || '';
-  const igUserId = env.INSTAGRAM_USER_ID?.trim() || '';
-  const version = env.INSTAGRAM_API_VERSION?.trim() || '';
-  const configured = Boolean(token && /^\d{4,30}$/.test(igUserId) && /^v\d+\.\d+$/.test(version));
   if (env.SOCIAL_WRITE_MODE === 'test') {
     return {
       configured: true,
@@ -52,6 +49,27 @@ export async function probeInstagramPermissions(env: {
       checkedAt,
     };
   }
+  const key = `${userId}:${env.INSTAGRAM_USER_ID?.trim() || ''}`;
+  const existing = probeInFlight.get(key);
+  if (existing) return existing;
+  const pending = runInstagramPermissionProbe(env, userId, checkedAt).finally(() => {
+    if (probeInFlight.get(key) === pending) probeInFlight.delete(key);
+  });
+  probeInFlight.set(key, pending);
+  return pending;
+}
+
+async function runInstagramPermissionProbe(env: {
+  DB: D1Database;
+  INSTAGRAM_ACCESS_TOKEN?: string;
+  INSTAGRAM_USER_ID?: string;
+  INSTAGRAM_API_VERSION?: string;
+  SOCIAL_WRITE_MODE?: string;
+}, userId: string, checkedAt: string): Promise<InstagramPermissionSnapshot> {
+  const token = env.INSTAGRAM_ACCESS_TOKEN?.trim() || '';
+  const igUserId = env.INSTAGRAM_USER_ID?.trim() || '';
+  const version = env.INSTAGRAM_API_VERSION?.trim() || '';
+  const configured = Boolean(token && /^\d{4,30}$/.test(igUserId) && /^v\d+\.\d+$/.test(version));
   if (!configured) {
     return {
       configured: false,
@@ -174,6 +192,15 @@ async function loadProbe(db: D1Database, userId: string): Promise<InstagramPermi
 
 async function remember(db: D1Database, userId: string, snapshot: InstagramPermissionSnapshot) {
   try {
+    const existing = await loadProbe(db, userId);
+    if (
+      existing
+      && existing.permissionsVerified
+      && !snapshot.permissionsVerified
+      && Date.now() - new Date(existing.checkedAt).getTime() < PROBE_TTL_MS
+    ) {
+      return existing;
+    }
     await db.prepare(
       `INSERT INTO instagram_permission_probes (user_id, checked_at, payload_json, permissions_verified)
        VALUES (?, ?, ?, ?)

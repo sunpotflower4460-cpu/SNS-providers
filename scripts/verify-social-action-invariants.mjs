@@ -179,6 +179,7 @@ requireAll(xOAuth, [
   'expected_x_user_id',
   'xRefreshInFlight',
   "reserveSyncLease(env.DB, userId, 'x_oauth_refresh'",
+  'X_REFRESH_WAIT_BUDGET_MS',
 ], 'X OAuth write escalation is no longer an explicit cumulative same-account upgrade.');
 if (xOAuth.includes('scope: OPTIONAL_WRITE_SCOPES.join')) {
   throw new Error('Default X OAuth start silently requested optional write scopes.');
