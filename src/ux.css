@@ -306,6 +306,9 @@ button:disabled { cursor: not-allowed; }
 }
 .discover-primary-copy h2 { margin: 5px 0 7px; font-size: 19px; letter-spacing: -.025em; }
 .discover-primary-copy p { margin: 0; color: #96a6b8; font-size: 12px; line-height: 1.65; }
+.manual-import { display: grid; gap: 9px; }
+.manual-import .import-row { margin-top: 0; }
+.manual-import-note { min-height: 1.4em; margin: 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
 .discovery-button {
   min-height: 70px;
   padding: 12px 14px;

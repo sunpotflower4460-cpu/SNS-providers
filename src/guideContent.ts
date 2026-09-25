@@ -21,7 +21,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
     eyebrow: 'ABOUT',
     title: 'Social Missionって何？',
     paragraphs: [
-      'あなたが決めた目的（Mission）に近づくために「誰と、どうつながるか」をAIと一緒に考える個人用アシスタントです。',
+      'あなたが決めた目的（Mission）に近づくために「誰と、どうつながるか」を整理する個人用アシスタントです。AI機能はクラウド接続後に使えます。',
       'DISCOVER（探す）→ COLLECT（集める）→ PRIORITIZE（優先）→ DRAFT（下書き）→ HUMAN APPROVAL（あなたが承認）→ EXECUTE（1件だけ実行）→ RECORD / RECONCILE（結果を記録）という流れです。AIが勝手にフォロー・返信・DMすることはありません。公式APIが許可する操作だけ、承認後にアプリ内で実行できます。許可されない操作は公式SNSへのHANDOFFです。',
       'インストール直後は候補もつながりも空の状態から始まります。まずはSettingsでMissionを設定するところから始めてください。',
     ],
@@ -33,7 +33,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
     title: '5つのタブでできること',
     items: [
       { term: '⌂ Today', desc: '今日向き合う交流を優先順に並べる Mission Inbox。SocialActionがあればそちらを優先し、なければ従来の Daily Queue が残ります。' },
-      { term: '✦ Discover', desc: '新しい候補を見つけて追加する場所。AI無料探索、URL/@usernameでの手動追加、AIによる再評価ができます。' },
+      { term: '✦ Discover', desc: 'プロフィールURLや@usernameから候補を手動登録できます。クラウド接続後は無料探索やAI再評価も使えます。' },
       { term: '◎ Relations', desc: '今つながっている・交流中の人の一覧。相互フォロー状況の記録や、整理（フォロー解除）候補の確認ができます。' },
       { term: '◐ Me', desc: '自分のプロフィールや投稿をAIがMission視点で分析し、改善案を提案します。' },
       { term: '⚙ Settings', desc: 'Mission・話し方の方針（Communication DNA）・月間予算・1日の行動量などAIの判断基準を設定します。バックアップや外部連携もここから。' },
@@ -46,9 +46,9 @@ export const GUIDE_SECTIONS: GuideSection[] = [
     title: '基本の使い方の流れ',
     steps: [
       'Settingsで自分のMission（誰と、何のためにつながりたいか）を書く。目的地は複数持てます。',
-      'Discoverを開き「Missionから無料で候補を探す」を押すか、プロフィールURL / @usernameを追加する。',
-      '「AIで候補を再評価」を押すと、Missionとの一致度・おすすめアクション・返信案が更新される。',
-      'Todayを開き、Mission Inbox（または Daily Queue）の上から1件ずつ確認する。',
+      'ローカルモードではDiscoverでプロフィールURL / @usernameを登録し、公式プロフィールを確認する。',
+      'クラウド接続後は無料探索やAI再評価で、Missionとの一致度・おすすめアクション・返信案も更新できる。',
+      'Todayに具体的な提案があれば上から1件ずつ確認する。登録直後の未評価候補はDiscoverから確認する。',
       '承認した1件だけ実行します。公式APIが許可する操作はアプリ内、許可されない操作は公式SNSへのHANDOFFです。',
       'アプリに戻ると「〜はどうしました？」と聞かれるので結果を選ぶ。ここで初めて関係性の記録が更新される。',
       'Relationsで相互フォローや整理候補を確認し、Meで自分のプロフィールも定期的に見直す。',

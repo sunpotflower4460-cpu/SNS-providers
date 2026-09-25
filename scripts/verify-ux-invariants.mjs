@@ -60,7 +60,7 @@ requireAll(app, [
   "const hasCandidates = state.candidates.some((candidate) => !candidate.skipped);",
   "const inbox = hasCandidates ? buildMissionInbox(state) : [];",
   "const plannedTotal = hasCandidates ? doneToday + remaining : 0;",
-  "hasCandidates ? `${doneToday} / ${plannedTotal}` : '準備前'",
+  "!hasCandidates ? '準備前' : plannedTotal > 0 ? `${doneToday} / ${plannedTotal}` : '候補確認中'",
 ], 'First-use progress can again show synthetic self-actions or a misleading completed state before any candidate exists.');
 
 requireAll(app, [

@@ -348,9 +348,10 @@ if (pkg.scripts.postinstall !== 'node scripts/workers-ci-build.mjs'
   || !gitignore.includes('!dist/.gitkeep')
   || !viteConfig.includes('keep-dist-gitkeep')
   || !viteConfig.includes("writeFileSync('dist/.gitkeep'")
-  || !pagesWorkflow.includes('enablement: true')
-  || !workerDeploy.includes("secrets.CLOUDFLARE_API_TOKEN != ''")) {
-  throw new Error('Workers Builds no longer builds ./dist during Cloudflare install, Vite/wrangler are omit-dev-fragile, dist is fully gitignored, GitHub Pages cannot self-enable, or Worker deploy still fails closed without secrets.');
+  || pagesWorkflow.includes('enablement: true')
+  || !workerDeploy.includes('id: credentials')
+  || !workerDeploy.includes("steps.credentials.outputs.ready == 'true'")) {
+  throw new Error('Workers Builds, Pages setup, or secretless Worker deploy configuration regressed.');
 }
 
 const srcNames = await readdir(new URL('../src/', import.meta.url));

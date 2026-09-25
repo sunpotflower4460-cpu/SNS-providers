@@ -165,7 +165,7 @@ Provider prices, eligibility rules, Meta permissions/API versions and free tiers
 
 `.github/workflows/deploy-pages.yml` builds the frontend with `VITE_BASE_PATH=/SNS-providers/` and deploys `dist/` to GitHub Pages whenever `main` changes.
 
-GitHub requires custom Pages workflows to be enabled for the repository before the first deployment. Once enabled, merging to `main` triggers the deployment. If the Worker has been deployed, add a repository Actions variable named `VITE_API_BASE_URL` containing the Worker origin; otherwise the deployed PWA runs in local-only mode. Production CSP generation uses this same Worker origin and CI verifies that it is bound into the built HTML.
+GitHub Pages must be enabled once by a repository administrator under Settings → Pages → Build and deployment → GitHub Actions. The workflow token cannot create the Pages site itself. Once enabled, merging to `main` triggers the deployment. If the Worker has been deployed, add a repository Actions variable named `VITE_API_BASE_URL` containing the Worker origin; otherwise the deployed PWA runs in local-only mode. Production CSP generation uses this same Worker origin and CI verifies that it is bound into the built HTML. See `docs/IPHONE_DAILY_USE.md` for the initial iPhone release checks.
 
 ## Personal control key / D1 sync
 

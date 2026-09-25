@@ -16,7 +16,8 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
-      - run: npm install --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund
+      - run: npm audit --audit-level=high
       - run: npm run typecheck
       - run: npm run security:check
       - run: npm run ux:check
@@ -29,7 +30,7 @@ jobs:
       - name: Verify local-root production build
         run: npm run dist:check
       - name: Verify PWA Wrangler config
-        run: npx --yes wrangler@4.125.0 deploy --dry-run --config wrangler.toml
+        run: npx wrangler deploy --dry-run --config wrangler.toml
       - name: Build with GitHub Pages base path and Worker origin
         run: npm run build
         env:
@@ -40,6 +41,9 @@ jobs:
         env:
           VITE_BASE_PATH: /SNS-providers/
           VITE_API_BASE_URL: https://social-mission-api.example.workers.dev
+      - name: Install browser for daily-flow checks
+        run: npx playwright install --with-deps chromium webkit
+      - run: npm run test:e2e
 
   worker:
     runs-on: ubuntu-latest
@@ -51,5 +55,6 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
-      - run: npm install --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund
+      - run: npm audit --audit-level=high
       - run: npm run typecheck

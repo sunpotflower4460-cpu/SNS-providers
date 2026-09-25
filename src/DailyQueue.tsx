@@ -37,6 +37,16 @@ export default function DailyQueue({ state, onOpenCandidate, onOpenMe, onOpenDis
   const items = useMemo(() => fallbackDailyQueue(state), [state, localDay]);
   const candidateById = useMemo(() => new Map(state.candidates.map((candidate) => [candidate.id, candidate])), [state.candidates]);
   const activeCandidateCount = state.candidates.filter((candidate) => !candidate.skipped).length;
+  const now = Date.now();
+  const reviewCandidateCount = state.candidates.filter((candidate) => {
+    if (candidate.skipped || candidate.recommendedAction !== 'review' || candidate.tags.includes('identity-conflict')) return false;
+    const snoozedUntil = candidate.snoozedUntil ? new Date(candidate.snoozedUntil).getTime() : 0;
+    if (Number.isFinite(snoozedUntil) && snoozedUntil > now) return false;
+    const handledAt = candidate.lastInteractionAt ? new Date(candidate.lastInteractionAt).getTime() : 0;
+    return !Number.isFinite(handledAt) || now - handledAt >= 72 * 3_600_000;
+  }).length;
+  const reviewedToday = state.interactions.some((interaction) => interaction.action === 'review'
+    && localDayKey(new Date(interaction.at)) === localDay);
   const completedToday = useMemo(() => {
     const selfCompleted = state.selfProfile.analyzedAt
       ? localDayKey(new Date(state.selfProfile.analyzedAt)) === localDay
@@ -85,6 +95,26 @@ export default function DailyQueue({ state, onOpenCandidate, onOpenMe, onOpenDis
       <span className="section-kicker">今日のおすすめ</span>
       <h3>受信した交流は明日へ送りました</h3>
       <p>スヌーズしたコメントは期限が来ると Inbox に戻ります。今は無理に別の相手へ進まなくて大丈夫です。</p>
+      <button className="secondary-button empty-action" onClick={onOpenDiscover}>候補を見る</button>
+    </section>;
+  }
+
+  if (!items.length && reviewCandidateCount > 0) {
+    return <section className="daily-queue empty waiting-empty">
+      <div className="queue-wait-icon">◎</div>
+      <span className="section-kicker">次の一歩</span>
+      <h3>登録した候補を確認しましょう</h3>
+      <p>{reviewCandidateCount}人のプロフィールを公式SNSで確認できます。実際にフォローした場合も、確認だけで終えた場合も結果を記録できます。</p>
+      <button className="primary-button empty-action" onClick={onOpenDiscover}>候補を確認する</button>
+    </section>;
+  }
+
+  if (!items.length && reviewedToday) {
+    return <section className="daily-queue empty completed-empty">
+      <div className="queue-complete-icon">✓</div>
+      <span className="section-kicker">今日の確認</span>
+      <h3>候補のプロフィールを確認しました</h3>
+      <p>確認だけでは関係スコアは変わりません。次に実際の交流をしたときに結果を記録できます。</p>
       <button className="secondary-button empty-action" onClick={onOpenDiscover}>候補を見る</button>
     </section>;
   }

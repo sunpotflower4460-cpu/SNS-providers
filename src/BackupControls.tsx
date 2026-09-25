@@ -127,7 +127,7 @@ export default function BackupControls({ state, onRestore }: { state: AppState; 
         <section className="form-card backup-card">
           <div className="field-title"><div><strong>ローカルデータ</strong><span>Mission・候補・関係性・設定をJSONで持ち運びます</span></div><b>JSON</b></div>
           <div className="backup-actions">
-            <button className="secondary-button" onClick={() => { downloadBackup(state); setStatus('バックアップを書き出しました'); }}>バックアップを書き出す</button>
+            <button className="secondary-button" onClick={() => { downloadBackup(state); setStatus('バックアップの保存を開始しました。ファイルアプリで保存されたことを確認してください。'); }}>バックアップを書き出す</button>
             <button className="secondary-button" onClick={() => inputRef.current?.click()}>バックアップを復元</button>
           </div>
           <input ref={inputRef} className="visually-hidden" type="file" accept="application/json,.json" onChange={(event) => prepareRestore(event.target.files?.[0])} />
