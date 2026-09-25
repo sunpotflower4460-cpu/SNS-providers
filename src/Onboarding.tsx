@@ -48,7 +48,7 @@ export function GuideSectionBody({ section }: { section: (typeof GUIDE_SECTIONS)
   return <>
     {section.paragraphs && section.paragraphs.map((text, index) => <p key={index}>{text}</p>)}
     {section.steps && <ol className="guide-list">{section.steps.map((text, index) => <li key={index}>{text}</li>)}</ol>}
-    {section.bullets && <ul className="guide-list">{section.bullets.map((text, index) => <li key={index}>{text}</li>)}</ul>}
     {section.items && <dl className="guide-terms">{section.items.map((item) => <div key={item.term}><dt>{item.term}</dt><dd>{item.desc}</dd></div>)}</dl>}
+    {section.bullets && <ul className="guide-list">{section.bullets.map((text, index) => <li key={index}>{text}</li>)}</ul>}
   </>;
 }

@@ -8,7 +8,7 @@
   background: rgba(240,155,198,.045);
 }
 .instagram-source-note strong { color: #f3bed9; font-size: 12px; }
-.instagram-source-note span { color: #95a4b6; font-size: 10px; line-height: 1.6; }
+.instagram-source-note span { color: #95a4b6; font-size: 12px; line-height: 1.6; }
 .instagram-sync-summary {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -22,12 +22,12 @@
   border-radius: 11px;
   color: #8191a5;
   background: rgba(255,255,255,.025);
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1.4;
   text-align: center;
 }
 .instagram-sync-summary b { color: #e9d1df; font-size: 14px; }
-.instagram-account-warning { color: #78889c !important; font-size: 10px !important; line-height: 1.6; }
+.instagram-account-warning { color: #78889c !important; font-size: 12px !important; line-height: 1.6; }
 @media (max-width: 380px) {
   .instagram-sync-summary { grid-template-columns: 1fr; }
   .instagram-sync-summary span { grid-template-columns: auto 1fr; align-items: baseline; text-align: left; }

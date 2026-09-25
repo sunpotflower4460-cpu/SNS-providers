@@ -107,7 +107,7 @@ export async function fetchXOAuthStatus(userId = 'local-user') {
 }
 
 export async function startXOAuth(intent: 'read' | 'reply' | 'relationship' | 'engagement' | 'dm' = 'read') {
-  if (!apiConfigured) throw new Error('Worker URLが設定されていません');
+  if (!apiConfigured) throw new Error('サーバーが未接続です（設定 →「連携の準備」）');
   const token = requiredControlToken();
   const result = await request<unknown>('/api/x/oauth/start', {
     method: 'POST',
@@ -141,7 +141,7 @@ export async function startXOAuth(intent: 'read' | 'reply' | 'relationship' | 'e
 }
 
 export async function disconnectXOAuth(userId = 'local-user') {
-  if (!apiConfigured) throw new Error('Worker URLが設定されていません');
+  if (!apiConfigured) throw new Error('サーバーが未接続です（設定 →「連携の準備」）');
   const token = requiredControlToken();
   const result = await request<unknown>(`/api/x/oauth/disconnect?userId=${encodeURIComponent(userId)}`, { method: 'DELETE' }, token, 30_000);
   if (!isRecord(result) || result.ok !== true) throw new Error('X接続解除の成功応答が不正です');
@@ -149,7 +149,7 @@ export async function disconnectXOAuth(userId = 'local-user') {
 }
 
 export async function syncOwnedXData(monthlyLimitUsd: number, candidates: Candidate[] = [], userId = 'local-user') {
-  if (!apiConfigured) throw new Error('Worker URLが設定されていません');
+  if (!apiConfigured) throw new Error('サーバーが未接続です（設定 →「連携の準備」）');
   const token = requiredControlToken();
   const trackedAccounts = candidates
     // A restored handle conflict is intentionally review-only until official X data proves

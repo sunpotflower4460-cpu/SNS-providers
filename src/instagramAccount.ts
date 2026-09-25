@@ -28,7 +28,7 @@ export interface InstagramEngagerSyncResponse {
 }
 
 export async function syncInstagramEngagers(userId = 'local-user') {
-  if (!apiConfigured) throw new Error('Worker URLが設定されていません');
+  if (!apiConfigured) throw new Error('サーバーが未接続です（設定 →「連携の準備」）');
   const token = getSyncToken().trim();
   if (!token) throw new Error('先にSettingsの個人管理キーを保存してください');
   const response = await fetchWithTimeout(`${apiBaseUrl}/api/instagram/engagers/sync`, {

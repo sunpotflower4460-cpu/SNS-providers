@@ -14,7 +14,7 @@
   border-radius: 12px;
   background: rgba(255,255,255,.025);
   color: #8b9aab;
-  font-size: 11px;
+  font-size: 12px;
   text-align: center;
 }
 .mission-inbox .inbox-summary b {
@@ -35,13 +35,13 @@
   gap: 10px;
   align-items: center;
 }
-.inbox-action-meta small { color: #72dfbd; font-size: 10px; font-weight: 800; }
+.inbox-action-meta small { color: #72dfbd; font-size: 12px; font-weight: 800; }
 .inbox-action-meta strong { display: block; font-size: 15px; }
-.inbox-action-meta span { color: #8f9fb2; font-size: 11px; }
+.inbox-action-meta span { color: #8f9fb2; font-size: 12px; }
 .exec-mode {
   padding: 5px 8px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 12px;
   font-style: normal;
   font-weight: 700;
   letter-spacing: 0;
@@ -71,7 +71,7 @@
 .inbox-why span {
   display: block;
   color: #72dfbd;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 800;
 }
 .inbox-reason {
@@ -83,7 +83,7 @@
 .inbox-execute-note {
   margin: 8px 0 0;
   color: #9aa8b8;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
 }
 .inbox-action-buttons {

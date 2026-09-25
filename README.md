@@ -2,6 +2,8 @@
 
 Mission-driven, mobile-first PWA for growing meaningful social relationships. The product discovers, ranks, drafts and remembers; a social write happens only after one explicit user approval. When an official platform API permits that action, SNS-providers may execute it. Otherwise it uses an explicit HANDOFF to the official app. There is no auto-send and no bulk write.
 
+> **日本語のセットアップ手順（AI・X・Instagram連携）:** [docs/SETUP_GUIDE_JA.md](docs/SETUP_GUIDE_JA.md)。アプリ内では 設定 →「連携の準備」に同じ手順と現在の状態が表示されます。
+
 ## Current v0.1 foundation
 
 - installable mobile PWA shell with 180 / 192 / 512 / 1024 truecolor sRGB PNG icons plus SVG fallback

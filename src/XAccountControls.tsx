@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { friendlyReason } from './friendlyReason';
 import { apiConfigured, fetchSocialCapabilities, syncXDirectMessages, syncXInbound } from './api';
 import { applyXDmEvents } from './dmInboundStore';
 import { applyXInboundEvents } from './xInboundStore';
@@ -203,34 +204,26 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
     }
   }
 
+  const busy = loading || syncing || inboundSyncing || dmSyncing;
   return <section className="form-card x-account-card">
     <div className="field-title">
-      <div><strong>Xを接続</strong><span>自分の発信とフォロー関係を、候補選びと自己分析へ反映します</span></div>
+      <div><strong>Xをつなぐ</strong><span>{status.connected ? (state.xAccount.username ? `@${state.xAccount.username} と接続中` : '接続中') : 'まだ接続していません'}</span></div>
       <b className={status.connected ? 'connected' : ''}>{status.connected ? '接続済' : 'X'}</b>
     </div>
 
-    <div className="x-scope-note">
-      <strong>既定は読み取り接続です</strong>
-      <span>プロフィール・投稿・フォロー関係の読み取りだけを使います。返信・フォロー・いいね・DMの書き込み権限は、それぞれ専用ボタンを押したときだけ、いま持っている権限の上に積み上げて要求します。既定の接続は常に読み取り専用です。勝手にフォロー、解除、いいね、投稿、DM送信することはありません。</span>
-    </div>
+    {!status.connected && <div className="x-scope-note">
+      <strong>つなぐとできること</strong>
+      <span>① 自分のプロフィール・投稿・フォロー関係をAIが分析 ② 届いたメンションや返信が「今日」に並ぶ ③ 承認した返信だけアプリから送れる。最初の接続は「読み取りだけ」です。勝手に投稿・フォロー・DMはしません。</span>
+    </div>}
+    {!status.connected && apiConfigured && !loading && !status.configured && <div className="x-scope-note x-upgrade-note">
+      <strong>先にサーバー側の準備が必要です</strong>
+      <span>X Developer Portal でアプリを作り、Client ID などをサーバーに登録すると、下のボタンが押せるようになります。設定 →「連携の準備」→「Xアカウントと連携」の手順を見てください。</span>
+    </div>}
 
     {status.connected && <div className="x-capability-list" aria-label="Xの接続権限">
-      <span>{status.capabilities?.read !== false ? '✓ 読み取り 許可' : '− 読み取り 未許可'}</span>
-      <span>{status.capabilities?.reply ? '✓ 返信 許可' : '− 返信 未許可'}</span>
-      <span>{status.capabilities?.follow ? '✓ フォロー 許可' : '− フォロー 未許可'}</span>
-      <span>{status.capabilities?.like ? '✓ いいね 許可' : '− いいね 未許可'}</span>
-      <span>{status.capabilities?.dm ? '✓ DM 許可' : '− DM 未許可'}</span>
-    </div>}
-
-    {status.connected && !status.capabilities?.reply && <div className="x-scope-note x-upgrade-note">
-      <strong>アプリ内返信には返信権限が必要です</strong>
-      <span>追加で要求するのは tweet.write だけです。フォローやDMの権限は追加しません。Xの確認画面で同意したあと、サーバー側の書き込み設定が有効なときだけ Mission Inbox から1件送信できます。</span>
-    </div>}
-
-    {status.connected && <div className="x-connection-details">
-      <span><b>状態</b> {status.capabilities?.reply ? '読み取りと返信権限で接続済み' : '読み取り専用で接続済み'}{status.refreshable ? ' · 接続を自動維持' : ''}</span>
-      {state.xAccount.username && <span><b>接続中</b> @{state.xAccount.username}</span>}
-      {state.xAccount.lastSyncedAt && <span><b>最終更新</b> {new Date(state.xAccount.lastSyncedAt).toLocaleString('ja-JP')}</span>}
+      <span>{status.capabilities?.read !== false ? '✓ 読み取り' : '− 読み取り'}</span>
+      <span>{status.capabilities?.reply ? '✓ 返信' : '− 返信'}</span>
+      <span>{status.capabilities?.dm ? '✓ DM' : '− DM'}</span>
     </div>}
 
     {status.connected && state.xAccount.username && <>
@@ -246,30 +239,53 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
           <span>フォロー中確認 <b>{(state.xAccount.followingCycle || 0) + 1}周目</b></span>
           {state.xAccount.pacedCapUsd != null && <span>今回の利用上限 <b>${state.xAccount.pacedCapUsd.toFixed(3)}</b></span>}
           {state.xAccount.pacingDaysRemaining != null && <span>月末まで <b>{state.xAccount.pacingDaysRemaining}日</b></span>}
+          {state.xAccount.lastSyncedAt && <span>最終更新 <b>{new Date(state.xAccount.lastSyncedAt).toLocaleString('ja-JP')}</b></span>}
         </div>
       </details>
     </>}
-
-    <details className="candidate-details">
-      <summary>読み取り権限の詳細</summary>
-      <div className="candidate-details-body strategy-note"><p>既定の接続は tweet.read / users.read / follows.read / offline.access のみです。返信は tweet.write、フォローは follows.write、いいねは like.read + like.write、DMは dm.read+dm.write を、それぞれ専用ボタンで累積追加します。既定接続で書き込み権限をまとめて要求することはありません。権限追加は同じXアカウントのまま行われます。</p></div>
-    </details>
 
     <div className="x-account-actions">
       {!status.connected
         ? <button className="primary-button" disabled={loading || !apiConfigured || !status.configured} onClick={connect}>{loading ? '確認中…' : 'Xを読み取り専用で接続'}</button>
         : <>
-          <button className="primary-button" disabled={syncing || loading || inboundSyncing || dmSyncing} onClick={sync}>{syncing ? '更新中…' : 'Xの情報を更新'}</button>
-          <button className="secondary-button" disabled={syncing || loading || inboundSyncing || dmSyncing} onClick={syncInbound}>{inboundSyncing ? '受信を確認中…' : 'メンション/返信を取り込む'}</button>
-          <button className="secondary-button" disabled={syncing || loading || inboundSyncing || dmSyncing} onClick={() => void syncDm()}>{dmSyncing ? 'DM確認中…' : 'DMを取り込む'}</button>
-          {!status.capabilities?.reply && <button className="secondary-button" disabled={loading || syncing || inboundSyncing || dmSyncing} onClick={() => void upgrade('reply', '返信権限')}>{loading ? '処理中…' : '返信権限を追加'}</button>}
-          {!status.capabilities?.follow && <button className="secondary-button" disabled={loading || syncing || inboundSyncing || dmSyncing} onClick={() => void upgrade('relationship', 'フォロー権限')}>{loading ? '処理中…' : 'フォロー権限を追加'}</button>}
-          {!status.capabilities?.like && <button className="secondary-button" disabled={loading || syncing || inboundSyncing || dmSyncing} onClick={() => void upgrade('engagement', 'いいね権限')}>{loading ? '処理中…' : 'いいね権限を追加'}</button>}
-          {!status.capabilities?.dm && <button className="secondary-button" disabled={loading || syncing || inboundSyncing || dmSyncing} onClick={() => void upgrade('dm', 'DM権限')}>{loading ? '処理中…' : 'DM権限を追加'}</button>}
-          <button className="secondary-button" disabled={loading || syncing || inboundSyncing || dmSyncing} onClick={disconnect}>{loading ? '処理中…' : 'Xとの接続を解除'}</button>
+          <button className="primary-button" disabled={busy} onClick={sync}>{syncing ? '更新中…' : 'Xの情報を更新'}</button>
+          <button className="secondary-button" disabled={busy} onClick={syncInbound}>{inboundSyncing ? '受信を確認中…' : 'メンション/返信を取り込む'}</button>
+          {status.capabilities?.dm && <button className="secondary-button" disabled={busy} onClick={() => void syncDm()}>{dmSyncing ? 'DM確認中…' : 'DMを取り込む'}</button>}
         </>}
     </div>
-    <small>{note}</small>
-    <small className="x-account-warning">「フォローバックなし」は、追跡中の相手を一通り確認し終えた場合だけ反映します。途中までしか取得できていない状態で、相手がフォローしていないと決めつけません。</small>
+    <small>{friendlyReason(note)}</small>
+
+    {status.connected && <details className="candidate-details">
+      <summary>できることを増やす（返信・DM）</summary>
+      <div className="candidate-details-body strategy-note">
+        <p>押すとXの確認画面が開き、その権限だけを追加します。追加後もサーバー側で送信をオンにするまでは送られません（ガイド「X連携」手順⑨）。</p>
+        <div className="x-account-actions">
+          {!status.capabilities?.reply && <button className="secondary-button" disabled={busy} onClick={() => void upgrade('reply', '返信権限')}>{loading ? '処理中…' : '返信権限を追加'}</button>}
+          {!status.capabilities?.dm && <button className="secondary-button" disabled={busy} onClick={() => void upgrade('dm', 'DM権限')}>{loading ? '処理中…' : 'DM権限を追加'}</button>}
+          {status.capabilities?.reply && status.capabilities?.dm && <p>返信とDMの権限は追加済みです。</p>}
+        </div>
+      </div>
+    </details>}
+
+    {status.connected && <details className="candidate-details">
+      <summary>フォロー・いいねについて（通常は不要）</summary>
+      <div className="candidate-details-body strategy-note">
+        <p>2026年4月から、Xの通常プラン（従量課金）ではAPIでのフォロー・いいねができなくなりました（企業向け Enterprise 契約のみ）。このアプリはフォロー・いいねのときXアプリを開くので、下のボタンは押さなくて大丈夫です。</p>
+        <div className="x-account-actions">
+          {!status.capabilities?.follow && <button className="secondary-button" disabled={busy} onClick={() => void upgrade('relationship', 'フォロー権限')}>{loading ? '処理中…' : 'フォロー権限を追加'}</button>}
+          {!status.capabilities?.like && <button className="secondary-button" disabled={busy} onClick={() => void upgrade('engagement', 'いいね権限')}>{loading ? '処理中…' : 'いいね権限を追加'}</button>}
+        </div>
+      </div>
+    </details>}
+
+    <details className="candidate-details">
+      <summary>くわしい仕組み</summary>
+      <div className="candidate-details-body strategy-note">
+        <p>最初の接続で使う権限は tweet.read / users.read / follows.read / offline.access（読み取りだけ）です。返信は tweet.write、DMは dm.read + dm.write を、上のボタンを押したときだけ同じアカウントに追加します。Xのトークンは暗号化してサーバーに保存し、この端末には置きません。</p>
+        <p>「フォローバックなし」は、追跡中の相手を一通り確認し終えた場合だけ表示します。途中までしか確認できていないときに、相手がフォローしていないと決めつけません。</p>
+      </div>
+    </details>
+
+    {status.connected && <button className="text-button x-disconnect" disabled={busy} onClick={disconnect}>{loading ? '処理中…' : 'Xとの接続を解除'}</button>}
   </section>;
 }

@@ -13,7 +13,7 @@ interface Check {
 export default function PreflightControls() {
   const [loading, setLoading] = useState(false);
   const [checks, setChecks] = useState<Check[]>([]);
-  const [note, setNote] = useState(apiConfigured ? '本番準備の状態を確認できます' : 'Worker URLがないため本番準備チェックは使えません');
+  const [note, setNote] = useState(apiConfigured ? '本番準備の状態を確認できます' : 'サーバー未接続のため本番準備チェックは使えません');
 
   async function run() {
     setLoading(true);

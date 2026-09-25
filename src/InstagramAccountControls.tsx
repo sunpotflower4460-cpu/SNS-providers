@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { friendlyReason } from './friendlyReason';
 import { apiConfigured, fetchSocialCapabilities, syncInstagramDirectMessages } from './api';
 import { applyInstagramDmEvents } from './dmInboundStore';
 import { setLiveSocialCapabilities, getLiveSocialCapabilities } from './socialCapabilities';
@@ -100,7 +101,7 @@ export default function InstagramAccountControls({ state, onChange }: { state: A
     <button className="primary-button" disabled={syncing || !apiConfigured} onClick={sync}>{syncing ? '更新中…' : 'コメント反応を更新'}</button>
     <button className="secondary-button" disabled={dmSyncing || !apiConfigured} onClick={syncDm}>{dmSyncing ? 'DM確認中…' : 'DMを取り込む'}</button>
     <button className="secondary-button" disabled={probing || !apiConfigured} onClick={() => void refreshCapabilities()}>{probing ? '確認中…' : '権限状態を確認'}</button>
-    <small>{note}</small>
+    <small>{friendlyReason(note)}</small>
     <details className="candidate-details">
       <summary>接続に必要なもの</summary>
       <div className="candidate-details-body strategy-note"><p>Instagram Professionalアカウントのアクセストークン・ユーザーID・APIバージョンをサーバー側へ設定します。権限確認は推測せず、公式のpermissions endpointで fail closed します。同じ内容を何度も取りに行かないよう、12時間以内は保存済みデータを優先します。</p></div>

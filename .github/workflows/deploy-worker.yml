@@ -16,35 +16,58 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
     defaults:
       run:
         working-directory: worker
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - name: Check Cloudflare credentials
+        id: gate
+        # worker/ does not exist before checkout.
+        working-directory: .
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          # The secrets context is not allowed in job-level `if:`; using it there made
+          # GitHub reject the whole workflow file before any job ran.
+          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID are not set in GitHub Actions secrets. Skipping."
+          fi
+      - if: steps.gate.outputs.enabled == 'true'
+        uses: actions/checkout@v5
+      - if: steps.gate.outputs.enabled == 'true'
+        uses: actions/setup-node@v5
         with:
           node-version: 22
-      - run: npm install --no-audit --no-fund
-      - run: npm run typecheck
-      - name: Resolve D1 database ID
+      - if: steps.gate.outputs.enabled == 'true'
+        run: npm install --no-audit --no-fund
+      - if: steps.gate.outputs.enabled == 'true'
+        run: npm run typecheck
+      - if: steps.gate.outputs.enabled == 'true'
+        name: Resolve D1 database ID
         working-directory: .
         run: node scripts/resolve-d1-database-id.mjs --write
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      - name: Apply versioned D1 migrations
+      - if: steps.gate.outputs.enabled == 'true'
+        name: Apply versioned D1 migrations
         working-directory: .
         run: node scripts/d1-migrate.mjs
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      - name: Apply D1 schema
+      - if: steps.gate.outputs.enabled == 'true'
+        name: Apply D1 schema
         run: npx wrangler d1 execute social-mission --remote --file=../db/schema.sql
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      - name: Deploy Worker
+      - if: steps.gate.outputs.enabled == 'true'
+        name: Deploy Worker
         run: npm run deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
