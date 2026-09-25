@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { friendlyReason } from './friendlyReason';
 import { apiConfigured, fetchBudget } from './api';
 import { normalizeAppState, validateAppState } from './backup';
 import { detachExternalAccountSummaries } from './restoreSafety';
@@ -156,7 +157,7 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
       <button className="secondary-button" disabled={busy || !apiConfigured} onClick={upload}>この端末のデータを保存</button>
       <button className="primary-button" disabled={busy || !apiConfigured} onClick={download}>クラウドから復元</button>
     </div>
-    <div className="sync-footer"><small aria-live="polite">{busy ? '処理中…' : status}</small><button disabled={busy} onClick={forget}>この端末からキーを削除</button></div>
+    <div className="sync-footer"><small aria-live="polite">{busy ? '処理中…' : friendlyReason(status)}</small><button disabled={busy} onClick={forget}>この端末からキーを削除</button></div>
     <small className="sync-note">別の端末に新しいデータがあるときは、古い状態で上書きしないよう自動で停止します。その場合は先に「クラウドから復元」で最新版を取り込んでください。復元データも安全性を確認してから反映します。</small>
   </section>;
 }

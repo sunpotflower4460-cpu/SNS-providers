@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { friendlyReason } from './friendlyReason';
 import { apiConfigured, dismissSocialActionRequest, executeSocialActionRequest, prepareSocialActionRequest, reconcileSocialExecutionRequest, snoozeSocialActionRequest } from './api';
 import DailyQueue from './DailyQueue';
 import { buildMissionInbox, inboxSummary, type MissionInboxItem } from './missionInboxModel';
@@ -364,7 +365,7 @@ function SocialActionCard({
       <strong>{action.type === 'unfollow_review' ? 'このアカウントのフォローを外します。よろしいですか？' : `この内容を${writeSurface}に送信します。よろしいですか？`}</strong>
       <p>{action.type === 'unfollow_review' ? 'フォロー解除は1件ずつ、あなたが承認したときだけです。一括解除はありません。' : '送信はあなたが承認したこの1件だけです。'}</p>
     </div>}
-    {note && <p className="inbox-execute-status">{note}</p>}
+    {note && <p className="inbox-execute-status">{friendlyReason(note)}</p>}
     <div className="inbox-action-buttons">
       <button className="secondary-button" disabled={executing} onClick={() => onSnooze(action.id)}>明日へ</button>
       <button className="ghost-button" disabled={executing} onClick={() => onDismiss(action.id)}>今回は返さない</button>

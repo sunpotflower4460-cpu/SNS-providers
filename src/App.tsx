@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { friendlyReason } from './friendlyReason';
 import { analyzeSelfProfile, apiConfigured, discoverSocialCandidates, enrichXProfiles, fetchBudget, fetchCanonicalSocialActions, fetchSocialCapabilities, putRuntimeSettings, rankCandidates, syncSocialInbox } from './api';
 import { persistServerBudgetCeiling } from './budgetCeilingSave';
 import { completeSettingsBudgetSave, settingsBudgetIdentity, shouldInvalidatePendingSettingsSave } from './settingsSave';
@@ -534,7 +535,7 @@ function App() {
         <div className="brand-mark" aria-hidden="true">S</div>
         <div className="topbar-copy">
           <strong>Social Mission</strong>
-          <span className="status-line" title={statusNote}><i aria-hidden="true" />{statusNote}</span>
+          <span className="status-line" title={friendlyReason(statusNote)}><i aria-hidden="true" />{friendlyReason(statusNote)}</span>
         </div>
         <div className="topbar-actions">
           <button className="help-button" onClick={() => setShowManual(true)} aria-label="使い方ガイドを開く">？</button>
@@ -558,7 +559,7 @@ function App() {
         ))}
       </nav>
 
-      {toast && <div className="status-toast" role="status" aria-live="polite"><p>{toast}</p><button type="button" aria-label="閉じる" onClick={() => setToast('')}>×</button></div>}
+      {toast && <div className="status-toast" role="status" aria-live="polite"><p>{friendlyReason(toast)}</p><button type="button" aria-label="閉じる" onClick={() => setToast('')}>×</button></div>}
 
       {pending && <ResultSheet candidate={pending.candidate} action={pending.action} onResolve={resolvePending} />}
       {showOnboarding && <Onboarding onFinish={() => { markOnboardingSeen(); setShowOnboarding(false); }} onOpenManual={() => setShowManual(true)} />}

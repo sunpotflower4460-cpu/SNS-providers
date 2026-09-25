@@ -124,6 +124,20 @@ export async function executeSocialAction(
   const existing = await loadExecution(env, userId, parsed.executionId);
   if (existing) return recoverExecution(existing, action, operation);
 
+  // Since April 2026 X bills a post that contains a URL at a much higher rate than a
+  // plain reply, which the reserved X_REPLY_WRITE_USD would not cover. Refuse before any
+  // claim/reservation so the user can remove the link or send it from the X app.
+  if (operation === 'x_reply_write' && containsUrl(parsed.draft)) {
+    return {
+      status: 400,
+      body: {
+        ok: false as const,
+        code: 'INVALID_ACTION' as const,
+        reason: 'URLを含む返信は X API の料金が大幅に高くなるため、アプリからは送信しません。URLを消すか、Xアプリで送ってください。',
+      },
+    };
+  }
+
   let storedXUserId: string | null = adapters.authenticatedUserId?.trim() || null;
   let xScopes: readonly string[] = [];
   if (action.platform === 'x') {
@@ -754,4 +768,9 @@ async function recordZeroCostWrite(env: SocialExecuteEnv, userId: string, provid
   } catch {
     // Zero-cost Instagram replies are documented as non-billable; audit rows must not block a confirmed provider success.
   }
+}
+
+function containsUrl(text: string | undefined) {
+  if (!text) return false;
+  return /https?:\/\/|www\.|\b[a-z0-9-]+\.(com|net|org|jp|io|co|me|ly|gl|app|dev|link)\b/i.test(text);
 }

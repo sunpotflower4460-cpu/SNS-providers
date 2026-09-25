@@ -26,9 +26,7 @@
 .setup-step-state { font-size: 12px; font-weight: 700; color: #b4c0d2; white-space: nowrap; }
 .setup-step.is-ready .setup-step-state { color: var(--accent); }
 .setup-step.is-todo .setup-step-state { color: #ffc46e; }
-.setup-step-body { padding: 0 14px 14px 52px; }
-.setup-step-body ol { margin: 0; padding-left: 18px; display: grid; gap: 8px; }
-.setup-step-body li { font-size: 14px; line-height: 1.65; color: #dce4f0; overflow-wrap: anywhere; }
+.setup-step-body { padding: 4px 14px 16px; display: grid; gap: 14px; border-top: 1px solid var(--line); }
 .setup-guide-actions { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; margin-top: 14px; }
 .setup-guide-actions .text-button { font-size: 14px; color: var(--accent); }
 
@@ -60,3 +58,37 @@
   .setup-banner { grid-template-columns: 28px 1fr; }
   .setup-banner button { grid-column: 2; justify-self: start; }
 }
+
+.setup-progress { height: 6px; border-radius: 999px; background: rgba(255,255,255,.07); margin-top: 14px; overflow: hidden; }
+.setup-progress span { display: block; height: 100%; background: var(--accent); border-radius: inherit; transition: width .3s ease; }
+.setup-lead { margin: 10px 0 0; font-size: 15px; line-height: 1.7; color: #eef3ff; }
+.setup-sub { display: grid; gap: 8px; padding: 12px; border-radius: 14px; background: rgba(255,255,255,.03); border: 1px solid var(--line); }
+.setup-sub > strong { font-size: 15px; color: var(--accent); }
+.setup-sub > p { margin: 0; font-size: 14px; line-height: 1.7; color: #dce4f0; }
+.setup-howto { margin: 0; padding-left: 22px; display: grid; gap: 10px; }
+.setup-howto li, .setup-bullets li { font-size: 14px; line-height: 1.75; color: #dce4f0; overflow-wrap: anywhere; }
+.setup-howto li::marker { color: var(--accent); font-weight: 800; }
+.setup-bullets { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+.setup-step-body code, .setup-values code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; background: rgba(121,231,197,.1); color: #bff3e2; border-radius: 6px; padding: 1px 5px; overflow-wrap: anywhere; }
+.setup-warn { margin: 0; padding: 12px 14px; border-radius: 14px; border: 1px solid rgba(255,196,110,.35); background: rgba(255,196,110,.08); font-size: 14px; line-height: 1.7; color: #ffe3b8; }
+.setup-helper { display: grid; gap: 10px; }
+.setup-helper-title { margin: 6px 0 0; font-size: 14px; font-weight: 800; color: #eef3ff; }
+.setup-helper-note { margin: 0; font-size: 13px; line-height: 1.65; color: #b4c0d2; }
+.copy-field { display: grid; gap: 6px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: rgba(0,0,0,.2); }
+.copy-field-label { font-size: 13px; font-weight: 700; color: #b4c0d2; }
+.copy-field code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; line-height: 1.5; color: #eef3ff; overflow-wrap: anywhere; word-break: break-all; white-space: pre-wrap; }
+.copy-field-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.copy-field-actions button { min-height: 40px; min-width: 64px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--line); background: rgba(255,255,255,.05); color: #eef3ff; font-size: 14px; font-weight: 700; }
+.copy-field-actions button.is-primary { border-color: rgba(121,231,197,.4); color: var(--accent); }
+.copy-field small { font-size: 12px; line-height: 1.6; color: #b4c0d2; }
+.setup-values { width: 100%; border-collapse: collapse; font-size: 13px; }
+.setup-values th { text-align: left; color: #b4c0d2; font-weight: 700; padding: 6px 4px; border-bottom: 1px solid var(--line); }
+.setup-values td { padding: 8px 4px; vertical-align: top; border-bottom: 1px solid var(--line); line-height: 1.5; color: #dce4f0; }
+.setup-values td:first-child code { font-size: 12px; }
+@media (max-width: 420px) {
+  .setup-values thead { display: none; }
+  .setup-values tr { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .setup-values td { border: 0; padding: 0; }
+  .setup-values td:last-child { grid-column: 1 / -1; color: #b4c0d2; font-size: 12px; }
+}
+.x-disconnect { justify-self: start; color: #ff9fae !important; }
