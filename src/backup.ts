@@ -32,6 +32,11 @@ const legacyDemoCandidates = new Set([
   'ig-1:instagram:indie_creator',
   'x-2:x:songwriter_friend',
 ]);
+const legacyPlaceholderInsights = new Map([
+  ['i1', '初見の人への入口を強くする'],
+  ['i2', 'リスナー向け投稿を少し増やす'],
+  ['i3', '同業者への偏りを抑える'],
+]);
 
 const xReservedPaths = new Set(['home', 'explore', 'notifications', 'messages', 'search', 'i', 'settings', 'compose', 'intent']);
 const instagramReservedPaths = new Set(['p', 'reel', 'reels', 'stories', 'explore', 'accounts', 'direct', 'about', 'developer']);
@@ -59,7 +64,8 @@ export function downloadBackup(state: AppState) {
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
-  URL.revokeObjectURL(url);
+  // Safari can resolve the download after the click handler returns.
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 export async function readBackup(file: File): Promise<AppState> {
@@ -99,7 +105,8 @@ export function normalizeAppState(state: AppState): AppState {
     ? state.mission.secondaryGoals.map((goal) => safeText(goal, 180)).filter(Boolean).slice(0, 20)
     : [];
   const normalizedInsights = Array.isArray(state?.insights)
-    ? state.insights.map(normalizeInsight).filter((insight): insight is SelfInsight => insight !== null)
+    ? state.insights.map(normalizeInsight).filter((insight): insight is SelfInsight => insight !== null
+      && legacyPlaceholderInsights.get(insight.id) !== insight.title)
     : [];
   const insights = dedupeById(normalizedInsights).slice(0, 50);
   const socialActions = normalizeSocialActions(state?.socialActions)

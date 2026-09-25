@@ -36,7 +36,7 @@ export default function BackupControls({ state, onRestore }: { state: AppState; 
       const restored = detachExternalAccountSummaries(await readBackup(file));
       setPendingRestore(restored);
       setPendingFileName(file.name);
-      setStatus('バックアップを確認しました。復元するまで現在のデータは変わりません。SNS接続の現在情報は次回の公式同期で確認します。');
+      setStatus('バックアップを確認しました。復元するまで現在のデータは変わりません。');
     } catch (error) {
       setPendingRestore(null);
       setPendingFileName('');
@@ -83,7 +83,7 @@ export default function BackupControls({ state, onRestore }: { state: AppState; 
       }
       setStatus(apiConfigured
         ? 'バックアップから復元しました。個人管理キー未設定のため利用額はバックアップ値のままです。SNSアカウントの現在情報は次回の公式同期で更新されます'
-        : 'バックアップから復元しました。SNSアカウントの現在情報は次回の公式同期で更新されます');
+        : 'バックアップから復元しました。候補・履歴・設定を確認してください。');
     } finally {
       setBusy(false);
     }
@@ -127,13 +127,13 @@ export default function BackupControls({ state, onRestore }: { state: AppState; 
         <section className="form-card backup-card">
           <div className="field-title"><div><strong>ローカルデータ</strong><span>Mission・候補・関係性・設定をJSONで持ち運びます</span></div><b>JSON</b></div>
           <div className="backup-actions">
-            <button className="secondary-button" onClick={() => { downloadBackup(state); setStatus('バックアップを書き出しました'); }}>バックアップを書き出す</button>
+            <button className="secondary-button" onClick={() => { downloadBackup(state); setStatus('バックアップの保存を開始しました。ファイルアプリで保存されたことを確認してください。'); }}>バックアップを書き出す</button>
             <button className="secondary-button" onClick={() => inputRef.current?.click()}>バックアップを復元</button>
           </div>
           <input ref={inputRef} className="visually-hidden" type="file" accept="application/json,.json" onChange={(event) => prepareRestore(event.target.files?.[0])} />
 
           {pendingRestore && <div className="restore-confirm" role="alert">
-            <div><strong>現在のデータを置き換えます</strong><span>{pendingFileName || '選択したバックアップ'}を復元すると、今のMission・候補・関係・設定がバックアップ内容へ変わります。SNSアカウントの現在情報はバックアップ値を使わず、次回の公式同期で確認します。</span></div>
+            <div><strong>現在のデータを置き換えます</strong><span>{pendingFileName || '選択したバックアップ'}を復元すると、今のMission・候補・関係・設定がバックアップ内容へ変わります。{apiConfigured ? 'SNSアカウントの現在情報は、次回の公式同期で確認します。' : '復元前のデータも残したい場合は、先に書き出してください。'}</span></div>
             <div className="restore-confirm-actions">
               <button className="secondary-button" disabled={busy} onClick={cancelRestore}>キャンセル</button>
               <button className="primary-button" disabled={busy} onClick={() => void confirmRestore()}>この内容で復元</button>

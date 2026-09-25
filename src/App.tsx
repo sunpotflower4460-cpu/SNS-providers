@@ -11,8 +11,9 @@ import Manual from './Manual';
 import MissionInbox from './MissionInbox';
 import Onboarding from './Onboarding';
 import { hasSeenOnboarding, markOnboardingSeen } from './onboardingState';
+import { clearPendingHandoff, rememberPendingHandoff, restorePendingHandoff } from './pendingHandoff';
 import { resolveVisibleResult } from './resultResolution';
-import { addCandidateFromReference, applyMissionDestinations, applyRankResults, applySelfAnalysis, applyXProfiles, destinationsFromMission, loadState, MAX_MISSION_DESTINATIONS, saveState, setFollowBackStatus, spendingCeilingUsd, syncBudget, updateCandidateDraft, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
+import { addCandidateFromReference, applyMissionDestinations, applyRankResults, applySelfAnalysis, applyXProfiles, destinationsFromMission, loadState, MAX_MISSION_DESTINATIONS, parseUsername, saveState, setFollowBackStatus, spendingCeilingUsd, syncBudget, updateCandidateDraft, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
 import { copyDraft, openCandidate, openSocialAction, platformLabel } from './social';
 import { applyCanonicalServerActions } from './socialAction';
 import { setLiveSocialCapabilities, SOCIAL_CAPABILITIES_CHANGED } from './socialCapabilities';
@@ -65,13 +66,14 @@ const insightCategoryLabel = {
 function App() {
   const [state, setState] = useState<AppState>(() => loadState());
   const [tab, setTab] = useState<Tab>('today');
-  const [pending, setPending] = useState<{ candidate: Candidate; action?: SocialAction } | null>(null);
+  const [pending, setPending] = useState<{ candidate: Candidate; action?: SocialAction } | null>(() => restorePendingHandoff(state));
   const [ranking, setRanking] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [enrichingX, setEnrichingX] = useState(false);
   const [analyzingSelf, setAnalyzingSelf] = useState(false);
   const [apiNote, setApiNote] = useState(apiConfigured ? 'API接続待機' : 'ローカルモード');
   const [persistenceError, setPersistenceError] = useState('');
+  const [handoffError, setHandoffError] = useState('');
   const [showOnboarding, setShowOnboarding] = useState(() => !hasSeenOnboarding());
   const [showManual, setShowManual] = useState(false);
   const [capabilityEpoch, setCapabilityEpoch] = useState(0);
@@ -84,7 +86,8 @@ function App() {
   const budgetLimitRef = useRef(spendingCeilingUsd(state.budget));
   budgetLimitRef.current = spendingCeilingUsd(state.budget);
   const localDay = useLocalDayKey();
-  const statusNote = persistenceError || apiNote;
+  const storageError = persistenceError || handoffError;
+  const statusNote = storageError || apiNote;
 
   useEffect(() => {
     const saved = saveState(state);
@@ -373,6 +376,8 @@ function App() {
   }, [state.interactions, state.selfProfile.analyzedAt, localDay]);
 
   function onOpen(candidate: Candidate, action?: SocialAction) {
+    const remembered = rememberPendingHandoff(candidate, action);
+    setHandoffError(remembered ? '' : '結果記録の再開情報を保存できませんでした。SNSから戻るまでこの画面を閉じないでください。');
     setPending({ candidate, action });
     if (action) openSocialAction(action, candidate);
     else openCandidate(candidate);
@@ -383,6 +388,8 @@ function App() {
     if (action !== 'later') {
       setState((current) => resolveVisibleResult(current, pending.candidate, action, pending.action));
     }
+    clearPendingHandoff();
+    setHandoffError('');
     setPending(null);
   }
 
@@ -526,6 +533,8 @@ function App() {
         </div>
       </header>
 
+      {storageError && <div className="persistence-alert" role="alert">{storageError}</div>}
+
       <main className="page">
         {tab === 'today' && <Today state={state} onChange={setState} doneToday={doneToday} onOpen={onOpen} onTab={setTab} capabilityEpoch={capabilityEpoch} />}
         {tab === 'discover' && <Discover state={state} candidates={active} onOpen={onOpen} onChange={setState} onDiscover={discoverCandidates} onRerank={rerankCandidates} onEnrichX={enrichXCandidates} discovering={discovering} ranking={ranking} enrichingX={enrichingX} />}
@@ -604,7 +613,7 @@ function Today({ state, onChange, doneToday, onOpen, onTab, capabilityEpoch }: {
         </details>
       )}
       <div className={hasCandidates ? 'mission-meter' : 'mission-meter is-idle'}>
-        <div className="mission-progress-head"><span>今日の進捗</span><strong>{hasCandidates ? `${doneToday} / ${plannedTotal}` : '準備前'}</strong></div>
+        <div className="mission-progress-head"><span>今日の進捗</span><strong>{!hasCandidates ? '準備前' : plannedTotal > 0 ? `${doneToday} / ${plannedTotal}` : '候補確認中'}</strong></div>
         <div className="mission-progress" aria-label={`今日の進捗 ${progress}%`}><span style={{ width: `${progress}%` }} /></div>
         <div className={hasCandidates ? 'today-summary' : 'today-summary is-idle'} aria-label="今日の残り内訳">
           <span><b>{remaining}</b>残り</span>
@@ -640,6 +649,7 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
   const [filter, setFilter] = useState<'all' | 'x' | 'instagram'>('all');
   const [platform, setPlatform] = useState<Platform>('instagram');
   const [reference, setReference] = useState('');
+  const [manualNote, setManualNote] = useState('');
   const [visibleLimit, setVisibleLimit] = useState(12);
   const visible = candidates.filter((candidate) => filter === 'all' || candidate.platform === filter);
   const displayed = visible.slice(0, visibleLimit);
@@ -657,9 +667,23 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
   useEffect(() => setVisibleLimit(12), [filter]);
 
   function addReference(value = reference) {
-    if (!value.trim()) return;
+    if (!value.trim()) {
+      setManualNote('プロフィールURLまたは@usernameを入力してください。');
+      return;
+    }
+    const username = parseUsername(platform, value);
+    if (!username) {
+      setManualNote(`${platform === 'x' ? 'X' : 'Instagram'}のプロフィールURLか正しい@usernameを入力してください。`);
+      return;
+    }
+    const existing = state.candidates.find((candidate) => candidate.platform === platform && candidate.username.toLowerCase() === username.toLowerCase());
+    if (existing && !existing.skipped) {
+      setManualNote(`@${username} は登録済みです。候補一覧から確認できます。`);
+      return;
+    }
     onChange((current) => addCandidateFromReference(current, platform, value));
     setReference('');
+    setManualNote(`@${username} を追加しました。公式プロフィールを確認して、実際に行ったことを記録できます。`);
   }
 
   function snoozeCandidate(candidate: Candidate) {
@@ -678,49 +702,62 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
   async function addFromClipboard() {
     try {
       const value = await navigator.clipboard.readText();
-      if (value) addReference(value);
+      if (value.trim()) addReference(value);
+      else setManualNote('クリップボードは空です。プロフィールURLまたは@usernameを入力してください。');
     } catch {
-      setReference((current) => current || '');
+      setManualNote('クリップボードを読み取れませんでした。URLまたは@usernameを入力してください。');
     }
   }
 
+  const manualImport = <div className="manual-import">
+    <div className="mini-segmented" role="group" aria-label="追加するSNS">
+      <button aria-pressed={platform === 'instagram'} className={platform === 'instagram' ? 'active' : ''} onClick={() => { setPlatform('instagram'); setManualNote(''); }}>Instagram</button>
+      <button aria-pressed={platform === 'x'} className={platform === 'x' ? 'active' : ''} onClick={() => { setPlatform('x'); setManualNote(''); }}>X</button>
+    </div>
+    <div className="import-row"><input aria-label="プロフィールURL または @username" value={reference} onChange={(event) => { setReference(event.target.value); setManualNote(''); }} onKeyDown={(event) => { if (event.key === 'Enter') addReference(); }} placeholder="プロフィールURL または @username" autoCapitalize="none" autoCorrect="off" /><button onClick={() => addReference()}>追加</button></div>
+    <button className="secondary-button full" onClick={addFromClipboard}>クリップボードから読み取る</button>
+    <p className="manual-import-note" role="status" aria-live="polite">{manualNote}</p>
+  </div>;
+
   return <>
-    <PageHeading eyebrow="探す" title="つながる相手を見つける" text="まずは下のボタンから。見つかった人は目的との相性順に並びます。" />
+    <PageHeading eyebrow="探す" title="つながる相手を見つける" text={apiConfigured ? 'まずは下のボタンから。見つかった人は目的との相性順に並びます。' : 'プロフィールURLか@usernameを登録して、公式SNSで相手を確認できます。'} />
 
     <section className="discover-primary-card">
-      <div className="discover-primary-copy">
-        <span className="section-kicker">おすすめ</span>
-        <h2>Missionから自動で探す</h2>
-        <p>今の目的に合う相手を公開情報から探します。フォローや返信は、あなたが1件ずつ承認してからです。</p>
-      </div>
-      <button className="discovery-button" disabled={candidateOperationBusy} onClick={onDiscover}>
-        <span>✦</span>
-        <strong>{discovering ? '候補を探しています…' : '新しい候補を探す'}</strong>
-        <small>無料探索を優先 · X / Instagram</small>
-      </button>
+      {apiConfigured ? <>
+        <div className="discover-primary-copy">
+          <span className="section-kicker">おすすめ</span>
+          <h2>Missionから自動で探す</h2>
+          <p>今の目的に合う相手を公開情報から探します。フォローや返信は、あなたが1件ずつ承認してからです。</p>
+        </div>
+        <button className="discovery-button" disabled={candidateOperationBusy} onClick={onDiscover}>
+          <span>✦</span>
+          <strong>{discovering ? '候補を探しています…' : '新しい候補を探す'}</strong>
+          <small>無料探索を優先 · X / Instagram</small>
+        </button>
+      </> : <>
+        <div className="discover-primary-copy">
+          <span className="section-kicker">ローカルモード</span>
+          <h2>自分で候補を追加</h2>
+          <p>登録後に公式プロフィールを開けます。相手への操作はSNSで行い、その結果だけここへ記録します。</p>
+        </div>
+        {manualImport}
+      </>}
     </section>
 
     <div className="discover-tools">
-      <details className="disclosure-card">
+      {apiConfigured && <details className="disclosure-card">
         <summary><span><strong>自分で候補を追加</strong><small>URLや @username が分かっているとき</small></span><b>＋</b></summary>
-        <div className="disclosure-body">
-          <div className="mini-segmented" role="group" aria-label="追加するSNS">
-            <button aria-pressed={platform === 'instagram'} className={platform === 'instagram' ? 'active' : ''} onClick={() => setPlatform('instagram')}>Instagram</button>
-            <button aria-pressed={platform === 'x'} className={platform === 'x' ? 'active' : ''} onClick={() => setPlatform('x')}>X</button>
-          </div>
-          <div className="import-row"><input value={reference} onChange={(event) => setReference(event.target.value)} placeholder="プロフィールURL または @username" /><button onClick={() => addReference()}>追加</button></div>
-          <button className="secondary-button full" onClick={addFromClipboard}>クリップボードから読み取る</button>
-        </div>
-      </details>
+        <div className="disclosure-body">{manualImport}</div>
+      </details>}
 
-      <details className="disclosure-card">
+      {apiConfigured && <details className="disclosure-card">
         <summary><span><strong>候補情報を更新・再評価</strong><small>普段は自動判断に任せてOK</small></span><b>↻</b></summary>
         <div className="disclosure-body advanced-actions">
           <button className="secondary-button" disabled={candidateOperationBusy} onClick={onEnrichX}>{enrichingX ? 'X公式情報を確認中…' : 'X公式情報を更新'}</button>
           <button className="primary-button" disabled={candidateOperationBusy} onClick={onRerank}>{ranking ? 'AIで再評価中…' : '候補をAIで再評価'}</button>
           <p>公式情報が変わった候補や、判断材料が増えた候補を更新したい場合に使います。</p>
         </div>
-      </details>
+      </details>}
     </div>
 
     <div className="candidate-list-head">
@@ -744,13 +781,14 @@ function DiscoverEmptyState({ filter, storedCount, snoozedCount }: { filter: 'al
     return <section className="empty-state"><div>✓</div><strong>今日はここまで</strong><p>{snoozedCount}件の{platform}を明日へ移動済みです。日付が変わると自動で候補へ戻ります。</p></section>;
   }
   if (storedCount === 0) {
-    return <section className="empty-state"><div>＋</div><strong>{platform}はまだありません</strong><p>上の「新しい候補を探す」から始めるのがおすすめです。</p></section>;
+    return <section className="empty-state"><div>＋</div><strong>{platform}はまだありません</strong><p>{apiConfigured ? '上の「新しい候補を探す」から始められます。' : '上のフォームにプロフィールURLまたは@usernameを入力してください。'}</p></section>;
   }
   return <section className="empty-state"><div>○</div><strong>今日表示する{platform}はありません</strong><p>見送った候補と明日送りの候補は、今日の一覧から外れています。</p></section>;
 }
 
 function CandidateCard({ candidate, onOpen, onLater, onEditDraft, featured = false }: { candidate: Candidate; onOpen: (c: Candidate) => void; onLater: (c: Candidate) => void; onEditDraft: (id: string, draft: string) => void; featured?: boolean }) {
   const buttonLabel = candidateActionButtonLabel(candidate);
+  const unrankedManualCandidate = candidate.recommendedAction === 'review' && candidate.reason.startsWith('候補プールへ追加しました。');
   const detailsAvailable = Boolean(candidate.strategy || candidate.publicMetrics || candidate.tags.length);
   // Buffer edits locally and commit (onEditDraft -> full state write) only on blur, so
   // typing doesn't serialize the whole app state to localStorage on every keystroke.
@@ -758,8 +796,8 @@ function CandidateCard({ candidate, onOpen, onLater, onEditDraft, featured = fal
   useEffect(() => setDraftText(candidate.draft ?? ''), [candidate.draft]);
   return <article className={featured ? 'candidate-card featured' : 'candidate-card'}>
     <div className="candidate-context">
-      <span className={`action-pill action-${candidate.recommendedAction}`}>おすすめ · {actionLabel[candidate.recommendedAction]}</span>
-      <span className="match-inline">相性 <b>{candidate.match}</b></span>
+      <span className={`action-pill action-${candidate.recommendedAction}`}>{unrankedManualCandidate ? '登録済 · 確認待ち' : `おすすめ · ${actionLabel[candidate.recommendedAction]}`}</span>
+      <span className="match-inline">相性 <b>{unrankedManualCandidate ? '未評価' : candidate.match}</b></span>
     </div>
     <div className="candidate-head">
       <div className={`platform-avatar ${candidate.platform}`}>{candidate.platform === 'x' ? 'X' : '◎'}</div>
@@ -1053,18 +1091,26 @@ function PageHeading({ eyebrow, title, text }: { eyebrow: string; title: string;
 }
 
 function ResultSheet({ candidate, action, onResolve }: { candidate: Candidate; action?: SocialAction; onResolve: (sheetAction: 'followed' | 'skipped' | 'later' | 'kept') => void }) {
+  const containerRef = useModalA11y<HTMLElement>(() => onResolve('later'));
   const cleanup = action ? action.type === 'unfollow_review' : candidate.recommendedAction === 'unfollow_review';
+  const profileReview = !action && candidate.recommendedAction === 'review';
+  const canRecordFollow = profileReview && !candidate.tags.includes('identity-conflict');
   const completion = action ? outcomeForSocialAction(action) : outcomeForAction(candidate);
   const visibleActionLabel = action ? socialActionResultLabel(action.type) : actionLabel[candidate.recommendedAction];
-  return <div className="sheet-backdrop"><section className="result-sheet" role="dialog" aria-modal="true" aria-labelledby="result-title">
+  return <div className="sheet-backdrop"><section ref={containerRef} className="result-sheet" role="dialog" aria-modal="true" aria-labelledby="result-title" tabIndex={-1}>
     <div className="sheet-handle" />
     <span className="section-kicker">結果を記録</span>
-    <h2 id="result-title">@{candidate.username} への{visibleActionLabel}はどうでしたか？</h2>
-    <p>{cleanup ? '公式SNSで確認した結果だけ記録します。自動でフォロー解除することはありません。' : '公式SNSでの操作結果だけ記録します。次回のおすすめ精度に使います。'}</p>
+    <h2 id="result-title">{profileReview ? `@${candidate.username} のプロフィールを確認しましたか？` : `@${candidate.username} への${visibleActionLabel}はどうでしたか？`}</h2>
+    <p>{cleanup ? '公式SNSで確認した結果だけ記録します。自動でフォロー解除することはありません。' : profileReview ? '公式SNSで実際に行ったことだけ記録します。確認だけなら関係スコアは変わりません。' : '公式SNSでの操作結果だけ記録します。次回のおすすめ精度に使います。'}</p>
     <div className="sheet-actions">{cleanup ? <>
       <button className="sheet-primary" onClick={() => onResolve('kept')}>フォローを継続した</button>
       <button onClick={() => onResolve('skipped')}>フォロー解除した</button>
       <button className="muted" onClick={() => onResolve('later')}>まだ決めていない</button>
+    </> : profileReview ? <>
+      {canRecordFollow && <button className="sheet-primary" onClick={() => onResolve('followed')}>フォローした</button>}
+      <button className={canRecordFollow ? undefined : 'sheet-primary'} onClick={() => onResolve('kept')}>プロフィールを確認した</button>
+      <button onClick={() => onResolve('skipped')}>今回は見送った</button>
+      <button className="muted" onClick={() => onResolve('later')}>あとで記録する</button>
     </> : <>
       <button className="sheet-primary" onClick={() => onResolve(completion.result)}>{completion.label}</button>
       <button onClick={() => onResolve('skipped')}>今回は見送った</button>
@@ -1091,7 +1137,7 @@ function outcomeForAction(candidate: Candidate): { label: string; result: 'follo
     case 'like': return { label: 'いいねした', result: 'kept' };
     case 'reply': return { label: '返信した', result: 'kept' };
     case 'dm': return { label: 'DMした', result: 'kept' };
-    default: return { label: '確認・交流した', result: 'kept' };
+    default: return { label: 'プロフィールを確認した', result: 'kept' };
   }
 }
 
