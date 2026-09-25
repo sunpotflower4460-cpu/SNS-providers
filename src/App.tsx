@@ -17,7 +17,7 @@ import SetupWizard, { OPEN_HELP_CHAT_EVENT, OPEN_SETUP_EVENT, openSetupWizard } 
 import type { StepGroup } from './setupSteps';
 import HelpChat from './HelpChat';
 import DemoPreview from './DemoPreview';
-import { coreReady, useConnectionStatus } from './connectionStatus';
+import { helpChatAvailable, useConnectionStatus } from './connectionStatus';
 import { hasSeenOnboarding, markOnboardingSeen } from './onboardingState';
 import { resolveVisibleResult } from './resultResolution';
 import { addCandidateFromReference, applyMissionDestinations, applyRankResults, applySelfAnalysis, applyXProfiles, destinationsFromMission, loadState, MAX_MISSION_DESTINATIONS, saveState, setFollowBackStatus, spendingCeilingUsd, syncBudget, updateCandidateDraft, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
@@ -590,8 +590,10 @@ function App() {
 
       {pending && <ResultSheet candidate={pending.candidate} action={pending.action} onResolve={resolvePending} />}
       {showOnboarding && <Onboarding onFinish={() => { markOnboardingSeen(); setShowOnboarding(false); }} onStartSetup={() => openSetupWizard('core')} />}
-      {!showOnboarding && showManual && <Manual onClose={() => setShowManual(false)} canAskAi={coreReady(connection) && connection.ai === 'ready'} />}
-      {!showOnboarding && wizardGroup && <SetupWizard key={wizardGroup} initialGroup={wizardGroup} onClose={() => setWizardGroup(null)} />}
+      {!showOnboarding && showManual && <Manual onClose={() => setShowManual(false)} canAskAi={helpChatAvailable(connection)} />}
+      {/* Only the top dialog is mounted, so Escape in the help chat cannot also close the
+          wizard underneath; the wizard remounts on its last step afterwards. */}
+      {!showOnboarding && wizardGroup && helpQuestion == null && <SetupWizard initialGroup={wizardGroup} onGroupChange={setWizardGroup} onClose={() => setWizardGroup(null)} onGoToday={() => setTab('today')} />}
       {helpQuestion != null && <HelpChat initialQuestion={helpQuestion} context={connectionContext(connection)} onClose={() => setHelpQuestion(null)} />}
     </div>
   );

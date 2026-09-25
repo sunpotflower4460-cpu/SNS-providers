@@ -12,6 +12,8 @@ export interface ConnectionStatus {
   reachable: StepState;
   key: StepState;
   ai: StepState;
+  /** A free provider (Sakura / free Groq) that the in-app help chat can use. */
+  helpAi: StepState;
   discovery: StepState;
   x: StepState;
   instagram: StepState;
@@ -24,6 +26,7 @@ const initial = (): ConnectionStatus => ({
   reachable: apiConfigured ? 'unknown' : 'todo',
   key: getSyncToken().trim() ? 'ready' : 'todo',
   ai: 'unknown',
+  helpAi: 'unknown',
   discovery: 'unknown',
   x: 'unknown',
   instagram: 'unknown',
@@ -68,6 +71,7 @@ export function useConnectionStatus() {
         const x = record(result.x);
         const instagram = record(result.instagram);
         next.ai = ai.sakura || ai.groq || ai.deepseek ? 'ready' : 'todo';
+        next.helpAi = ai.sakura || ai.groqFree ? 'ready' : 'todo';
         next.discovery = ai.discovery ? 'ready' : 'todo';
         next.x = x.tokenValid ? 'ready' : x.configured ? 'partial' : 'todo';
         next.instagram = instagram.tokenValid ? 'ready' : instagram.configured ? 'partial' : 'todo';
@@ -94,6 +98,10 @@ export function useConnectionStatus() {
   }, [refresh]);
 
   return { status, refresh };
+}
+
+export function helpChatAvailable(status: ConnectionStatus) {
+  return coreReady(status) && status.helpAi === 'ready';
 }
 
 export function coreReady(status: ConnectionStatus) {

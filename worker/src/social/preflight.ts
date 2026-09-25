@@ -209,7 +209,7 @@ export async function buildProductionPreflight(env: PreflightEnv, userId: string
     ai: {
       sakura: aiSakura,
       groq: aiGroq,
-      groqFree: aiGroq && env.GROQ_BILLING_MODE === 'free',
+      groqFree: aiGroq && env.GROQ_BILLING_MODE !== 'paid',
       deepseek: aiDeepseek,
       discovery: discoveryReady,
     },

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { coreReady, type ConnectionStatus, useConnectionStatus } from './connectionStatus';
+import { type ConnectionStatus, helpChatAvailable, useConnectionStatus } from './connectionStatus';
 import { friendlyReason } from './friendlyReason';
 import { GROUP_LABEL, helpPrompt, type StepGroup, WIZARD_STEPS, type WizardStep } from './setupSteps';
 import { useModalA11y } from './useModalA11y';
@@ -9,6 +9,10 @@ export const OPEN_SETUP_EVENT = 'sns-providers:open-setup';
 export const OPEN_HELP_CHAT_EVENT = 'sns-providers:open-help-chat';
 const DONE_KEY = 'sns-providers:wizard-done';
 const GUIDE_URL = 'https://github.com/sunpotflower4460-cpu/SNS-providers/blob/main/docs/SETUP_GUIDE_JA.md';
+
+// Where the user was, so closing the wizard to ask the help chat (or by accident) resumes
+// on the same step instead of the first unfinished one.
+let lastPosition: { group: StepGroup; id: string } | null = null;
 
 export function openSetupWizard(group?: StepGroup) {
   window.dispatchEvent(new CustomEvent(OPEN_SETUP_EVENT, { detail: group }));
@@ -39,12 +43,16 @@ export function nextOpenStep(group: StepGroup, status: ConnectionStatus, done = 
   return WIZARD_STEPS.filter((step) => step.group === group).find((step) => !stepComplete(step, status, done)) || null;
 }
 
-export default function SetupWizard({ initialGroup, onClose }: { initialGroup?: StepGroup; onClose: () => void }) {
+export default function SetupWizard({ initialGroup, onClose, onGoToday, onGroupChange }: { initialGroup?: StepGroup; onClose: () => void; onGoToday: () => void; onGroupChange?: (group: StepGroup) => void }) {
   const { status, refresh } = useConnectionStatus();
   const [done, setDone] = useState(loadDone);
   const [group, setGroup] = useState<StepGroup>(() => initialGroup || (nextOpenStep('core', status) ? 'core' : 'x'));
   const steps = useMemo(() => WIZARD_STEPS.filter((step) => step.group === group), [group]);
   const [index, setIndex] = useState(() => {
+    if (lastPosition?.group === group) {
+      const resumed = steps.findIndex((item) => item.id === lastPosition?.id);
+      if (resumed >= 0) return resumed;
+    }
     const first = steps.findIndex((step) => !stepComplete(step, status, loadDone()));
     return first < 0 ? steps.length : first;
   });
@@ -53,6 +61,10 @@ export default function SetupWizard({ initialGroup, onClose }: { initialGroup?: 
   const containerRef = useModalA11y<HTMLElement>(onClose);
   const problemRef = useRef<HTMLParagraphElement>(null);
   const step = steps[index];
+
+  useEffect(() => {
+    lastPosition = step ? { group, id: step.id } : null;
+  }, [group, step]);
 
   useEffect(() => {
     if (problem) problemRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -74,6 +86,7 @@ export default function SetupWizard({ initialGroup, onClose }: { initialGroup?: 
     const nextSteps = WIZARD_STEPS.filter((item) => item.group === nextGroup);
     const first = nextSteps.findIndex((item) => !stepComplete(item, status, done));
     setGroup(nextGroup);
+    onGroupChange?.(nextGroup);
     setProblem('');
     setIndex(first < 0 ? nextSteps.length : first);
   }
@@ -114,7 +127,7 @@ export default function SetupWizard({ initialGroup, onClose }: { initialGroup?: 
         <ol className="wizard-todo">{step.todo.map((line) => <li key={line}>{line}</li>)}</ol>
         {step.extra && <div className="wizard-extra">{step.extra()}</div>}
         {problem && <p ref={problemRef} className="wizard-problem" role="alert">{problem}</p>}
-      </div> : <GroupDone group={group} status={status} onGroup={switchGroup} onClose={onClose} />}
+      </div> : <GroupDone group={group} status={status} done={done} onGroup={switchGroup} onJump={(id) => go(steps.findIndex((item) => item.id === id))} onGoToday={() => { onClose(); onGoToday(); }} />}
 
       {step && <div className="wizard-nav">
         <button type="button" className="secondary-button" disabled={index === 0} onClick={() => go(index - 1)}>戻る</button>
@@ -122,19 +135,39 @@ export default function SetupWizard({ initialGroup, onClose }: { initialGroup?: 
       </div>}
       {step && problem && <button type="button" className="text-button wizard-skip" onClick={() => go(index + 1)}>確認せずに次へ進む</button>}
 
-      {step && <HelpFooter step={step} canUseAppAi={coreReady(status) && status.ai === 'ready'} />}
+      {step && <HelpFooter step={step} canUseAppAi={helpChatAvailable(status)} />}
     </section>
   </div>;
 }
 
-function GroupDone({ group, status, onGroup, onClose }: { group: StepGroup; status: ConnectionStatus; onGroup: (group: StepGroup) => void; onClose: () => void }) {
-  const others = (['core', 'x', 'instagram'] as StepGroup[]).filter((item) => item !== group && nextOpenStep(item, status));
+function GroupDone({ group, status, done, onGroup, onJump, onGoToday }: {
+  group: StepGroup;
+  status: ConnectionStatus;
+  done: Set<string>;
+  onGroup: (group: StepGroup) => void;
+  onJump: (id: string) => void;
+  onGoToday: () => void;
+}) {
+  // Re-check instead of trusting the step counter: 「確認せずに次へ」 may have skipped a
+  // step that the server still reports as unfinished.
+  const pending = WIZARD_STEPS.filter((item) => item.group === group && !stepComplete(item, status, done));
+  const others = (['core', 'x', 'instagram'] as StepGroup[]).filter((item) => item !== group && nextOpenStep(item, status, done));
+  if (pending.length) {
+    return <div className="wizard-body wizard-done">
+      <p className="wizard-kicker">あと少しです</p>
+      <h2 id="wizard-title">まだ確認できていない手順があります</h2>
+      <p className="wizard-why">反映に1〜2分かかることがあります。少し待ってから、もう一度確認してください。</p>
+      <div className="wizard-choices">
+        {pending.map((item) => <button type="button" key={item.id} className="secondary-button full" onClick={() => onJump(item.id)}>「{item.title}」を確認する</button>)}
+      </div>
+    </div>;
+  }
   return <div className="wizard-body wizard-done">
     <p className="wizard-kicker">おつかれさまでした</p>
     <h2 id="wizard-title">「{GROUP_LABEL[group]}」は完了です</h2>
     <p className="wizard-why">{group === 'core' ? 'これでAIが相手を探し、いいね・返信の文案を用意します。「今日」を開いてみましょう。' : '「今日」に取り込んだ交流が並ぶようになります。'}</p>
     <div className="wizard-choices">
-      <button type="button" className="primary-button full" onClick={onClose}>「今日」を見る</button>
+      <button type="button" className="primary-button full" onClick={onGoToday}>「今日」を見る</button>
       {others.map((item) => <button type="button" key={item} className="secondary-button full" onClick={() => onGroup(item)}>{GROUP_LABEL[item]}（必要なら）</button>)}
     </div>
   </div>;

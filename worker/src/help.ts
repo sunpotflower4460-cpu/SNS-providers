@@ -58,19 +58,40 @@ export function parseHelpRequest(body: unknown) {
   return { messages, context };
 }
 
-async function usedToday(env: HelpEnv, userId: string) {
+function startOfUtcDay() {
   const start = new Date();
   start.setUTCHours(0, 0, 0, 0);
-  const row = await env.DB.prepare(
-    "SELECT COUNT(*) AS used FROM budget_ledger WHERE user_id = ? AND operation = 'help_chat' AND julianday(occurred_at) >= julianday(?)"
-  ).bind(userId, start.toISOString()).first<{ used: number }>();
-  return Number(row?.used || 0);
+  return start.toISOString();
 }
 
-async function recordHelpUsage(env: HelpEnv, userId: string, provider: string) {
+/**
+ * Reserve one help_chat slot before calling a provider: insert first, then count today's
+ * rows up to and including ours. Concurrent requests each see the others' reservations,
+ * so a burst cannot pass the cap (it can only refuse conservatively).
+ */
+async function reserveHelpSlot(env: HelpEnv, userId: string, limit: number) {
+  const id = crypto.randomUUID();
+  const occurredAt = new Date().toISOString();
   await env.DB.prepare(
     'INSERT INTO budget_ledger (id, user_id, provider, operation, cost_usd, input_units, output_units, cache_hit, occurred_at) VALUES (?, ?, ?, ?, 0, 0, 0, 0, ?)'
-  ).bind(crypto.randomUUID(), userId, provider, 'help_chat', new Date().toISOString()).run();
+  ).bind(id, userId, 'help', 'help_chat', occurredAt).run();
+  const row = await env.DB.prepare(
+    "SELECT COUNT(*) AS used FROM budget_ledger WHERE user_id = ? AND operation = 'help_chat' AND julianday(occurred_at) >= julianday(?)"
+  ).bind(userId, startOfUtcDay()).first<{ used: number }>();
+  const used = Number(row?.used || 0);
+  if (used > limit) {
+    await releaseHelpSlot(env, id);
+    return { ok: false as const, used: used - 1 };
+  }
+  return { ok: true as const, id, used };
+}
+
+async function releaseHelpSlot(env: HelpEnv, id: string) {
+  await env.DB.prepare('DELETE FROM budget_ledger WHERE id = ?').bind(id).run().catch(() => undefined);
+}
+
+async function labelHelpSlot(env: HelpEnv, id: string, provider: string) {
+  await env.DB.prepare('UPDATE budget_ledger SET provider = ? WHERE id = ?').bind(provider, id).run().catch(() => undefined);
 }
 
 type Provider = { name: string; baseUrl: string; apiKey: string; model: string };
@@ -105,14 +126,16 @@ export async function answerHelp(
 ) {
   const request = parseHelpRequest(body);
   const limit = Math.max(1, Number(env.HELP_CHAT_DAILY_LIMIT) || DEFAULT_DAILY_LIMIT);
-  let used = 0;
+  const providers = freeHelpProviders(env);
+  if (!providers.length) return { provider: 'fallback', answer: FALLBACK_ANSWER, remaining: null };
+  let slot: Awaited<ReturnType<typeof reserveHelpSlot>>;
   try {
-    used = await usedToday(env, userId);
+    slot = await reserveHelpSlot(env, userId, limit);
   } catch {
     // Without the ledger we cannot enforce the daily cap, so do not call a provider.
     return { provider: 'fallback', answer: FALLBACK_ANSWER, remaining: 0 };
   }
-  if (used >= limit) {
+  if (!slot.ok) {
     return { provider: 'limit', answer: `今日のアプリ内AIの回数（${limit}回）を使い切りました。明日また使えます。急ぎの場合は「ChatGPTに聞く」をどうぞ。`, remaining: 0 };
   }
 
@@ -121,7 +144,7 @@ export async function answerHelp(
     ...(request.context ? [{ role: 'system', content: `いまの状況（参考情報）:\n${request.context}` }] : []),
     ...request.messages,
   ];
-  for (const provider of freeHelpProviders(env)) {
+  for (const provider of providers) {
     try {
       const response = await fetcher(`${provider.baseUrl.replace(/\/$/, '')}/chat/completions`, {
         method: 'POST',
@@ -132,11 +155,13 @@ export async function answerHelp(
       const data = await response.json().catch(() => null) as { choices?: Array<{ message?: { content?: string } }> } | null;
       const answer = data?.choices?.[0]?.message?.content?.trim();
       if (!answer) continue;
-      await recordHelpUsage(env, userId, provider.name).catch(() => undefined);
-      return { provider: provider.name, answer: answer.slice(0, 4000), remaining: Math.max(0, limit - used - 1) };
+      await labelHelpSlot(env, slot.id, provider.name);
+      return { provider: provider.name, answer: answer.slice(0, 4000), remaining: Math.max(0, limit - slot.used) };
     } catch {
       // Try the next free provider.
     }
   }
-  return { provider: 'fallback', answer: FALLBACK_ANSWER, remaining: Math.max(0, limit - used) };
+  // No provider answered: give the reserved slot back.
+  await releaseHelpSlot(env, slot.id);
+  return { provider: 'fallback', answer: FALLBACK_ANSWER, remaining: Math.max(0, limit - slot.used + 1) };
 }

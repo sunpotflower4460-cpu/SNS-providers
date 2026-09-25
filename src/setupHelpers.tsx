@@ -106,19 +106,42 @@ export function PersonalKeyMaker() {
 }
 
 /** Everything the X Developer Console and Cloudflare ask for, prefilled for this app. */
+// Kept for the whole app session so the value generated on the X app step is still shown
+// on the later "register on the server" step (and when going back).
+let sessionEncryptionKey = '';
+
+/** OAUTH_TOKEN_ENCRYPTION_KEY_B64 generator whose value survives wizard step changes. */
+export function EncryptionKeyField() {
+  const [encryptionKey, setEncryptionKey] = useState(sessionEncryptionKey);
+  function generate() {
+    sessionEncryptionKey = base64(randomBytes(32));
+    setEncryptionKey(sessionEncryptionKey);
+  }
+  return encryptionKey
+    ? <CopyField label="OAUTH_TOKEN_ENCRYPTION_KEY_B64" value={encryptionKey} secret note="Xのログイン情報を暗号化する鍵です。一度登録したら変えないでください（変えるとXの再接続が必要）。アプリを閉じると表示が消えるので、登録を済ませてから閉じてください。" />
+    : <button type="button" className="secondary-button" onClick={generate}>OAUTH_TOKEN_ENCRYPTION_KEY_B64 を自動で作る</button>;
+}
+
+/** Everything the X Developer Console and Cloudflare ask for, prefilled for this app. */
 export function XSetupValues() {
-  const [encryptionKey, setEncryptionKey] = useState('');
   return <div className="setup-helper">
     <p className="setup-helper-title">X Developer Console に入力する値</p>
     <CopyField label="コールバックURI / リダイレクトURL" value={xCallbackUrl()} note={apiConfigured ? '1文字でも違うとログインに失敗します。コピーして貼ってください。' : 'サーバーをつなぐと、ここに実際のURLが表示されます。'} />
     <CopyField label="ウェブサイトURL" value={appUrl()} />
-    <p className="setup-helper-title">Cloudflare（social-mission-api）に登録する値</p>
+    <p className="setup-helper-note">X_CLIENT_ID と X_CLIENT_SECRET は、X Developer Console のアプリの「キーとトークン」画面にあります（Client Secret は作成時に一度しか表示されません）。</p>
+  </div>;
+}
+
+/** The five X values to register on the Worker, with the ones the app can fill in. */
+export function XServerValues() {
+  return <div className="setup-helper">
+    <ul className="wizard-names">
+      <li><code>X_CLIENT_ID</code> … Xの「キーとトークン」の Client ID</li>
+      <li><code>X_CLIENT_SECRET</code> … 同じ画面の Client Secret</li>
+    </ul>
     <CopyField label="X_OAUTH_CALLBACK_URL" value={xCallbackUrl()} />
     <CopyField label="PWA_RETURN_URL" value={appUrl()} note="ログイン後にこのアプリへ戻ってくる場所です。" />
-    {encryptionKey
-      ? <CopyField label="OAUTH_TOKEN_ENCRYPTION_KEY_B64" value={encryptionKey} secret note="Xのログイン情報を暗号化する鍵です。一度登録したら変えないでください（変えるとXの再接続が必要）。" />
-      : <button type="button" className="secondary-button" onClick={() => setEncryptionKey(base64(randomBytes(32)))}>OAUTH_TOKEN_ENCRYPTION_KEY_B64 を自動で作る</button>}
-    <p className="setup-helper-note">X_CLIENT_ID と X_CLIENT_SECRET は、X Developer Console のアプリの「キーとトークン」画面にあります（Client Secret は作成時に一度しか表示されません）。</p>
+    <EncryptionKeyField />
   </div>;
 }
 

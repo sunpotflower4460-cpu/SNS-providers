@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react';
 import type { ConnectionStatus } from './connectionStatus';
-import { appUrl, CopyField, PersonalKeyMaker, serverUrl, XPriceTable, XSetupValues } from './setupHelpers';
+import { useState } from 'react';
+import { friendlyReason } from './friendlyReason';
+import { appUrl, CopyField, PersonalKeyMaker, serverUrl, XPriceTable, XServerValues, XSetupValues } from './setupHelpers';
 import { startXOAuth } from './xAccount';
 
 const REPO = 'https://github.com/sunpotflower4460-cpu/SNS-providers';
@@ -173,12 +175,10 @@ export const WIZARD_STEPS: WizardStep[] = [
     why: 'Xの鍵をサーバーに預けます（この端末には置きません）。',
     open: { label: 'Cloudflareを開く', href: 'https://dash.cloudflare.com/?to=/:account/workers/services/view/social-mission-api/production/settings' },
     todo: [
-      'シークレットとして下の5つを追加（値は前の画面のメモ）',
+      'シークレットとして下の5つを追加（Client ID / Secret は前の画面のメモ）',
       '「デプロイ」を押す',
     ],
-    extra: () => <ul className="wizard-names">
-      {['X_CLIENT_ID', 'X_CLIENT_SECRET', 'X_OAUTH_CALLBACK_URL', 'PWA_RETURN_URL', 'OAUTH_TOKEN_ENCRYPTION_KEY_B64'].map((name) => <li key={name}><code>{name}</code></li>)}
-    </ul>,
+    extra: () => <XServerValues />,
     done: (status) => status.x === 'ready' || status.x === 'partial',
     minutes: 5,
   },
@@ -188,7 +188,7 @@ export const WIZARD_STEPS: WizardStep[] = [
     title: 'X：ログインする',
     why: 'ここを押すとXの確認画面が開きます。「許可」を押せば接続完了です。',
     todo: ['下の「Xでログイン」を押す', 'Xの画面で「アプリにアクセスを許可」'],
-    extra: () => <button type="button" className="primary-button full" onClick={() => void startXOAuth('read')}>Xでログイン（読み取りのみ）</button>,
+    extra: () => <XLoginButton />,
     done: (status) => status.x === 'ready',
     verify: true,
     minutes: 1,
@@ -252,4 +252,23 @@ export function helpPrompt(step: WizardStep) {
     step.open ? `開くページ: ${step.open.href}` : '',
     'どこを押せばいいか分からないので、パソコンやスマホに詳しくない人向けに、画面の見た目も含めてやさしく1つずつ教えてください。',
   ].filter(Boolean).join('\n');
+}
+
+function XLoginButton() {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function login() {
+    setBusy(true);
+    setError('');
+    try {
+      await startXOAuth('read');
+    } catch (reason) {
+      setError(friendlyReason(reason instanceof Error ? reason.message : 'Xのログインを開始できませんでした'));
+      setBusy(false);
+    }
+  }
+  return <>
+    <button type="button" className="primary-button full" disabled={busy} onClick={() => void login()}>{busy ? 'Xを開いています…' : 'Xでログイン（読み取りのみ）'}</button>
+    {error && <p className="wizard-problem" role="alert">{error}</p>}
+  </>;
 }

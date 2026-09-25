@@ -12,16 +12,21 @@ for (const name of ['help', 'fetchWithTimeout']) {
 }
 const { answerHelp, freeHelpProviders, parseHelpRequest } = await import(pathToFileURL(`${outDir}/help.js`).href);
 
-function fakeDb(usedToday = 0) {
-  const inserts = [];
+function fakeDb(usedBefore = 0) {
+  const rows = [];
   return {
-    inserts,
+    rows,
     prepare(sql) {
       return {
         bind(...args) {
           return {
-            first: async () => (sql.includes('COUNT(*)') ? { used: usedToday } : null),
-            run: async () => { inserts.push({ sql, args }); return { success: true }; },
+            first: async () => (sql.includes('COUNT(*)') ? { used: usedBefore + rows.length } : null),
+            run: async () => {
+              if (sql.startsWith('INSERT')) rows.push({ id: args[0], provider: args[2], operation: args[3] });
+              if (sql.startsWith('DELETE')) rows.splice(rows.findIndex((row) => row.id === args[0]), 1);
+              if (sql.startsWith('UPDATE')) { const row = rows.find((item) => item.id === args[1]); if (row) row.provider = args[0]; }
+              return { success: true };
+            },
           };
         },
       };
@@ -42,7 +47,14 @@ assert(freeHelpProviders({ SAKURA_AI_API_KEY: 's', GROQ_API_KEY: 'g' })[0].name 
 const db = fakeDb(0);
 const ok = await answerHelp({ DB: db, GROQ_API_KEY: 'g' }, 'local-user', body, okFetch('手順はこうです'));
 assert(ok.provider === 'groq' && ok.answer === '手順はこうです', 'Free provider answer should be returned.');
-assert(db.inserts.length === 1 && db.inserts[0].args.includes('help_chat'), 'Help usage must be recorded as help_chat.');
+assert(db.rows.length === 1 && db.rows[0].operation === 'help_chat' && db.rows[0].provider === 'groq', 'Help usage must be recorded as one help_chat row labelled with the provider.');
+
+// Concurrent burst cannot pass the cap: reservations are counted before provider calls.
+const burstDb = fakeDb(28);
+let providerCalls = 0;
+const slowFetch = async () => { providerCalls += 1; await new Promise((resolve) => setTimeout(resolve, 5)); return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), { status: 200 }); };
+const burst = await Promise.all(Array.from({ length: 5 }, () => answerHelp({ DB: burstDb, GROQ_API_KEY: 'g' }, 'local-user', body, slowFetch)));
+assert(providerCalls <= 2 && burst.filter((result) => result.provider === 'limit').length >= 3, `A concurrent burst must not exceed the daily cap (provider calls: ${providerCalls}).`);
 
 // Daily cap blocks provider calls.
 let called = false;
@@ -50,8 +62,10 @@ const capped = await answerHelp({ DB: fakeDb(30), GROQ_API_KEY: 'g' }, 'local-us
 assert(capped.provider === 'limit' && !called, 'Daily cap must stop provider calls.');
 
 // Provider failure falls back to canned guidance without throwing.
-const failed = await answerHelp({ DB: fakeDb(0), GROQ_API_KEY: 'g' }, 'local-user', body, async () => new Response('nope', { status: 500 }));
+const failDb = fakeDb(0);
+const failed = await answerHelp({ DB: failDb, GROQ_API_KEY: 'g' }, 'local-user', body, async () => new Response('nope', { status: 500 }));
 assert(failed.provider === 'fallback' && failed.answer.includes('ChatGPT'), 'Provider failure must fall back to external-AI guidance.');
+assert(failDb.rows.length === 0, 'A failed provider call must release its reserved slot.');
 
 // Ledger outage fails closed (no provider call).
 called = false;
@@ -68,4 +82,4 @@ assert(rejected === 5, 'Malformed help requests must be rejected, including syst
 const trimmed = parseHelpRequest({ messages: Array.from({ length: 40 }, () => ({ role: 'user', content: 'a'.repeat(5000) })) });
 assert(trimmed.messages.length === 12 && trimmed.messages[0].content.length === 1500, 'Help history and message size must be bounded.');
 
-console.log('Help chat runtime OK: free-only providers, Sakura first, daily cap, ledger fail-closed, fallback, bounded input.');
+console.log('Help chat runtime OK: free-only providers, Sakura first, atomic daily cap under bursts, slot release on failure, ledger fail-closed, fallback, bounded input.');
