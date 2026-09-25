@@ -217,7 +217,7 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
     </div>}
     {!status.connected && apiConfigured && !loading && !status.configured && <div className="x-scope-note x-upgrade-note">
       <strong>先にサーバー側の準備が必要です</strong>
-      <span>X Developer Portal でアプリを作り、Client ID などをサーバーに登録すると、下のボタンが押せるようになります。設定 →「連携の準備」→「Xアカウントと連携」の手順を見てください。</span>
+      <span>X Developer Portal でアプリを作り、Client ID などをサーバーに登録すると、下のボタンが押せるようになります。設定 →「Xとつなぐ」の案内を見てください。</span>
     </div>}
 
     {status.connected && <div className="x-capability-list" aria-label="Xの接続権限">

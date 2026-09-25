@@ -5,6 +5,9 @@ import { SOCIAL_CONTENT_SAFETY } from './social/promptSafety';
 
 interface Env {
   DB: D1Database;
+  SAKURA_AI_API_KEY?: string;
+  SAKURA_AI_BASE_URL?: string;
+  SAKURA_AI_MODEL?: string;
   GROQ_API_KEY?: string;
   GROQ_MODEL?: string;
   GROQ_BILLING_MODE?: 'free' | 'paid';
@@ -191,6 +194,17 @@ export default {
         const userId = body.userId || 'local-user';
         const budget = await budgetForRequest(env, userId, body.monthlyLimitUsd);
         const paidAllowed = body.paidAllowed !== false;
+
+        // さくらのAI Engine free plan: fixed monthly free requests, never auto-billed.
+        if (env.SAKURA_AI_API_KEY) {
+          try {
+            const result = await rankWithProvider('sakura', body, env);
+            await recordFreeUsage(env, userId, 'sakura', 'rank_free', result.usage);
+            return json({ provider: 'sakura', paid: false, costUsd: 0, results: result.results }, 200, cors);
+          } catch {
+            // Continue to Groq / paid providers / local scoring.
+          }
+        }
 
         if (env.GROQ_API_KEY) {
           const paid = env.GROQ_BILLING_MODE === 'paid';
@@ -544,11 +558,15 @@ function buildProviderMessages(body: RankRequest) {
   return { system: SYSTEM_PROMPT, user: JSON.stringify(prompt), hasSelfProfile };
 }
 
-async function rankWithProvider(provider: 'groq' | 'deepseek', body: RankRequest, env: Env) {
+async function rankWithProvider(provider: 'sakura' | 'groq' | 'deepseek', body: RankRequest, env: Env) {
   const isGroq = provider === 'groq';
-  const baseUrl = isGroq ? 'https://api.groq.com/openai/v1' : (env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com');
-  const apiKey = isGroq ? env.GROQ_API_KEY! : env.DEEPSEEK_API_KEY!;
-  const model = isGroq ? (env.GROQ_MODEL || 'llama-3.3-70b-versatile') : (env.DEEPSEEK_MODEL || 'deepseek-chat');
+  const baseUrl = provider === 'sakura'
+    ? (env.SAKURA_AI_BASE_URL || 'https://api.ai.sakura.ad.jp/v1')
+    : isGroq ? 'https://api.groq.com/openai/v1' : (env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com');
+  const apiKey = provider === 'sakura' ? env.SAKURA_AI_API_KEY! : isGroq ? env.GROQ_API_KEY! : env.DEEPSEEK_API_KEY!;
+  const model = provider === 'sakura'
+    ? (env.SAKURA_AI_MODEL || 'gpt-oss-120b')
+    : isGroq ? (env.GROQ_MODEL || 'llama-3.3-70b-versatile') : (env.DEEPSEEK_MODEL || 'deepseek-chat');
   const messages = buildProviderMessages(body);
 
   const response = await fetchWithTimeout(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {

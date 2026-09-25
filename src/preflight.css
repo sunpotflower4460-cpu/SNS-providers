@@ -8,26 +8,26 @@
   gap: 4px;
   padding: 10px 12px;
   border-radius: 12px;
-  border: 1px solid rgba(255,255,255,.08);
-  background: rgba(255,255,255,.03);
+  border: 1px solid rgb(var(--tint-rgb) / .08);
+  background: rgb(var(--tint-rgb) / .03);
 }
 .preflight-item strong {
   font-size: 12px;
 }
 .preflight-item span {
-  color: #92a2b5;
+  color: var(--muted);
   font-size: 12px;
   line-height: 1.55;
 }
 .preflight-item.ok {
-  border-color: rgba(121,231,197,.22);
+  border-color: rgb(var(--accent-rgb) / .22);
 }
-.preflight-item.ok strong { color: #79e7c5; }
+.preflight-item.ok strong { color: var(--accent); }
 .preflight-item.warn {
-  border-color: rgba(255,194,124,.28);
+  border-color: rgb(var(--warn-rgb) / .28);
 }
-.preflight-item.warn strong { color: #ffc27c; }
+.preflight-item.warn strong { color: var(--warn-text); }
 .preflight-item.block {
-  border-color: rgba(255,138,138,.32);
+  border-color: rgb(var(--danger-rgb) / .32);
 }
-.preflight-item.block strong { color: #ff9a9a; }
+.preflight-item.block strong { color: var(--danger-text); }

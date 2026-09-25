@@ -1,0 +1,105 @@
+/*
+ * Color tokens. Every component stylesheet refers to these instead of literal colors,
+ * so light / dark switch in one place. Pairs used for text are kept at WCAG AA (4.5:1)
+ * or better; scripts/verify-theme-contrast.mjs enforces that.
+ *
+ * Theme choice: follows the phone setting unless <html data-theme="light|dark"> is set
+ * from 設定 → 表示.
+ */
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0b1320;
+  --bg-rgb: 11 19 32;
+  --surface: #141e2e;
+  --surface-2: #1b2739;
+  --panel: var(--surface);
+  --panel-2: var(--surface-2);
+  --panel-3: #223047;
+  --text: #f3f6fb;
+  --text-2: #d5deea;
+  --text-soft: var(--text-2);
+  --muted: #b0bccd;
+  --tint-rgb: 255 255 255;
+  --line: rgb(255 255 255 / .12);
+  --line-strong: rgb(255 255 255 / .2);
+  --shadow-rgb: 0 0 0;
+  --scrim-rgb: 2 6 14;
+  --accent: #6fe0bd;
+  --accent-rgb: 111 224 189;
+  --accent-strong: #a3f0d8;
+  --on-accent: #052018;
+  --info: #8aa8ff;
+  --info-rgb: 138 168 255;
+  --info-text: #b3c5ff;
+  --accent-2: var(--info-text);
+  --warn: #ffc46e;
+  --warn-rgb: 255 196 110;
+  --warn-text: #ffd294;
+  --warning: var(--warn-text);
+  --danger: #ff8f9f;
+  --danger-rgb: 255 143 159;
+  --danger-text: #ffadb8;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f3f5f9;
+  --bg-rgb: 243 245 249;
+  --surface: #ffffff;
+  --surface-2: #eef1f6;
+  --panel-3: #e5eaf1;
+  --text: #0f172a;
+  --text-2: #2a374b;
+  --muted: #4c5a6e;
+  --tint-rgb: 15 23 42;
+  --line: rgb(15 23 42 / .13);
+  --line-strong: rgb(15 23 42 / .22);
+  --shadow-rgb: 15 23 42;
+  --scrim-rgb: 15 23 42;
+  --accent: #0a7a5d;
+  --accent-rgb: 10 122 93;
+  --accent-strong: #065c46;
+  --on-accent: #ffffff;
+  --info: #3553c7;
+  --info-rgb: 53 83 199;
+  --info-text: #2b46ad;
+  --warn: #b45309;
+  --warn-rgb: 180 83 9;
+  --warn-text: #8a4105;
+  --danger: #c0264a;
+  --danger-rgb: 192 38 74;
+  --danger-text: #a31f3e;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --bg: #f3f5f9;
+    --bg-rgb: 243 245 249;
+    --surface: #ffffff;
+    --surface-2: #eef1f6;
+    --panel-3: #e5eaf1;
+    --text: #0f172a;
+    --text-2: #2a374b;
+    --muted: #4c5a6e;
+    --tint-rgb: 15 23 42;
+    --line: rgb(15 23 42 / .13);
+    --line-strong: rgb(15 23 42 / .22);
+    --shadow-rgb: 15 23 42;
+    --scrim-rgb: 15 23 42;
+    --accent: #0a7a5d;
+    --accent-rgb: 10 122 93;
+    --accent-strong: #065c46;
+    --on-accent: #ffffff;
+    --info: #3553c7;
+    --info-rgb: 53 83 199;
+    --info-text: #2b46ad;
+    --warn: #b45309;
+    --warn-rgb: 180 83 9;
+    --warn-text: #8a4105;
+    --danger: #c0264a;
+    --danger-rgb: 192 38 74;
+    --danger-text: #a31f3e;
+  }
+}
