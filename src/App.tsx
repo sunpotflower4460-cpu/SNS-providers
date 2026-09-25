@@ -10,6 +10,8 @@ import { mergeDiscoveredProfiles } from './discoveryStore';
 import Manual from './Manual';
 import MissionInbox from './MissionInbox';
 import Onboarding from './Onboarding';
+import QuickSearch from './QuickSearch';
+import SetupGuide, { SetupBanner } from './SetupGuide';
 import { hasSeenOnboarding, markOnboardingSeen } from './onboardingState';
 import { resolveVisibleResult } from './resultResolution';
 import { addCandidateFromReference, applyMissionDestinations, applyRankResults, applySelfAnalysis, applyXProfiles, destinationsFromMission, loadState, MAX_MISSION_DESTINATIONS, saveState, setFollowBackStatus, spendingCeilingUsd, syncBudget, updateCandidateDraft, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
@@ -85,6 +87,20 @@ function App() {
   budgetLimitRef.current = spendingCeilingUsd(state.budget);
   const localDay = useLocalDayKey();
   const statusNote = persistenceError || apiNote;
+  // The header status line is tiny and truncated on phones. Surface every result of a
+  // user-visible operation (AI評価, 探索, 同期…) as a readable toast as well.
+  const [toast, setToast] = useState('');
+  const firstNoteRef = useRef(true);
+  useEffect(() => {
+    if (firstNoteRef.current) {
+      firstNoteRef.current = false;
+      return;
+    }
+    if (!apiNote) return;
+    setToast(apiNote);
+    const timer = setTimeout(() => setToast(''), 7_000);
+    return () => clearTimeout(timer);
+  }, [apiNote]);
 
   useEffect(() => {
     const saved = saveState(state);
@@ -388,7 +404,7 @@ function App() {
 
   async function rerankCandidates() {
     if (!apiConfigured) {
-      setApiNote('Worker URLを設定するとAI再評価が使えます');
+      setApiNote('AI再評価はサーバー準備後に使えます。設定 →「連携の準備」を上から進めてください');
       return;
     }
     if (discovering || ranking || enrichingX) {
@@ -415,7 +431,7 @@ function App() {
 
   async function discoverCandidates() {
     if (!apiConfigured) {
-      setApiNote('Worker URLを設定すると無料候補探索が使えます');
+      setApiNote('自動の候補探しはサーバー準備後に使えます。設定 →「連携の準備」を上から進めてください');
       return;
     }
     if (discovering || ranking || enrichingX) {
@@ -446,7 +462,7 @@ function App() {
 
   async function enrichXCandidates() {
     if (!apiConfigured) {
-      setApiNote('Worker URLを設定するとX公式プロフィール補完が使えます');
+      setApiNote('X公式情報の更新はサーバー準備後に使えます。設定 →「連携の準備」を上から進めてください');
       return;
     }
     if (discovering || ranking || enrichingX) {
@@ -494,7 +510,7 @@ function App() {
       return;
     }
     if (!apiConfigured) {
-      setApiNote('Worker URLを設定すると自己分析が使えます');
+      setApiNote('AI分析はサーバー準備後に使えます。設定 →「連携の準備」を上から進めてください');
       return;
     }
     setAnalyzingSelf(true);
@@ -528,9 +544,9 @@ function App() {
 
       <main className="page">
         {tab === 'today' && <Today state={state} onChange={setState} doneToday={doneToday} onOpen={onOpen} onTab={setTab} capabilityEpoch={capabilityEpoch} />}
-        {tab === 'discover' && <Discover state={state} candidates={active} onOpen={onOpen} onChange={setState} onDiscover={discoverCandidates} onRerank={rerankCandidates} onEnrichX={enrichXCandidates} discovering={discovering} ranking={ranking} enrichingX={enrichingX} />}
+        {tab === 'discover' && <Discover onOpenSettings={() => setTab('settings')} state={state} candidates={active} onOpen={onOpen} onChange={setState} onDiscover={discoverCandidates} onRerank={rerankCandidates} onEnrichX={enrichXCandidates} discovering={discovering} ranking={ranking} enrichingX={enrichingX} />}
         {tab === 'relations' && <Relations state={state} onOpen={onOpen} onChange={setState} />}
-        {tab === 'me' && <Me state={state} onAnalyze={analyzeMe} analyzing={analyzingSelf} />}
+        {tab === 'me' && <Me onOpenSettings={() => setTab('settings')} state={state} onAnalyze={analyzeMe} analyzing={analyzingSelf} />}
         {tab === 'settings' && <Settings state={state} onChange={setState} onOpenManual={() => setShowManual(true)} />}
       </main>
 
@@ -541,6 +557,8 @@ function App() {
           </button>
         ))}
       </nav>
+
+      {toast && <div className="status-toast" role="status" aria-live="polite"><p>{toast}</p><button type="button" aria-label="閉じる" onClick={() => setToast('')}>×</button></div>}
 
       {pending && <ResultSheet candidate={pending.candidate} action={pending.action} onResolve={resolvePending} />}
       {showOnboarding && <Onboarding onFinish={() => { markOnboardingSeen(); setShowOnboarding(false); }} onOpenManual={() => setShowManual(true)} />}
@@ -615,7 +633,11 @@ function Today({ state, onChange, doneToday, onOpen, onTab, capabilityEpoch }: {
       </div>
     </section>
 
+    <SetupBanner context="today" onOpenSettings={() => onTab('settings')} />
+
     <MissionInbox state={state} onChange={onChange} onOpenCandidate={onOpen} onOpenMe={() => onTab('me')} onOpenDiscover={() => onTab('discover')} capabilityEpoch={capabilityEpoch} />
+
+    {!hasCandidates && <QuickSearch mission={state.mission} />}
 
     {hasCandidates && state.insights[0] && <section className="coach-card">
       <div className="coach-icon">✦</div>
@@ -625,7 +647,8 @@ function Today({ state, onChange, doneToday, onOpen, onTab, capabilityEpoch }: {
   </>;
 }
 
-function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, onEnrichX, discovering, ranking, enrichingX }: {
+function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, onEnrichX, discovering, ranking, enrichingX, onOpenSettings }: {
+  onOpenSettings: () => void;
   state: AppState;
   candidates: Candidate[];
   onOpen: (c: Candidate) => void;
@@ -653,6 +676,7 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
   }).length;
   const storedCount = state.candidates.filter((candidate) => !candidate.skipped && matchesFilter(candidate)).length;
   const candidateOperationBusy = discovering || ranking || enrichingX;
+  const storedTotal = state.candidates.filter((candidate) => !candidate.skipped).length;
 
   useEffect(() => setVisibleLimit(12), [filter]);
 
@@ -686,6 +710,7 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
 
   return <>
     <PageHeading eyebrow="探す" title="つながる相手を見つける" text="まずは下のボタンから。見つかった人は目的との相性順に並びます。" />
+    <SetupBanner context="discover" onOpenSettings={onOpenSettings} />
 
     <section className="discover-primary-card">
       <div className="discover-primary-copy">
@@ -700,7 +725,14 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
       </button>
     </section>
 
+    {storedTotal === 0 && <QuickSearch mission={state.mission} />}
+
     <div className="discover-tools">
+      {storedTotal > 0 && <details className="disclosure-card">
+        <summary><span><strong>今すぐ探す（キーワード検索）</strong><small>X・Instagramの公式検索で、いいね・返信する投稿を探す</small></span><b>⌕</b></summary>
+        <div className="disclosure-body"><QuickSearch mission={state.mission} compact /></div>
+      </details>}
+
       <details className="disclosure-card">
         <summary><span><strong>自分で候補を追加</strong><small>URLや @username が分かっているとき</small></span><b>＋</b></summary>
         <div className="disclosure-body">
@@ -822,7 +854,7 @@ function Relations({ state, onOpen, onChange }: { state: AppState; onOpen: (c: C
   </>;
 }
 
-function Me({ state, onAnalyze, analyzing }: { state: AppState; onAnalyze: (profile: string, posts: string) => void; analyzing: boolean }) {
+function Me({ state, onAnalyze, analyzing, onOpenSettings }: { state: AppState; onAnalyze: (profile: string, posts: string) => void; analyzing: boolean; onOpenSettings: () => void }) {
   const [profile, setProfile] = useState(state.selfProfile.profileText);
   const [posts, setPosts] = useState(state.selfProfile.recentPostsText);
   const score = state.selfProfile.score;
@@ -833,7 +865,8 @@ function Me({ state, onAnalyze, analyzing }: { state: AppState; onAnalyze: (prof
   }, [state.selfProfile.profileText, state.selfProfile.recentPostsText]);
 
   return <>
-    <PageHeading eyebrow="自分" title="自分の発信も整える" text="プロフィールと最近の投稿が、今の目的に合っているかを確認できます。" />
+    <PageHeading eyebrow="自分" title="自分の発信も整える" text="プロフィールと最近の投稿が、今の目的に合っているかをAIが確認します。" />
+    <SetupBanner context="me" onOpenSettings={onOpenSettings} />
     <section className="score-card"><div><span>Missionとの一致度</span><strong>{score == null ? '—' : score}</strong>{score != null && <small>/100</small>}</div><p>{state.selfProfile.summary || 'まだ分析していません。プロフィールか最近の投稿を入れると、今の状態と優先して直す場所を整理します。'}</p></section>
     <section className="form-card self-analysis-card">
       <div className="form-intro"><strong>まず現在の発信を入れる</strong><p>片方だけでも分析できます。X同期済みなら自動で入っている場合があります。</p></div>
@@ -957,6 +990,7 @@ function Settings({ state, onChange, onOpenManual }: { state: AppState; onChange
   return <>
     <PageHeading eyebrow="設定" title="目的を決める" text="ここだけ決めれば使えます。接続や細かい調整は下にまとめています。" />
     <button className="text-button" onClick={onOpenManual}>使い方ガイドを見る</button>
+    <SetupGuide />
     <section className="form-card settings-primary-card">
       <div className="form-intro"><strong>目的と話し方</strong><p>最優先の1件がTodayの見出し。追加した目的地も候補選びと評価に使います。</p></div>
       <label>このアプリに任せたいこと<textarea value={missionText} onChange={(event) => { setMissionText(event.target.value); markEdited(); }} /></label>

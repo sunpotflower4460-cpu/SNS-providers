@@ -45,16 +45,16 @@ body,
 }
 
 .field-title span {
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
 .stage-pill {
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .relation-score small {
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .candidate-actions button,
@@ -106,7 +106,7 @@ button[data-copy-state="error"] {
 
 .load-more-button small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .restore-confirm {
@@ -130,7 +130,7 @@ button[data-copy-state="error"] {
 
 .restore-confirm span {
   color: #9eacbc;
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
@@ -159,7 +159,7 @@ button[data-copy-state="error"] {
 .insight-card > div:last-child > span {
   display: inline-block;
   color: #8393a6;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 /* A result sheet can become taller with long handles, accessibility text scaling, or
@@ -235,11 +235,11 @@ button[data-copy-state="error"] {
   }
 
   .budget-pill strong {
-    font-size: 10px;
+    font-size: 12px;
   }
 
   .nav-item small {
-    font-size: 9px;
+    font-size: 11px;
   }
 }
 

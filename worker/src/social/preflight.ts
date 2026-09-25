@@ -41,6 +41,11 @@ export interface PreflightEnv extends XOAuthEnv {
   INSTAGRAM_DM_READ_USD?: string;
   SOCIAL_RECONCILE_READ_USD?: string;
   DEFAULT_MONTHLY_BUDGET_USD?: string;
+  GROQ_API_KEY?: string;
+  GROQ_BILLING_MODE?: string;
+  DEEPSEEK_API_KEY?: string;
+  TAVILY_API_KEY?: string;
+  TAVILY_BILLING_MODE?: string;
 }
 
 interface Check {
@@ -150,6 +155,18 @@ export async function buildProductionPreflight(env: PreflightEnv, userId: string
     ? `No stored user ceiling; effective limit is the server HARD LIMIT $${hardLimit}.`
     : `User ceiling $${userCeiling}; effective limit $${Math.min(hardLimit, userCeiling)} (HARD LIMIT $${hardLimit}).`));
 
+  // Key presence only; values never leave the Worker. Lets Settings explain whether
+  // AI ranking/drafts and free discovery are live or on the local fallback.
+  const aiGroq = Boolean(env.GROQ_API_KEY);
+  const aiDeepseek = Boolean(env.DEEPSEEK_API_KEY);
+  const discoveryReady = Boolean(env.TAVILY_API_KEY) && env.TAVILY_BILLING_MODE === 'free';
+  checks.push(aiGroq || aiDeepseek
+    ? ok('aiProvider', aiGroq ? 'AI provider: Groq is configured.' : 'AI provider: DeepSeek is configured.')
+    : warn('aiProvider', 'No AI provider key is configured, so ranking falls back to local scoring and no drafts are written.', 'Set GROQ_API_KEY (free tier) as a Worker secret.'));
+  checks.push(discoveryReady
+    ? ok('freeDiscovery', 'Free Tavily discovery is configured.')
+    : warn('freeDiscovery', 'Free candidate discovery is not configured.', 'Set TAVILY_API_KEY as a Worker secret and TAVILY_BILLING_MODE=free.'));
+
   const sources = await sourceStatuses(env, userId, oauth.connected, scopes, probe, webhookSecrets, webhookConfirmed);
   for (const source of sources) checks.push(source.check);
 
@@ -186,6 +203,12 @@ export async function buildProductionPreflight(env: PreflightEnv, userId: string
       dmWriteReady: capabilities.instagram.sendDm,
       permissionsVerified: probe.permissionsVerified,
       reason: probe.reason,
+    },
+    ai: {
+      groq: aiGroq,
+      groqFree: aiGroq && env.GROQ_BILLING_MODE === 'free',
+      deepseek: aiDeepseek,
+      discovery: discoveryReady,
     },
     budget: {
       hardLimit: true,
