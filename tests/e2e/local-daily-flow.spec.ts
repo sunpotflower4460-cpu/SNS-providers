@@ -34,7 +34,11 @@ test('local iPhone flow records only confirmed actions and restores a JSON backu
   await expect(page.getByRole('dialog', { name: /daily_quality_test/ })).toBeVisible();
   await expect.poll(() => page.evaluate(() => sessionStorage.getItem('last-official-url')))
     .toBe('https://www.instagram.com/daily_quality_test/');
+  await page.reload();
+  await expect(page.getByRole('dialog', { name: /daily_quality_test/ })).toBeVisible();
   await page.getByRole('button', { name: 'プロフィールを確認した' }).click();
+  await page.reload();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   await page.getByRole('button', { name: '今日', exact: true }).click();
   await expect(page.getByRole('heading', { name: '候補のプロフィールを確認しました' })).toBeVisible();
   await page.getByRole('button', { name: '関係', exact: true }).click();
@@ -87,6 +91,38 @@ test('local save failure is shown in a readable alert', async ({ page }) => {
   });
   await page.goto('/SNS-providers/');
   await expect(page.getByRole('alert')).toContainText('ローカル保存容量がいっぱいです');
+});
+
+test('a deferred handoff does not reopen after the user dismisses the result sheet', async ({ page }) => {
+  await page.addInitScript(() => { window.open = (() => null) as typeof window.open; });
+  await page.goto('/SNS-providers/');
+  await page.getByRole('button', { name: 'スキップ' }).click();
+  await page.getByRole('button', { name: '候補を探す' }).click();
+  await page.getByRole('textbox', { name: 'プロフィールURL または @username' }).fill('@deferred_quality_test');
+  await page.getByRole('button', { name: '追加', exact: true }).click();
+  await page.getByRole('button', { name: /Instagramでプロフィールを確認/ }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+
+test('a changed profile identity does not restore an old result sheet', async ({ page }) => {
+  await page.addInitScript(() => { window.open = (() => null) as typeof window.open; });
+  await page.goto('/SNS-providers/');
+  await page.getByRole('button', { name: 'スキップ' }).click();
+  await page.getByRole('button', { name: '候補を探す' }).click();
+  await page.getByRole('textbox', { name: 'プロフィールURL または @username' }).fill('@original_quality_test');
+  await page.getByRole('button', { name: '追加', exact: true }).click();
+  await page.getByRole('button', { name: /Instagramでプロフィールを確認/ }).click();
+  await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem('sns-providers:v1') || '{}');
+    state.candidates[0].username = 'different_quality_test';
+    localStorage.setItem('sns-providers:v1', JSON.stringify(state));
+  });
+  await page.reload();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
 test('installed shell opens without a network connection after first load', async ({ page, context, browserName }) => {

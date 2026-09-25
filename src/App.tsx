@@ -11,6 +11,7 @@ import Manual from './Manual';
 import MissionInbox from './MissionInbox';
 import Onboarding from './Onboarding';
 import { hasSeenOnboarding, markOnboardingSeen } from './onboardingState';
+import { clearPendingHandoff, rememberPendingHandoff, restorePendingHandoff } from './pendingHandoff';
 import { resolveVisibleResult } from './resultResolution';
 import { addCandidateFromReference, applyMissionDestinations, applyRankResults, applySelfAnalysis, applyXProfiles, destinationsFromMission, loadState, MAX_MISSION_DESTINATIONS, parseUsername, saveState, setFollowBackStatus, spendingCeilingUsd, syncBudget, updateCandidateDraft, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
 import { copyDraft, openCandidate, openSocialAction, platformLabel } from './social';
@@ -65,13 +66,14 @@ const insightCategoryLabel = {
 function App() {
   const [state, setState] = useState<AppState>(() => loadState());
   const [tab, setTab] = useState<Tab>('today');
-  const [pending, setPending] = useState<{ candidate: Candidate; action?: SocialAction } | null>(null);
+  const [pending, setPending] = useState<{ candidate: Candidate; action?: SocialAction } | null>(() => restorePendingHandoff(state));
   const [ranking, setRanking] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [enrichingX, setEnrichingX] = useState(false);
   const [analyzingSelf, setAnalyzingSelf] = useState(false);
   const [apiNote, setApiNote] = useState(apiConfigured ? 'API接続待機' : 'ローカルモード');
   const [persistenceError, setPersistenceError] = useState('');
+  const [handoffError, setHandoffError] = useState('');
   const [showOnboarding, setShowOnboarding] = useState(() => !hasSeenOnboarding());
   const [showManual, setShowManual] = useState(false);
   const [capabilityEpoch, setCapabilityEpoch] = useState(0);
@@ -84,7 +86,8 @@ function App() {
   const budgetLimitRef = useRef(spendingCeilingUsd(state.budget));
   budgetLimitRef.current = spendingCeilingUsd(state.budget);
   const localDay = useLocalDayKey();
-  const statusNote = persistenceError || apiNote;
+  const storageError = persistenceError || handoffError;
+  const statusNote = storageError || apiNote;
 
   useEffect(() => {
     const saved = saveState(state);
@@ -373,6 +376,8 @@ function App() {
   }, [state.interactions, state.selfProfile.analyzedAt, localDay]);
 
   function onOpen(candidate: Candidate, action?: SocialAction) {
+    const remembered = rememberPendingHandoff(candidate, action);
+    setHandoffError(remembered ? '' : '結果記録の再開情報を保存できませんでした。SNSから戻るまでこの画面を閉じないでください。');
     setPending({ candidate, action });
     if (action) openSocialAction(action, candidate);
     else openCandidate(candidate);
@@ -383,6 +388,8 @@ function App() {
     if (action !== 'later') {
       setState((current) => resolveVisibleResult(current, pending.candidate, action, pending.action));
     }
+    clearPendingHandoff();
+    setHandoffError('');
     setPending(null);
   }
 
@@ -526,7 +533,7 @@ function App() {
         </div>
       </header>
 
-      {persistenceError && <div className="persistence-alert" role="alert">{persistenceError}</div>}
+      {storageError && <div className="persistence-alert" role="alert">{storageError}</div>}
 
       <main className="page">
         {tab === 'today' && <Today state={state} onChange={setState} doneToday={doneToday} onOpen={onOpen} onTab={setTab} capabilityEpoch={capabilityEpoch} />}
@@ -1084,12 +1091,13 @@ function PageHeading({ eyebrow, title, text }: { eyebrow: string; title: string;
 }
 
 function ResultSheet({ candidate, action, onResolve }: { candidate: Candidate; action?: SocialAction; onResolve: (sheetAction: 'followed' | 'skipped' | 'later' | 'kept') => void }) {
+  const containerRef = useModalA11y<HTMLElement>(() => onResolve('later'));
   const cleanup = action ? action.type === 'unfollow_review' : candidate.recommendedAction === 'unfollow_review';
   const profileReview = !action && candidate.recommendedAction === 'review';
   const canRecordFollow = profileReview && !candidate.tags.includes('identity-conflict');
   const completion = action ? outcomeForSocialAction(action) : outcomeForAction(candidate);
   const visibleActionLabel = action ? socialActionResultLabel(action.type) : actionLabel[candidate.recommendedAction];
-  return <div className="sheet-backdrop"><section className="result-sheet" role="dialog" aria-modal="true" aria-labelledby="result-title">
+  return <div className="sheet-backdrop"><section ref={containerRef} className="result-sheet" role="dialog" aria-modal="true" aria-labelledby="result-title" tabIndex={-1}>
     <div className="sheet-handle" />
     <span className="section-kicker">結果を記録</span>
     <h2 id="result-title">{profileReview ? `@${candidate.username} のプロフィールを確認しましたか？` : `@${candidate.username} への${visibleActionLabel}はどうでしたか？`}</h2>

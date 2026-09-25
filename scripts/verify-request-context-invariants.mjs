@@ -220,7 +220,9 @@ requireAll(store, [
 requireAll(app, [
   "const [persistenceError, setPersistenceError] = useState('');",
   "setPersistenceError(saved.ok ? '' : saved.reason);",
-  'const statusNote = persistenceError || apiNote;',
+  'const storageError = persistenceError || handoffError;',
+  'const statusNote = storageError || apiNote;',
+  'storageError && <div className="persistence-alert" role="alert">',
 ], 'Local persistence failures can be hidden by ordinary API status messages.');
 
 requireAll(xAccountControls, [
