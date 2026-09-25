@@ -575,7 +575,7 @@ function App() {
         {tab === 'discover' && <Discover onOpenSettings={() => setTab('settings')} state={state} candidates={active} onOpen={onOpen} onChange={setState} onDiscover={discoverCandidates} onRerank={rerankCandidates} onEnrichX={enrichXCandidates} discovering={discovering} ranking={ranking} enrichingX={enrichingX} />}
         {tab === 'relations' && <Relations state={state} onOpen={onOpen} onChange={setState} />}
         {tab === 'me' && <Me onOpenSettings={() => setTab('settings')} state={state} onAnalyze={analyzeMe} analyzing={analyzingSelf} />}
-        {tab === 'settings' && <Settings state={state} onChange={setState} onOpenManual={() => setShowManual(true)} />}
+        {tab === 'settings' && <Settings state={state} onChange={setState} />}
       </main>
 
       <nav className="bottom-nav" aria-label="メインナビゲーション">
@@ -599,11 +599,29 @@ function App() {
   );
 }
 
-function DemoToggle() {
-  const [open, setOpen] = useState(false);
-  return open
-    ? <div className="demo-wrap"><DemoPreview /><button type="button" className="demo-toggle" onClick={() => setOpen(false)}>見本を閉じる</button></div>
-    : <button type="button" className="demo-toggle" onClick={() => setOpen(true)}>準備が終わるとこうなります（見本を見る）</button>;
+function StartCard({ onDiscover }: { onDiscover: () => void }) {
+  const { status } = useConnectionStatus();
+  const ready = helpChatAvailable(status) || (status.ai === 'ready' && status.key === 'ready');
+  const [showDemo, setShowDemo] = useState(false);
+  return <section className="start-card" aria-labelledby="start-title">
+    <h2 id="start-title">はじめに</h2>
+    <ol className="start-steps">
+      <li className={ready ? 'is-done' : ''}>
+        <button type="button" onClick={() => openSetupWizard('core')}>
+          <span className="start-num" aria-hidden="true">{ready ? '✓' : '1'}</span>
+          <span><strong>{ready ? '準備はできています' : 'AIを使えるように準備する'}</strong><small>{ready ? '見直すときはここから' : '1画面ずつ案内します（約20分）'}</small></span>
+        </button>
+      </li>
+      <li>
+        <button type="button" onClick={onDiscover}>
+          <span className="start-num" aria-hidden="true">{ready ? '1' : '2'}</span>
+          <span><strong>つながる相手を探す</strong><small>{ready ? 'AIが自動で探して並べます' : '準備の前でも、キーワードで探せます'}</small></span>
+        </button>
+      </li>
+    </ol>
+    <button type="button" className="text-button start-demo" onClick={() => setShowDemo((current) => !current)}>{showDemo ? '見本を閉じる' : '使い方の見本を見る'}</button>
+    {showDemo && <DemoPreview />}
+  </section>;
 }
 
 function connectionContext(status: ReturnType<typeof useConnectionStatus>['status']) {
@@ -641,15 +659,10 @@ function Today({ state, onChange, doneToday, onOpen, onTab, capabilityEpoch }: {
   const inbox = hasCandidates ? buildMissionInbox(state) : [];
   const remainingItems = inbox;
   const remaining = remainingItems.length;
-  const summary = {
-    connect: remainingItems.filter((item) => item.category === 'connect').length,
-    engage: remainingItems.filter((item) => item.category === 'reply' || item.category === 'outreach' || item.category === 'nurture').length,
-    cleanup: remainingItems.filter((item) => item.category === 'cleanup').length,
-  };
   const plannedTotal = hasCandidates ? doneToday + remaining : 0;
   const progress = plannedTotal > 0 ? Math.min(100, Math.round((doneToday / plannedTotal) * 100)) : 0;
-  const extraGoals = state.mission.secondaryGoals.map((goal) => goal.trim()).filter(Boolean);
-  const missionNote = state.mission.text.trim();
+  // Nothing to act on yet: show one "はじめに" card instead of an empty inbox plus banners.
+  const firstUse = !hasCandidates && !(state.socialActions || []).some((action) => action.status === 'pending' || action.status === 'ready');
 
   return <>
     <section className={hasCandidates ? 'mission-card' : 'mission-card mission-card-compact'}>
@@ -658,40 +671,18 @@ function Today({ state, onChange, doneToday, onOpen, onTab, capabilityEpoch }: {
         <button className="text-button" onClick={() => onTab('settings')}>目的を編集</button>
       </div>
       <h1>{state.mission.primaryGoal}</h1>
-      {(extraGoals.length > 0 || missionNote) && <div className="mission-more-row">
-      {extraGoals.length > 0 && (
-        <details className="mission-more">
-          <summary>ほか {extraGoals.length}件の目的地</summary>
-          <ul className="mission-destinations" aria-label="ほかの目的地">
-            {extraGoals.map((label, index) => <li key={`${index}:${label}`}>{label}</li>)}
-          </ul>
-        </details>
-      )}
-      {missionNote && (
-        <details className="mission-more">
-          <summary>詳しく</summary>
-          <p>{missionNote}</p>
-        </details>
-      )}
-      </div>}
-      <div className={hasCandidates ? 'mission-meter' : 'mission-meter is-idle'}>
+      {hasCandidates && <div className={hasCandidates ? 'mission-meter' : 'mission-meter is-idle'}>
         <div className="mission-progress-head"><span>今日の進捗</span><strong>{hasCandidates ? `${doneToday} / ${plannedTotal}` : '準備前'}</strong></div>
         <div className="mission-progress" aria-label={`今日の進捗 ${progress}%`}><span style={{ width: `${progress}%` }} /></div>
-        <div className={hasCandidates ? 'today-summary' : 'today-summary is-idle'} aria-label="今日の残り内訳">
-          <span><b>{remaining}</b>残り</span>
-          <span><b>{summary.connect}</b>新規</span>
-          <span><b>{summary.engage}</b>交流</span>
-          <span><b>{summary.cleanup}</b>整理</span>
-        </div>
-      </div>
+      </div>}
     </section>
 
-    <SetupBanner context="today" />
-
-    <MissionInbox state={state} onChange={onChange} onOpenCandidate={onOpen} onOpenMe={() => onTab('me')} onOpenDiscover={() => onTab('discover')} capabilityEpoch={capabilityEpoch} />
-
-    {!hasCandidates && <DemoToggle />}
-    {!hasCandidates && <QuickSearch mission={state.mission} />}
+    {firstUse
+      ? <StartCard onDiscover={() => onTab('discover')} />
+      : <>
+        <SetupBanner context="today" />
+        <MissionInbox state={state} onChange={onChange} onOpenCandidate={onOpen} onOpenMe={() => onTab('me')} onOpenDiscover={() => onTab('discover')} capabilityEpoch={capabilityEpoch} />
+      </>}
 
     {hasCandidates && state.insights[0] && <section className="coach-card">
       <div className="coach-icon">✦</div>
@@ -763,14 +754,14 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
   }
 
   return <>
-    <PageHeading eyebrow="探す" title="つながる相手を見つける" text="まずは下のボタンから。見つかった人は目的との相性順に並びます。" />
+    <PageHeading eyebrow="探す" title="つながる相手を見つける" text="見つかった人は、目的との相性順に並びます。" />
     <SetupBanner context="discover" />
 
     <section className="discover-primary-card">
       <div className="discover-primary-copy">
         <span className="section-kicker">おすすめ</span>
         <h2>Missionから自動で探す</h2>
-        <p>今の目的に合う相手を公開情報から探します。フォローや返信は、あなたが1件ずつ承認してからです。</p>
+        <p>目的に合う相手をAIが探します。送る前に必ずあなたが確認します。</p>
       </div>
       <button className="discovery-button" disabled={candidateOperationBusy} onClick={onDiscover}>
         <span>✦</span>
@@ -779,13 +770,11 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
       </button>
     </section>
 
-    {storedTotal === 0 && <QuickSearch mission={state.mission} />}
-
     <div className="discover-tools">
-      {storedTotal > 0 && <details className="disclosure-card">
-        <summary><span><strong>今すぐ探す（キーワード検索）</strong><small>X・Instagramの公式検索で、いいね・返信する投稿を探す</small></span><b>⌕</b></summary>
+      <details className="disclosure-card">
+        <summary><span><strong>キーワードで探す</strong><small>準備なしで使えます。X・Instagramの検索を開きます</small></span><b>⌕</b></summary>
         <div className="disclosure-body"><QuickSearch mission={state.mission} compact /></div>
-      </details>}
+      </details>
 
       <details className="disclosure-card">
         <summary><span><strong>自分で候補を追加</strong><small>URLや @username が分かっているとき</small></span><b>＋</b></summary>
@@ -809,12 +798,12 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
       </details>
     </div>
 
-    <div className="candidate-list-head">
+    {storedTotal > 0 && <div className="candidate-list-head">
       <div><span className="section-kicker">候補</span><strong>{visible.length}人</strong></div>
       <div className="segmented" role="group" aria-label="候補のSNS絞り込み">
         {(['all', 'x', 'instagram'] as const).map((item) => <button key={item} aria-pressed={filter === item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}>{item === 'all' ? 'すべて' : item === 'x' ? 'X' : 'Instagram'}</button>)}
       </div>
-    </div>
+    </div>}
     {visible.length > 0 ? <>
       <div className="card-stack">{displayed.map((candidate) => <CandidateCard key={candidate.id} candidate={candidate} onOpen={onOpen} onLater={snoozeCandidate} onEditDraft={editDraft} />)}</div>
       {hiddenCount > 0 && <button className="load-more-button" onClick={() => setVisibleLimit((current) => Math.min(visible.length, current + 12))}>
@@ -934,7 +923,7 @@ function Me({ state, onAnalyze, analyzing, onOpenSettings }: { state: AppState; 
   </>;
 }
 
-function Settings({ state, onChange, onOpenManual }: { state: AppState; onChange: AppStateUpdater; onOpenManual: () => void }) {
+function Settings({ state, onChange }: { state: AppState; onChange: AppStateUpdater }) {
   const [missionText, setMissionText] = useState(state.mission.text);
   const [destinations, setDestinations] = useState(() => destinationsFromMission(state.mission));
   const [communicationDNA, setCommunicationDNA] = useState(state.mission.communicationDNA);
@@ -1042,16 +1031,15 @@ function Settings({ state, onChange, onOpenManual }: { state: AppState; onChange
   }
 
   return <>
-    <PageHeading eyebrow="設定" title="目的を決める" text="ここだけ決めれば使えます。接続や細かい調整は下にまとめています。" />
-    <button className="text-button" onClick={onOpenManual}>使い方ガイドを見る</button>
+    <PageHeading eyebrow="設定" title="準備と目的" text="上から順に。細かい調整は一番下にまとめています。" />
     <SetupGuide />
     <section className="form-card settings-primary-card">
-      <div className="form-intro"><strong>目的と話し方</strong><p>最優先の1件がTodayの見出し。追加した目的地も候補選びと評価に使います。</p></div>
+      <div className="form-intro"><strong>あなたの目的</strong><p>いちばん上の目的地が「今日」の見出しになります。</p></div>
       <label>このアプリに任せたいこと<textarea value={missionText} onChange={(event) => { setMissionText(event.target.value); markEdited(); }} /></label>
       <div className="destination-field">
         <span>目的地</span>
         <div className="destination-list">
-          {destinations.map((goal, index) => (
+          {destinations.slice(0, 1).map((goal, index) => (
             <div className={index === 0 ? 'destination-row is-primary' : 'destination-row'} key={index}>
               <label>
                 {index === 0 ? '最優先の目的地' : `目的地 ${index + 1}`}
@@ -1071,15 +1059,38 @@ function Settings({ state, onChange, onOpenManual }: { state: AppState; onChange
             </div>
           ))}
         </div>
-        {destinations.length < MAX_MISSION_DESTINATIONS
-          ? <button type="button" className="secondary-button destination-add" onClick={addDestination}>目的地を追加</button>
-          : <small>目的地は最大{MAX_MISSION_DESTINATIONS}件です。</small>}
+        <details className="inline-disclosure destination-more">
+          <summary><span><strong>{destinations.length > 1 ? `ほかの目的地（${destinations.length - 1}件）` : 'ほかの目的地を追加'}</strong><small>候補選びとAIの評価に使います</small></span><b>⌄</b></summary>
+          <div className="inline-disclosure-body destination-list">
+            {destinations.slice(1).map((goal, offset) => { const index = offset + 1; return (
+              <div className={index === 0 ? 'destination-row is-primary' : 'destination-row'} key={index}>
+              <label>
+                {index === 0 ? '最優先の目的地' : `目的地 ${index + 1}`}
+                <input
+                  value={goal}
+                  maxLength={index === 0 ? 400 : 180}
+                  placeholder={index === 0 ? '例: ファンと良質なつながりを増やす' : '例: アーティスト仲間'}
+                  onChange={(event) => updateDestination(index, event.target.value)}
+                />
+              </label>
+              {(index > 0 || destinations.length > 1) && (
+                <div className="destination-row-actions">
+                  {index > 0 && <button type="button" className="text-button" onClick={() => promoteDestination(index)}>最優先にする</button>}
+                  {destinations.length > 1 && <button type="button" className="text-button" onClick={() => removeDestination(index)}>削除</button>}
+                </div>
+              )}
+            </div>
+            ); })}
+            {destinations.length < MAX_MISSION_DESTINATIONS
+              ? <button type="button" className="secondary-button destination-add" onClick={addDestination}>目的地を追加</button>
+              : <small>目的地は最大{MAX_MISSION_DESTINATIONS}件です。</small>}
+          </div>
+        </details>
       </div>
-      <label>あなたらしい話し方<textarea value={communicationDNA} onChange={(event) => { setCommunicationDNA(event.target.value); markEdited(); }} /></label>
-
       <details className="inline-disclosure">
-        <summary><span><strong>予算と整理ルール</strong><small>必要なときだけ変更</small></span><b>⌄</b></summary>
+        <summary><span><strong>話し方・予算・整理ルール</strong><small>必要なときだけ変更</small></span><b>⌄</b></summary>
         <div className="inline-disclosure-body">
+          <label>あなたらしい話し方<textarea value={communicationDNA} onChange={(event) => { setCommunicationDNA(event.target.value); markEdited(); }} /></label>
           <label>月間AI / API予算 <span className="inline-value">${budget.toFixed(2)}</span><input className="range" type="range" min="0" max="10" step="0.5" value={budget} onChange={(event) => { setBudget(Number(event.target.value)); markEdited(); }} /></label>
           {budgetAuthority && (
             <p className="budget-authority">
