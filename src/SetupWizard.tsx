@@ -35,6 +35,24 @@ function saveDone(done: Set<string>) {
   }
 }
 
+/**
+ * Remember steps the server has proven done (e.g. Cloudflare provisioning once the Worker
+ * answers). A later outage then points the user at the connection step instead of asking
+ * them to recreate tokens that are still valid.
+ */
+export function rememberAutoCompleted(status: ConnectionStatus) {
+  const done = loadDone();
+  let changed = false;
+  for (const step of WIZARD_STEPS) {
+    if (!step.verify && !done.has(step.id) && step.done?.(status)) {
+      done.add(step.id);
+      changed = true;
+    }
+  }
+  if (changed) saveDone(done);
+  return done;
+}
+
 export function stepComplete(step: WizardStep, status: ConnectionStatus, done: Set<string>) {
   return Boolean(step.done?.(status)) || (!step.verify && done.has(step.id));
 }
@@ -61,6 +79,11 @@ export default function SetupWizard({ initialGroup, onClose, onGoToday, onGroupC
   const containerRef = useModalA11y<HTMLElement>(onClose);
   const problemRef = useRef<HTMLParagraphElement>(null);
   const step = steps[index];
+
+  useEffect(() => {
+    const remembered = rememberAutoCompleted(status);
+    if (remembered.size !== done.size) setDone(remembered);
+  }, [status]);
 
   useEffect(() => {
     lastPosition = step ? { group, id: step.id } : null;
@@ -174,6 +197,7 @@ function GroupDone({ group, status, done, onGroup, onJump, onGoToday }: {
     <p className="wizard-why">{DONE_MESSAGE[group]}</p>
     <div className="wizard-choices">
       <button type="button" className="primary-button full" onClick={onGoToday}>「今日」を見る</button>
+      <button type="button" className="secondary-button full" onClick={() => onJump(WIZARD_STEPS.find((item) => item.group === group)!.id)}>手順を最初から見直す</button>
       {others.map((item) => <button type="button" key={item} className="secondary-button full" onClick={() => onGroup(item)}>{GROUP_LABEL[item]}（必要なら）</button>)}
     </div>
   </div>;
@@ -182,14 +206,10 @@ function GroupDone({ group, status, done, onGroup, onJump, onGoToday }: {
 function HelpFooter({ step, canUseAppAi }: { step: WizardStep; canUseAppAi: boolean }) {
   const prompt = helpPrompt(step);
   const [copied, setCopied] = useState(false);
-  async function copyThenOpen(url: string) {
-    try {
-      await navigator.clipboard.writeText(prompt);
-      setCopied(true);
-    } catch {
-      setCopied(false);
-    }
-    window.open(url, '_blank', 'noopener,noreferrer');
+  // Gemini has no prefill URL. The anchor opens synchronously on tap (mobile Safari blocks
+  // window.open after an awaited clipboard call); the copy starts in the same click.
+  function copyPrompt() {
+    navigator.clipboard?.writeText(prompt).then(() => setCopied(true), () => setCopied(false));
   }
   return <footer className="wizard-help">
     <div>
@@ -197,7 +217,7 @@ function HelpFooter({ step, canUseAppAi }: { step: WizardStep; canUseAppAi: bool
       {canUseAppAi && <button type="button" onClick={() => window.dispatchEvent(new CustomEvent(OPEN_HELP_CHAT_EVENT, { detail: prompt }))}>アプリ内AIに聞く</button>}
       <a href={`https://chatgpt.com/?q=${encodeURIComponent(prompt)}`} target="_blank" rel="noopener noreferrer">ChatGPTに聞く</a>
       <a href={`https://claude.ai/new?q=${encodeURIComponent(prompt)}`} target="_blank" rel="noopener noreferrer">Claudeに聞く</a>
-      <button type="button" onClick={() => void copyThenOpen('https://gemini.google.com/app')}>{copied ? '質問をコピー済み・Geminiへ' : 'Geminiに聞く'}</button>
+      <a href="https://gemini.google.com/app" target="_blank" rel="noopener noreferrer" onClick={copyPrompt}>{copied ? 'Geminiに聞く（質問をコピー済み・貼り付けてね）' : 'Geminiに聞く'}</a>
       <a href={GUIDE_URL} target="_blank" rel="noopener noreferrer">くわしい説明</a>
       <span className="wizard-help-note">（質問文は自動で入ります・無料版でOK）</span>
     </div>

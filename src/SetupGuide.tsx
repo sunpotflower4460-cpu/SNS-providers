@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { coreReady, useConnectionStatus } from './connectionStatus';
-import { nextOpenStep, openSetupWizard } from './SetupWizard';
+import { nextOpenStep, openSetupWizard, rememberAutoCompleted } from './SetupWizard';
 import { GROUP_LABEL, type StepGroup, WIZARD_STEPS } from './setupSteps';
 import { loadThemePreference, saveThemePreference, type ThemePreference } from './themePreference';
 import './setupGuide.css';
@@ -8,6 +8,7 @@ import './setupGuide.css';
 /** Settings summary: one progress bar and one button that resumes the step-by-step popup. */
 export default function SetupGuide() {
   const { status } = useConnectionStatus();
+  useEffect(() => { rememberAutoCompleted(status); }, [status]);
   const next = nextOpenStep('core', status);
   const coreSteps = WIZARD_STEPS.filter((step) => step.group === 'core');
   const doneCount = next ? coreSteps.findIndex((step) => step.id === next.id) : coreSteps.length;
@@ -18,7 +19,9 @@ export default function SetupGuide() {
     <h2 id="setup-card-title">{next ? '準備を進めましょう' : 'AIは使える状態です'}</h2>
     <div className="setup-card-progress" aria-label={`基本の準備 ${doneCount} / ${coreSteps.length}`}><span style={{ width: `${Math.round((doneCount / coreSteps.length) * 100)}%` }} /></div>
     <p>{next ? <>次は <b>「{next.title}」</b>（約{next.minutes}分）</> : '基本の準備は完了しています。'}</p>
-    {next && <button type="button" className="primary-button full" onClick={() => openSetupWizard('core')}>{doneCount === 0 ? '準備をはじめる' : '続きから始める'}</button>}
+    {next
+      ? <button type="button" className="primary-button full" onClick={() => openSetupWizard('core')}>{doneCount === 0 ? '準備をはじめる' : '続きから始める'}</button>
+      : <button type="button" className="secondary-button full" onClick={() => openSetupWizard('core')}>準備の手順を見直す（キーの入れ替えなど）</button>}
     <div className="setup-card-optional">
       {optional.map((group) => {
         const pending = nextOpenStep(group, status);

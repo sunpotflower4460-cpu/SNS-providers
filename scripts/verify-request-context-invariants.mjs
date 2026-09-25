@@ -112,7 +112,10 @@ requireAll(instagramOwned, ['fetchWithTimeout', '30_000', "'Instagram Graph API'
 requireAll(providerApi, [
   'fetchWithTimeout',
   "30_000, 'X profile enrichment'",
-  '75_000, `${provider} ranking`',
+  'const PROVIDER_TIMEOUT_MS = 75_000;',
+  'Math.min(PROVIDER_TIMEOUT_MS, deadline - Date.now())',
+  'const RANK_DEADLINE_MS = 105_000;',
+  '`${provider} ranking`',
   "markReservationUncertain(env, reservationId, 'user_read_uncertain', userId, 'x', worstCaseCost)",
   "markReservationUncertain(env, reservationId, 'rank_uncertain', userId, provider, preflightUsd)",
   "if (result.meta.changes !== 1) throw new Error('Paid budget reservation disappeared before finalization')",
