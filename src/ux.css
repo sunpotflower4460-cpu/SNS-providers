@@ -80,6 +80,17 @@ button:disabled { cursor: not-allowed; }
   background: var(--accent);
   box-shadow: 0 0 0 3px rgba(114, 223, 189, .08);
 }
+.persistence-alert {
+  margin: 12px 20px 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 154, 168, .55);
+  border-radius: 12px;
+  background: rgba(122, 31, 48, .35);
+  color: #ffe2e6;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
 .budget-pill {
   min-width: 0;
   gap: 4px;

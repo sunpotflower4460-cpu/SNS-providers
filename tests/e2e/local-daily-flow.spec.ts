@@ -16,6 +16,8 @@ test('local iPhone flow records only confirmed actions and restores a JSON backu
   await expect(page.getByRole('heading', { name: '自分で候補を追加' })).toBeVisible();
   await expect(page.getByRole('button', { name: /新しい候補を探す/ })).toHaveCount(0);
   const reference = page.getByRole('textbox', { name: 'プロフィールURL または @username' });
+  await page.getByRole('button', { name: '追加', exact: true }).click();
+  await expect(page.locator('.manual-import-note')).toContainText('入力してください');
   await reference.fill('https://example.com/not-a-profile');
   await page.getByRole('button', { name: '追加', exact: true }).click();
   await expect(reference).toHaveValue('https://example.com/not-a-profile');
@@ -69,9 +71,22 @@ test('local iPhone flow records only confirmed actions and restores a JSON backu
   await restored.locator('input[type="file"]').setInputFiles({ name: 'backup.json', mimeType: 'application/json', buffer: backup });
   await expect(restored.getByText('現在のデータを置き換えます')).toBeVisible();
   await restored.getByRole('button', { name: 'この内容で復元' }).click();
+  await expect(restored.getByText('候補・履歴・設定を確認してください。')).toBeVisible();
   await restored.getByRole('button', { name: '関係', exact: true }).click();
   await expect(restored.getByText('@daily_quality_test')).toBeVisible();
   await restoredContext.close();
+});
+
+test('local save failure is shown in a readable alert', async ({ page }) => {
+  await page.addInitScript(() => {
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (key === 'sns-providers:v1') throw new DOMException('Storage full', 'QuotaExceededError');
+      return original.call(this, key, value);
+    };
+  });
+  await page.goto('/SNS-providers/');
+  await expect(page.getByRole('alert')).toContainText('ローカル保存容量がいっぱいです');
 });
 
 test('installed shell opens without a network connection after first load', async ({ page, context, browserName }) => {

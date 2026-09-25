@@ -526,6 +526,8 @@ function App() {
         </div>
       </header>
 
+      {persistenceError && <div className="persistence-alert" role="alert">{persistenceError}</div>}
+
       <main className="page">
         {tab === 'today' && <Today state={state} onChange={setState} doneToday={doneToday} onOpen={onOpen} onTab={setTab} capabilityEpoch={capabilityEpoch} />}
         {tab === 'discover' && <Discover state={state} candidates={active} onOpen={onOpen} onChange={setState} onDiscover={discoverCandidates} onRerank={rerankCandidates} onEnrichX={enrichXCandidates} discovering={discovering} ranking={ranking} enrichingX={enrichingX} />}
@@ -658,7 +660,10 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
   useEffect(() => setVisibleLimit(12), [filter]);
 
   function addReference(value = reference) {
-    if (!value.trim()) return;
+    if (!value.trim()) {
+      setManualNote('プロフィールURLまたは@usernameを入力してください。');
+      return;
+    }
     const username = parseUsername(platform, value);
     if (!username) {
       setManualNote(`${platform === 'x' ? 'X' : 'Instagram'}のプロフィールURLか正しい@usernameを入力してください。`);
@@ -690,7 +695,8 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
   async function addFromClipboard() {
     try {
       const value = await navigator.clipboard.readText();
-      if (value) addReference(value);
+      if (value.trim()) addReference(value);
+      else setManualNote('クリップボードは空です。プロフィールURLまたは@usernameを入力してください。');
     } catch {
       setManualNote('クリップボードを読み取れませんでした。URLまたは@usernameを入力してください。');
     }
