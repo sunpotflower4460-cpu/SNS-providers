@@ -25,9 +25,11 @@ export default function SetupGuide() {
     <div className="setup-card-optional">
       {optional.map((group) => {
         const pending = nextOpenStep(group, status);
-        const ready = group === 'x' ? status.x === 'ready' : status.instagram === 'ready';
-        return <button type="button" key={group} className="secondary-button" disabled={!coreReady(status) && !ready} onClick={() => openSetupWizard(group)}>
-          {ready || !pending ? `✓ ${GROUP_LABEL[group]}` : GROUP_LABEL[group]}
+        // The checkmark follows the wizard's own completion (for X that includes the inbox
+        // pricing step), not just a valid token.
+        const connected = group === 'x' ? status.x === 'ready' : status.instagram === 'ready';
+        return <button type="button" key={group} className="secondary-button" disabled={!coreReady(status) && !connected} onClick={() => openSetupWizard(group)}>
+          {!pending ? `✓ ${GROUP_LABEL[group]}` : GROUP_LABEL[group]}
         </button>;
       })}
     </div>
