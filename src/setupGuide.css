@@ -64,3 +64,14 @@
 .mission-more-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 18px; margin: 0 0 4px; }
 .mission-more-row .mission-more { margin: 0; }
 .mission-more-row .mission-more[open] { flex-basis: 100%; }
+
+.start-card { display: grid; gap: 12px; padding: 20px 16px; margin: 0 0 16px; border-radius: 22px; border: 1px solid var(--line); background: var(--surface); }
+.start-card h2 { margin: 0; font-size: 22px; }
+.start-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.start-steps button { width: 100%; display: grid; grid-template-columns: 44px 1fr; gap: 14px; align-items: center; text-align: left; min-height: 76px; padding: 14px; border-radius: 18px; border: 1px solid rgb(var(--accent-rgb) / .35); background: rgb(var(--accent-rgb) / .08); color: var(--text); }
+.start-steps strong { display: block; font-size: 17px; line-height: 1.4; }
+.start-steps small { display: block; margin-top: 2px; font-size: 14px; line-height: 1.5; color: var(--text-2); }
+.start-num { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: var(--on-accent); font-size: 18px; font-weight: 800; }
+.start-steps .is-done button { border-color: var(--line); background: transparent; }
+.start-steps .is-done .start-num { background: rgb(var(--accent-rgb) / .16); color: var(--accent); }
+.start-demo { justify-self: center; font-size: 15px; color: var(--info-text); text-decoration: underline; text-underline-offset: 3px; }
