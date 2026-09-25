@@ -36,6 +36,7 @@ export interface PreflightEnv extends XOAuthEnv {
   X_LOOKUP_READ_USD?: string;
   X_USER_READ_USD?: string;
   X_OWNED_READ_USD?: string;
+  X_OWNED_READ_ELIGIBLE?: string;
   INSTAGRAM_COMMENT_REPLY_USD?: string;
   INSTAGRAM_DM_WRITE_USD?: string;
   INSTAGRAM_DM_READ_USD?: string;
@@ -319,6 +320,12 @@ function block(label: string, reason: string, nextStep?: string): Check {
   return { ok: false, severity: 'block', label, reason, nextStep };
 }
 
+function parsedPrice(raw?: string) {
+  if (raw == null || String(raw).trim() === '') return null;
+  const amount = Number(raw);
+  return Number.isFinite(amount) && amount >= 0 ? amount : null;
+}
+
 async function sourceStatuses(
   env: PreflightEnv,
   userId: string,
@@ -328,8 +335,11 @@ async function sourceStatuses(
   webhookSecrets: boolean,
   webhookConfirmed: boolean,
 ) {
-  const xMentionsReady = xConnected && scopes.includes('tweet.read') && env.X_INBOUND_SYNC_ENABLED === 'true' && Boolean(env.X_INBOUND_READ_USD?.trim());
-  const xDmReady = xConnected && scopes.includes('dm.read') && env.X_DM_READ_ENABLED === 'true' && Boolean(env.X_DM_READ_USD?.trim());
+  // Same price parsing as the runtime sync paths, so a typo such as "abc" or "-1" is
+  // reported as blocked here instead of READY.
+  const ownedInbound = env.X_OWNED_READ_ELIGIBLE === 'true' && (parsedPrice(env.X_OWNED_READ_USD) ?? 0) > 0;
+  const xMentionsReady = xConnected && scopes.includes('tweet.read') && env.X_INBOUND_SYNC_ENABLED === 'true' && (parsedPrice(env.X_INBOUND_READ_USD) != null || ownedInbound);
+  const xDmReady = xConnected && scopes.includes('dm.read') && env.X_DM_READ_ENABLED === 'true' && parsedPrice(env.X_DM_READ_USD) != null;
   const igCommentsPoll = probe.readComments === true;
   const igDmReady = probe.readDm === true && env.INSTAGRAM_DM_READ_ENABLED === 'true' && env.INSTAGRAM_DM_READ_USD != null && String(env.INSTAGRAM_DM_READ_USD).trim() !== '';
   const mentionCheckpoint = await loadSyncCheckpoint(env.DB, userId, 'x_mentions');

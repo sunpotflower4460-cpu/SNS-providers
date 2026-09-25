@@ -13,6 +13,8 @@ export interface HelpEnv {
   GROQ_MODEL?: string;
   GROQ_BILLING_MODE?: string;
   HELP_CHAT_DAILY_LIMIT?: string;
+  /** Minutes east of UTC for the daily reset (default 540 = Japan). */
+  HELP_CHAT_DAY_OFFSET_MINUTES?: string;
 }
 
 interface HelpMessage {
@@ -25,6 +27,12 @@ const MAX_MESSAGE_CHARS = 1500;
 const MAX_CONTEXT_CHARS = 2500;
 const MAX_OUTPUT_TOKENS = 700;
 const DEFAULT_DAILY_LIMIT = 30;
+// Shared deadline for all providers, kept under the PWA's 60s request timeout so a
+// failover never outlives the client (which would drop an answer that still used quota).
+const TOTAL_DEADLINE_MS = 48_000;
+const PER_PROVIDER_TIMEOUT_MS = 28_000;
+// The product is for Japanese users; "今日 / 明日" in the limit message means JST days.
+const DEFAULT_DAY_OFFSET_MINUTES = 9 * 60;
 
 const SYSTEM_PROMPT = [
   'あなたはスマホアプリ「Social Mission」の、やさしいサポート担当です。',
@@ -58,10 +66,15 @@ export function parseHelpRequest(body: unknown) {
   return { messages, context };
 }
 
-function startOfUtcDay() {
-  const start = new Date();
-  start.setUTCHours(0, 0, 0, 0);
-  return start.toISOString();
+export function startOfLocalDay(offsetMinutes: number, now = Date.now()) {
+  const shifted = new Date(now + offsetMinutes * 60_000);
+  shifted.setUTCHours(0, 0, 0, 0);
+  return new Date(shifted.getTime() - offsetMinutes * 60_000).toISOString();
+}
+
+function dayOffsetMinutes(env: HelpEnv) {
+  const raw = Number(env.HELP_CHAT_DAY_OFFSET_MINUTES);
+  return Number.isFinite(raw) && Math.abs(raw) <= 14 * 60 ? raw : DEFAULT_DAY_OFFSET_MINUTES;
 }
 
 /**
@@ -75,10 +88,17 @@ async function reserveHelpSlot(env: HelpEnv, userId: string, limit: number) {
   await env.DB.prepare(
     'INSERT INTO budget_ledger (id, user_id, provider, operation, cost_usd, input_units, output_units, cache_hit, occurred_at) VALUES (?, ?, ?, ?, 0, 0, 0, 0, ?)'
   ).bind(id, userId, 'help', 'help_chat', occurredAt).run();
-  const row = await env.DB.prepare(
-    "SELECT COUNT(*) AS used FROM budget_ledger WHERE user_id = ? AND operation = 'help_chat' AND julianday(occurred_at) >= julianday(?)"
-  ).bind(userId, startOfUtcDay()).first<{ used: number }>();
-  const used = Number(row?.used || 0);
+  let used: number;
+  try {
+    const row = await env.DB.prepare(
+      "SELECT COUNT(*) AS used FROM budget_ledger WHERE user_id = ? AND operation = 'help_chat' AND julianday(occurred_at) >= julianday(?)"
+    ).bind(userId, startOfLocalDay(dayOffsetMinutes(env))).first<{ used: number }>();
+    used = Number(row?.used || 0);
+  } catch (error) {
+    // Never leave an orphaned reservation counting against the day after a failed count.
+    await releaseHelpSlot(env, id);
+    throw error;
+  }
   if (used > limit) {
     await releaseHelpSlot(env, id);
     return { ok: false as const, used: used - 1 };
@@ -144,13 +164,16 @@ export async function answerHelp(
     ...(request.context ? [{ role: 'system', content: `いまの状況（参考情報）:\n${request.context}` }] : []),
     ...request.messages,
   ];
+  const deadline = Date.now() + TOTAL_DEADLINE_MS;
   for (const provider of providers) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs < 3_000) break;
     try {
       const response = await fetcher(`${provider.baseUrl.replace(/\/$/, '')}/chat/completions`, {
         method: 'POST',
         headers: { authorization: `Bearer ${provider.apiKey}`, 'content-type': 'application/json' },
         body: JSON.stringify({ model: provider.model, temperature: 0.3, max_tokens: MAX_OUTPUT_TOKENS, messages }),
-      }, 45_000, `${provider.name} help`);
+      }, Math.min(PER_PROVIDER_TIMEOUT_MS, remainingMs), `${provider.name} help`);
       if (!response.ok) continue;
       const data = await response.json().catch(() => null) as { choices?: Array<{ message?: { content?: string } }> } | null;
       const answer = data?.choices?.[0]?.message?.content?.trim();

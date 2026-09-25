@@ -10,9 +10,9 @@ for (const name of ['help', 'fetchWithTimeout']) {
   const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
   await writeFile(`${outDir}/${name}.js`, outputText.replace(/from ['"](\.\/[^'"]+)['"]/g, (_, spec) => `from '${spec}.js'`));
 }
-const { answerHelp, freeHelpProviders, parseHelpRequest } = await import(pathToFileURL(`${outDir}/help.js`).href);
+const { answerHelp, freeHelpProviders, parseHelpRequest, startOfLocalDay } = await import(pathToFileURL(`${outDir}/help.js`).href);
 
-function fakeDb(usedBefore = 0) {
+function fakeDb(usedBefore = 0, countThrows = false) {
   const rows = [];
   return {
     rows,
@@ -20,7 +20,7 @@ function fakeDb(usedBefore = 0) {
       return {
         bind(...args) {
           return {
-            first: async () => (sql.includes('COUNT(*)') ? { used: usedBefore + rows.length } : null),
+            first: async () => { if (countThrows && sql.includes('COUNT(*)')) throw new Error('D1 busy'); return sql.includes('COUNT(*)') ? { used: usedBefore + rows.length } : null; },
             run: async () => {
               if (sql.startsWith('INSERT')) rows.push({ id: args[0], provider: args[2], operation: args[3] });
               if (sql.startsWith('DELETE')) rows.splice(rows.findIndex((row) => row.id === args[0]), 1);
@@ -73,6 +73,15 @@ const brokenDb = { prepare() { throw new Error('no table'); } };
 const noLedger = await answerHelp({ DB: brokenDb, GROQ_API_KEY: 'g' }, 'local-user', body, async () => { called = true; return new Response('{}'); });
 assert(noLedger.provider === 'fallback' && !called, 'Without the ledger the daily cap cannot be enforced, so no provider call.');
 
+// A failed count after the insert must not leave an orphaned reservation.
+const countFailDb = fakeDb(0, true);
+const countFail = await answerHelp({ DB: countFailDb, GROQ_API_KEY: 'g' }, 'local-user', body, okFetch('x'));
+assert(countFail.provider === 'fallback' && countFailDb.rows.length === 0, 'Reservation must be released when the quota count fails.');
+
+// Daily reset follows Japan midnight by default: 2026-09-25 00:30 JST belongs to the 25th.
+const jstStart = startOfLocalDay(540, Date.parse('2026-09-24T15:30:00Z'));
+assert(jstStart === '2026-09-24T15:00:00.000Z', `JST day boundary expected 2026-09-24T15:00Z, got ${jstStart}`);
+
 // Input validation.
 let rejected = 0;
 for (const bad of [null, {}, { messages: [] }, { messages: [{ role: 'system', content: 'x' }] }, { messages: [{ role: 'assistant', content: 'x' }] }]) {
@@ -82,4 +91,4 @@ assert(rejected === 5, 'Malformed help requests must be rejected, including syst
 const trimmed = parseHelpRequest({ messages: Array.from({ length: 40 }, () => ({ role: 'user', content: 'a'.repeat(5000) })) });
 assert(trimmed.messages.length === 12 && trimmed.messages[0].content.length === 1500, 'Help history and message size must be bounded.');
 
-console.log('Help chat runtime OK: free-only providers, Sakura first, atomic daily cap under bursts, slot release on failure, ledger fail-closed, fallback, bounded input.');
+console.log('Help chat runtime OK: free-only providers, Sakura first, atomic daily cap under bursts, slot release on failure and failed counts, JST daily reset, ledger fail-closed, fallback, bounded input.');
