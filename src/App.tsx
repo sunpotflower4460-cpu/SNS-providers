@@ -12,7 +12,12 @@ import Manual from './Manual';
 import MissionInbox from './MissionInbox';
 import Onboarding from './Onboarding';
 import QuickSearch from './QuickSearch';
-import SetupGuide, { SetupBanner } from './SetupGuide';
+import SetupGuide, { SetupBanner, ThemeSwitcher } from './SetupGuide';
+import SetupWizard, { OPEN_HELP_CHAT_EVENT, OPEN_SETUP_EVENT, openSetupWizard } from './SetupWizard';
+import type { StepGroup } from './setupSteps';
+import HelpChat from './HelpChat';
+import DemoPreview from './DemoPreview';
+import { helpChatAvailable, useConnectionStatus } from './connectionStatus';
 import { hasSeenOnboarding, markOnboardingSeen } from './onboardingState';
 import { resolveVisibleResult } from './resultResolution';
 import { addCandidateFromReference, applyMissionDestinations, applyRankResults, applySelfAnalysis, applyXProfiles, destinationsFromMission, loadState, MAX_MISSION_DESTINATIONS, saveState, setFollowBackStatus, spendingCeilingUsd, syncBudget, updateCandidateDraft, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
@@ -77,6 +82,9 @@ function App() {
   const [persistenceError, setPersistenceError] = useState('');
   const [showOnboarding, setShowOnboarding] = useState(() => !hasSeenOnboarding());
   const [showManual, setShowManual] = useState(false);
+  const [wizardGroup, setWizardGroup] = useState<StepGroup | null>(null);
+  const [helpQuestion, setHelpQuestion] = useState<string | null>(null);
+  const { status: connection } = useConnectionStatus();
   const [capabilityEpoch, setCapabilityEpoch] = useState(0);
   const [autoRetryTick, setAutoRetryTick] = useState(0);
   const autoReplenishingRef = useRef(false);
@@ -129,6 +137,21 @@ function App() {
       .catch(() => {
         setLiveSocialCapabilities(null);
       });
+  }, []);
+
+  useEffect(() => {
+    const onSetup = (event: Event) => {
+      const group = (event as CustomEvent<StepGroup | undefined>).detail;
+      setShowManual(false);
+      setWizardGroup(group || 'core');
+    };
+    const onHelp = (event: Event) => setHelpQuestion((event as CustomEvent<string | undefined>).detail || '');
+    window.addEventListener(OPEN_SETUP_EVENT, onSetup);
+    window.addEventListener(OPEN_HELP_CHAT_EVENT, onHelp);
+    return () => {
+      window.removeEventListener(OPEN_SETUP_EVENT, onSetup);
+      window.removeEventListener(OPEN_HELP_CHAT_EVENT, onHelp);
+    };
   }, []);
 
   useEffect(() => {
@@ -405,7 +428,8 @@ function App() {
 
   async function rerankCandidates() {
     if (!apiConfigured) {
-      setApiNote('AI再評価はサーバー準備後に使えます。設定 →「連携の準備」を上から進めてください');
+      setApiNote('AI再評価はサーバー準備後に使えます。準備の案内を開きます');
+      openSetupWizard('core');
       return;
     }
     if (discovering || ranking || enrichingX) {
@@ -432,7 +456,8 @@ function App() {
 
   async function discoverCandidates() {
     if (!apiConfigured) {
-      setApiNote('自動の候補探しはサーバー準備後に使えます。設定 →「連携の準備」を上から進めてください');
+      setApiNote('自動の候補探しはサーバー準備後に使えます。準備の案内を開きます');
+      openSetupWizard('core');
       return;
     }
     if (discovering || ranking || enrichingX) {
@@ -463,7 +488,8 @@ function App() {
 
   async function enrichXCandidates() {
     if (!apiConfigured) {
-      setApiNote('X公式情報の更新はサーバー準備後に使えます。設定 →「連携の準備」を上から進めてください');
+      setApiNote('X公式情報の更新はサーバー準備後に使えます。準備の案内を開きます');
+      openSetupWizard('core');
       return;
     }
     if (discovering || ranking || enrichingX) {
@@ -511,7 +537,8 @@ function App() {
       return;
     }
     if (!apiConfigured) {
-      setApiNote('AI分析はサーバー準備後に使えます。設定 →「連携の準備」を上から進めてください');
+      setApiNote('AI分析はサーバー準備後に使えます。準備の案内を開きます');
+      openSetupWizard('core');
       return;
     }
     setAnalyzingSelf(true);
@@ -562,10 +589,33 @@ function App() {
       {toast && <div className="status-toast" role="status" aria-live="polite"><p>{friendlyReason(toast)}</p><button type="button" aria-label="閉じる" onClick={() => setToast('')}>×</button></div>}
 
       {pending && <ResultSheet candidate={pending.candidate} action={pending.action} onResolve={resolvePending} />}
-      {showOnboarding && <Onboarding onFinish={() => { markOnboardingSeen(); setShowOnboarding(false); }} onOpenManual={() => setShowManual(true)} />}
-      {!showOnboarding && showManual && <Manual onClose={() => setShowManual(false)} />}
+      {showOnboarding && <Onboarding onFinish={() => { markOnboardingSeen(); setShowOnboarding(false); }} onStartSetup={() => openSetupWizard('core')} />}
+      {!showOnboarding && showManual && <Manual onClose={() => setShowManual(false)} canAskAi={helpChatAvailable(connection)} />}
+      {/* Only the top dialog is mounted, so Escape in the help chat cannot also close the
+          wizard underneath; the wizard remounts on its last step afterwards. */}
+      {!showOnboarding && wizardGroup && helpQuestion == null && <SetupWizard initialGroup={wizardGroup} onGroupChange={setWizardGroup} onClose={() => setWizardGroup(null)} onGoToday={() => setTab('today')} />}
+      {helpQuestion != null && <HelpChat initialQuestion={helpQuestion} context={connectionContext(connection)} onClose={() => setHelpQuestion(null)} />}
     </div>
   );
+}
+
+function DemoToggle() {
+  const [open, setOpen] = useState(false);
+  return open
+    ? <div className="demo-wrap"><DemoPreview /><button type="button" className="demo-toggle" onClick={() => setOpen(false)}>見本を閉じる</button></div>
+    : <button type="button" className="demo-toggle" onClick={() => setOpen(true)}>準備が終わるとこうなります（見本を見る）</button>;
+}
+
+function connectionContext(status: ReturnType<typeof useConnectionStatus>['status']) {
+  const label = { ready: '完了', todo: '未設定', partial: '途中', unknown: '未確認' } as const;
+  return [
+    `サーバー: ${label[status.server === 'todo' ? 'todo' : status.reachable]}`,
+    `個人管理キー: ${label[status.key]}`,
+    `AI: ${label[status.ai]}`,
+    `自動探索: ${label[status.discovery]}`,
+    `X: ${label[status.x]}`,
+    `Instagram: ${label[status.instagram]}`,
+  ].join(' / ');
 }
 
 function BudgetPill({ state }: { state: AppState }) {
@@ -608,6 +658,7 @@ function Today({ state, onChange, doneToday, onOpen, onTab, capabilityEpoch }: {
         <button className="text-button" onClick={() => onTab('settings')}>目的を編集</button>
       </div>
       <h1>{state.mission.primaryGoal}</h1>
+      {(extraGoals.length > 0 || missionNote) && <div className="mission-more-row">
       {extraGoals.length > 0 && (
         <details className="mission-more">
           <summary>ほか {extraGoals.length}件の目的地</summary>
@@ -622,6 +673,7 @@ function Today({ state, onChange, doneToday, onOpen, onTab, capabilityEpoch }: {
           <p>{missionNote}</p>
         </details>
       )}
+      </div>}
       <div className={hasCandidates ? 'mission-meter' : 'mission-meter is-idle'}>
         <div className="mission-progress-head"><span>今日の進捗</span><strong>{hasCandidates ? `${doneToday} / ${plannedTotal}` : '準備前'}</strong></div>
         <div className="mission-progress" aria-label={`今日の進捗 ${progress}%`}><span style={{ width: `${progress}%` }} /></div>
@@ -634,10 +686,11 @@ function Today({ state, onChange, doneToday, onOpen, onTab, capabilityEpoch }: {
       </div>
     </section>
 
-    <SetupBanner context="today" onOpenSettings={() => onTab('settings')} />
+    <SetupBanner context="today" />
 
     <MissionInbox state={state} onChange={onChange} onOpenCandidate={onOpen} onOpenMe={() => onTab('me')} onOpenDiscover={() => onTab('discover')} capabilityEpoch={capabilityEpoch} />
 
+    {!hasCandidates && <DemoToggle />}
     {!hasCandidates && <QuickSearch mission={state.mission} />}
 
     {hasCandidates && state.insights[0] && <section className="coach-card">
@@ -711,7 +764,7 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
 
   return <>
     <PageHeading eyebrow="探す" title="つながる相手を見つける" text="まずは下のボタンから。見つかった人は目的との相性順に並びます。" />
-    <SetupBanner context="discover" onOpenSettings={onOpenSettings} />
+    <SetupBanner context="discover" />
 
     <section className="discover-primary-card">
       <div className="discover-primary-copy">
@@ -867,7 +920,7 @@ function Me({ state, onAnalyze, analyzing, onOpenSettings }: { state: AppState; 
 
   return <>
     <PageHeading eyebrow="自分" title="自分の発信も整える" text="プロフィールと最近の投稿が、今の目的に合っているかをAIが確認します。" />
-    <SetupBanner context="me" onOpenSettings={onOpenSettings} />
+    <SetupBanner context="me" />
     <section className="score-card"><div><span>Missionとの一致度</span><strong>{score == null ? '—' : score}</strong>{score != null && <small>/100</small>}</div><p>{state.selfProfile.summary || 'まだ分析していません。プロフィールか最近の投稿を入れると、今の状態と優先して直す場所を整理します。'}</p></section>
     <section className="form-card self-analysis-card">
       <div className="form-intro"><strong>まず現在の発信を入れる</strong><p>片方だけでも分析できます。X同期済みなら自動で入っている場合があります。</p></div>
@@ -1045,6 +1098,7 @@ function Settings({ state, onChange, onOpenManual }: { state: AppState; onChange
       <button className="primary-button" onClick={() => void persist()} disabled={saving} aria-live="polite">{saving ? '保存中…' : saved ? '保存しました' : 'この設定を保存'}</button>
     </section>
     <BackupControls state={state} onRestore={onChange} />
+    <ThemeSwitcher />
   </>;
 }
 

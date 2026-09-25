@@ -11,7 +11,7 @@ body,
 /* The global status can contain errors, offline mode, or success. A permanently green
    dot looked like a connection-success indicator, so keep it neutral and let text speak. */
 .status-line i {
-  background: #7d8b9d;
+  background: var(--text);
   box-shadow: none;
 }
 
@@ -63,7 +63,7 @@ body,
 .queue-row,
 .sheet-actions button,
 .load-more-button {
-  -webkit-tap-highlight-color: rgba(114, 223, 189, .14);
+  -webkit-tap-highlight-color: rgb(var(--accent-rgb) / .14);
 }
 
 .candidate-actions button {
@@ -73,15 +73,15 @@ body,
 }
 
 button[data-copy-state="success"] {
-  color: #bdf0df !important;
-  border-color: rgba(114, 223, 189, .2) !important;
-  background: rgba(114, 223, 189, .09) !important;
+  color: var(--accent) !important;
+  border-color: rgb(var(--accent-rgb) / .2) !important;
+  background: rgb(var(--accent-rgb) / .09) !important;
 }
 
 button[data-copy-state="error"] {
-  color: #ffc0c9 !important;
-  border-color: rgba(255, 154, 168, .22) !important;
-  background: rgba(255, 154, 168, .08) !important;
+  color: var(--danger-text) !important;
+  border-color: rgb(var(--danger-rgb) / .22) !important;
+  background: rgb(var(--danger-rgb) / .08) !important;
 }
 
 .load-more-button {
@@ -95,7 +95,7 @@ button[data-copy-state="error"] {
   border: 1px solid var(--line);
   border-radius: 14px;
   color: var(--text-soft);
-  background: rgba(255, 255, 255, .025);
+  background: rgb(var(--tint-rgb) / .025);
   font: inherit;
 }
 
@@ -113,9 +113,9 @@ button[data-copy-state="error"] {
   display: grid;
   gap: 11px;
   padding: 13px;
-  border: 1px solid rgba(255, 194, 124, .18);
+  border: 1px solid rgb(var(--warn-rgb) / .18);
   border-radius: 14px;
-  background: rgba(255, 194, 124, .055);
+  background: rgb(var(--warn-rgb) / .055);
 }
 
 .restore-confirm > div:first-child {
@@ -124,12 +124,12 @@ button[data-copy-state="error"] {
 }
 
 .restore-confirm strong {
-  color: #f3d2aa;
+  color: var(--warn-text);
   font-size: 12px;
 }
 
 .restore-confirm span {
-  color: #9eacbc;
+  color: var(--muted);
   font-size: 12px;
   line-height: 1.6;
   overflow-wrap: anywhere;
@@ -158,7 +158,7 @@ button[data-copy-state="error"] {
 
 .insight-card > div:last-child > span {
   display: inline-block;
-  color: #8393a6;
+  color: var(--muted);
   font-size: 12px;
 }
 

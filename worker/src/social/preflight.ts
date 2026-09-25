@@ -36,11 +36,13 @@ export interface PreflightEnv extends XOAuthEnv {
   X_LOOKUP_READ_USD?: string;
   X_USER_READ_USD?: string;
   X_OWNED_READ_USD?: string;
+  X_OWNED_READ_ELIGIBLE?: string;
   INSTAGRAM_COMMENT_REPLY_USD?: string;
   INSTAGRAM_DM_WRITE_USD?: string;
   INSTAGRAM_DM_READ_USD?: string;
   SOCIAL_RECONCILE_READ_USD?: string;
   DEFAULT_MONTHLY_BUDGET_USD?: string;
+  SAKURA_AI_API_KEY?: string;
   GROQ_API_KEY?: string;
   GROQ_BILLING_MODE?: string;
   DEEPSEEK_API_KEY?: string;
@@ -157,12 +159,13 @@ export async function buildProductionPreflight(env: PreflightEnv, userId: string
 
   // Key presence only; values never leave the Worker. Lets Settings explain whether
   // AI ranking/drafts and free discovery are live or on the local fallback.
+  const aiSakura = Boolean(env.SAKURA_AI_API_KEY);
   const aiGroq = Boolean(env.GROQ_API_KEY);
   const aiDeepseek = Boolean(env.DEEPSEEK_API_KEY);
   const discoveryReady = Boolean(env.TAVILY_API_KEY) && env.TAVILY_BILLING_MODE === 'free';
-  checks.push(aiGroq || aiDeepseek
-    ? ok('aiProvider', aiGroq ? 'AI provider: Groq is configured.' : 'AI provider: DeepSeek is configured.')
-    : warn('aiProvider', 'No AI provider key is configured, so ranking falls back to local scoring and no drafts are written.', 'Set GROQ_API_KEY (free tier) as a Worker secret.'));
+  checks.push(aiSakura || aiGroq || aiDeepseek
+    ? ok('aiProvider', `AI providers configured: ${[aiSakura && 'Sakura', aiGroq && 'Groq', aiDeepseek && 'DeepSeek'].filter(Boolean).join(', ')}.`)
+    : warn('aiProvider', 'No AI provider key is configured, so ranking falls back to local scoring and no drafts are written.', 'Set SAKURA_AI_API_KEY or GROQ_API_KEY (free tiers) as a Worker secret.'));
   checks.push(discoveryReady
     ? ok('freeDiscovery', 'Free Tavily discovery is configured.')
     : warn('freeDiscovery', 'Free candidate discovery is not configured.', 'Set TAVILY_API_KEY as a Worker secret and TAVILY_BILLING_MODE=free.'));
@@ -205,8 +208,9 @@ export async function buildProductionPreflight(env: PreflightEnv, userId: string
       reason: probe.reason,
     },
     ai: {
+      sakura: aiSakura,
       groq: aiGroq,
-      groqFree: aiGroq && env.GROQ_BILLING_MODE === 'free',
+      groqFree: aiGroq && env.GROQ_BILLING_MODE !== 'paid',
       deepseek: aiDeepseek,
       discovery: discoveryReady,
     },
@@ -316,6 +320,12 @@ function block(label: string, reason: string, nextStep?: string): Check {
   return { ok: false, severity: 'block', label, reason, nextStep };
 }
 
+function parsedPrice(raw?: string) {
+  if (raw == null || String(raw).trim() === '') return null;
+  const amount = Number(raw);
+  return Number.isFinite(amount) && amount >= 0 ? amount : null;
+}
+
 async function sourceStatuses(
   env: PreflightEnv,
   userId: string,
@@ -325,8 +335,11 @@ async function sourceStatuses(
   webhookSecrets: boolean,
   webhookConfirmed: boolean,
 ) {
-  const xMentionsReady = xConnected && scopes.includes('tweet.read') && env.X_INBOUND_SYNC_ENABLED === 'true' && Boolean(env.X_INBOUND_READ_USD?.trim());
-  const xDmReady = xConnected && scopes.includes('dm.read') && env.X_DM_READ_ENABLED === 'true' && Boolean(env.X_DM_READ_USD?.trim());
+  // Same price parsing as the runtime sync paths, so a typo such as "abc" or "-1" is
+  // reported as blocked here instead of READY.
+  const ownedInbound = env.X_OWNED_READ_ELIGIBLE === 'true' && (parsedPrice(env.X_OWNED_READ_USD) ?? 0) > 0;
+  const xMentionsReady = xConnected && scopes.includes('tweet.read') && env.X_INBOUND_SYNC_ENABLED === 'true' && (parsedPrice(env.X_INBOUND_READ_USD) != null || ownedInbound);
+  const xDmReady = xConnected && scopes.includes('dm.read') && env.X_DM_READ_ENABLED === 'true' && parsedPrice(env.X_DM_READ_USD) != null;
   const igCommentsPoll = probe.readComments === true;
   const igDmReady = probe.readDm === true && env.INSTAGRAM_DM_READ_ENABLED === 'true' && env.INSTAGRAM_DM_READ_USD != null && String(env.INSTAGRAM_DM_READ_USD).trim() !== '';
   const mentionCheckpoint = await loadSyncCheckpoint(env.DB, userId, 'x_mentions');

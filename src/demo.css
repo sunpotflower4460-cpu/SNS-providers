@@ -1,0 +1,20 @@
+.demo-preview { position: relative; display: grid; gap: 10px; padding: 14px; border-radius: 20px; border: 2px dashed rgb(var(--accent-rgb) / .45); background: rgb(var(--accent-rgb) / .05); }
+.demo-badge { position: absolute; top: -12px; right: 14px; padding: 3px 12px; border-radius: 999px; background: var(--accent); color: var(--on-accent); font-size: 13px; font-weight: 800; }
+.demo-card { display: grid; grid-template-columns: 40px 1fr; gap: 12px; padding: 12px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line); }
+.demo-icon { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; font-size: 19px; font-weight: 800; }
+.demo-icon.is-reply { background: rgb(var(--info-rgb) / .15); color: var(--info-text); }
+.demo-icon.is-like { background: rgb(var(--danger-rgb) / .14); color: var(--danger-text); }
+.demo-icon.is-follow { background: rgb(var(--accent-rgb) / .15); color: var(--accent); }
+.demo-card small { display: block; font-size: 13px; font-weight: 700; color: var(--muted); }
+.demo-card strong { display: block; margin-top: 2px; font-size: 15px; line-height: 1.45; color: var(--text); }
+.demo-draft { margin: 8px 0 0; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); font-size: 14px; line-height: 1.6; color: var(--text-2); }
+.demo-actions { display: flex; gap: 8px; margin-top: 8px; }
+.demo-actions span { padding: 6px 12px; border-radius: 10px; border: 1px solid var(--line-strong); font-size: 13px; font-weight: 700; color: var(--text-2); }
+.demo-actions .is-primary { border-color: transparent; background: var(--accent); color: var(--on-accent); }
+.demo-preview.is-compact .demo-card { padding: 10px; }
+.demo-flow { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; counter-reset: flow; }
+.demo-flow li { counter-increment: flow; display: grid; grid-template-columns: 36px 1fr; gap: 12px; align-items: center; padding: 14px; border-radius: 16px; background: var(--surface-2); font-size: 15px; line-height: 1.6; color: var(--text); }
+.demo-flow li::before { content: counter(flow); width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: var(--on-accent); font-weight: 800; }
+.demo-flow li b { color: var(--accent); }
+.demo-toggle { width: 100%; min-height: 48px; margin: 0 0 16px; border-radius: 14px; border: 1px dashed rgb(var(--accent-rgb) / .5); background: transparent; color: var(--accent); font-size: 15px; font-weight: 800; }
+.demo-wrap { margin: 0 0 16px; }

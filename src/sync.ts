@@ -67,7 +67,7 @@ export async function uploadRemoteState(
   userId = 'local-user',
   expectedUpdatedAt: string | null = getRemoteStateVersion(),
 ) {
-  if (!apiConfigured) throw new Error('サーバーが未接続です（設定 →「連携の準備」）');
+  if (!apiConfigured) throw new Error('サーバーが未接続です（設定 →「準備をはじめる」）');
   if (!token.trim()) throw new Error('同期キーを入力してください');
   if (expectedUpdatedAt !== null && !validRemoteVersion(expectedUpdatedAt)) {
     throw new Error('この端末のクラウド同期versionが不正です。先にクラウドから最新版を復元してください');
@@ -89,7 +89,7 @@ export async function uploadRemoteState(
 }
 
 export async function downloadRemoteState(token = getSyncToken(), userId = 'local-user') {
-  if (!apiConfigured) throw new Error('サーバーが未接続です（設定 →「連携の準備」）');
+  if (!apiConfigured) throw new Error('サーバーが未接続です（設定 →「準備をはじめる」）');
   if (!token.trim()) throw new Error('同期キーを入力してください');
   const result = await syncFetch<DownloadResponse>(`/api/sync/state?userId=${encodeURIComponent(userId)}`, token);
   if (typeof result.found !== 'boolean') throw new Error('D1 download returned an invalid found flag');

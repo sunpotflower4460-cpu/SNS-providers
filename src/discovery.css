@@ -6,10 +6,10 @@
   align-items: center;
   min-height: 62px;
   padding: 10px 12px;
-  border: 1px solid rgba(121,231,197,.18);
+  border: 1px solid rgb(var(--accent-rgb) / .18);
   border-radius: 16px;
-  color: #eaf3ff;
-  background: linear-gradient(135deg, rgba(121,231,197,.12), rgba(138,168,255,.07));
+  color: var(--text);
+  background: linear-gradient(135deg, rgb(var(--accent-rgb) / .12), rgb(var(--info-rgb) / .07));
   text-align: left;
 }
 .discovery-button > span {
@@ -19,12 +19,12 @@
   display: grid;
   place-items: center;
   border-radius: 11px;
-  color: #06111c;
-  background: linear-gradient(135deg, #79e7c5, #8ee5ff);
+  color: var(--on-accent);
+  background: linear-gradient(135deg, var(--accent), var(--accent));
   font-weight: 900;
 }
 .discovery-button strong { font-size: 12px; }
-.discovery-button small { color: #8f9fb3; font-size: 11px; line-height: 1.4; }
+.discovery-button small { color: var(--muted); font-size: 11px; line-height: 1.4; }
 .discovery-button:active { filter: brightness(.92); }
 @media (hover: hover) and (pointer: fine) {
   .discovery-button:hover { filter: brightness(1.08); }
