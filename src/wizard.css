@@ -51,3 +51,7 @@
 .help-chat-form { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
 .help-chat-form textarea { resize: none; border-radius: 14px; border: 1px solid var(--line-strong); background: var(--surface-2); color: var(--text); padding: 10px 12px; font-size: 16px; line-height: 1.5; }
 .help-chat-form button { min-height: 48px; padding: 0 18px; }
+.help-chat-external { display: grid; gap: 6px; padding: 10px 12px; margin-top: 6px; border-radius: 14px; background: rgb(var(--info-rgb) / .1); }
+.help-chat-external span { font-size: 13px; color: var(--text-2); }
+.help-chat-external div { display: flex; gap: 16px; }
+.help-chat-external a { min-height: 36px; display: inline-flex; align-items: center; font-size: 15px; font-weight: 800; color: var(--info-text); }

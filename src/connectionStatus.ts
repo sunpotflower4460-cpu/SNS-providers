@@ -16,6 +16,8 @@ export interface ConnectionStatus {
   helpAi: StepState;
   discovery: StepState;
   x: StepState;
+  /** X mentions/replies actually flow into 今日 (inbox source READY). */
+  xInbox: StepState;
   instagram: StepState;
   checking: boolean;
   error: string;
@@ -29,6 +31,7 @@ const initial = (): ConnectionStatus => ({
   helpAi: 'unknown',
   discovery: 'unknown',
   x: 'unknown',
+  xInbox: 'unknown',
   instagram: 'unknown',
   checking: false,
   error: '',
@@ -74,7 +77,11 @@ export function useConnectionStatus() {
         next.helpAi = ai.sakura || ai.groqFree ? 'ready' : 'todo';
         next.discovery = ai.discovery ? 'ready' : 'todo';
         next.x = x.tokenValid ? 'ready' : x.configured ? 'partial' : 'todo';
-        next.instagram = instagram.tokenValid ? 'ready' : instagram.configured ? 'partial' : 'todo';
+        // Instagram counts as connected only when comments can actually be read; a valid
+        // token without comment permission leaves the inbox blocked.
+        next.instagram = instagram.tokenValid && instagram.commentsPermission ? 'ready' : instagram.configured ? 'partial' : 'todo';
+        const xMentions = record(record(result.inboxSources).xMentions);
+        next.xInbox = xMentions.status === 'READY' ? 'ready' : 'todo';
       } catch (error) {
         const message = error instanceof Error ? error.message : '';
         next = { ...next, key: /auth|token|401|403|unauth/i.test(message) ? 'todo' : next.key };

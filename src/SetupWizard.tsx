@@ -140,6 +140,12 @@ export default function SetupWizard({ initialGroup, onClose, onGoToday, onGroupC
   </div>;
 }
 
+const DONE_MESSAGE: Record<StepGroup, string> = {
+  core: 'これでAIが相手を探し、いいね・返信の文案を用意します。「今日」を開いてみましょう。',
+  x: 'Xのメンションや返信が「今日」に並び、AIが返信の文案を用意します。',
+  instagram: '自分の投稿へのコメントが「今日」に並びます。DMの取り込みは追加の設定が必要です（くわしい説明を参照）。',
+};
+
 function GroupDone({ group, status, done, onGroup, onJump, onGoToday }: {
   group: StepGroup;
   status: ConnectionStatus;
@@ -165,7 +171,7 @@ function GroupDone({ group, status, done, onGroup, onJump, onGoToday }: {
   return <div className="wizard-body wizard-done">
     <p className="wizard-kicker">おつかれさまでした</p>
     <h2 id="wizard-title">「{GROUP_LABEL[group]}」は完了です</h2>
-    <p className="wizard-why">{group === 'core' ? 'これでAIが相手を探し、いいね・返信の文案を用意します。「今日」を開いてみましょう。' : '「今日」に取り込んだ交流が並ぶようになります。'}</p>
+    <p className="wizard-why">{DONE_MESSAGE[group]}</p>
     <div className="wizard-choices">
       <button type="button" className="primary-button full" onClick={onGoToday}>「今日」を見る</button>
       {others.map((item) => <button type="button" key={item} className="secondary-button full" onClick={() => onGroup(item)}>{GROUP_LABEL[item]}（必要なら）</button>)}

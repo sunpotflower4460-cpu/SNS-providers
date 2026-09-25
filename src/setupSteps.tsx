@@ -5,7 +5,21 @@ import { friendlyReason } from './friendlyReason';
 import { appUrl, CopyField, PersonalKeyMaker, serverUrl, XPriceTable, XServerValues, XSetupValues } from './setupHelpers';
 import { startXOAuth } from './xAccount';
 
-const REPO = 'https://github.com/sunpotflower4460-cpu/SNS-providers';
+const UPSTREAM_REPO = 'https://github.com/sunpotflower4460-cpu/SNS-providers';
+
+/**
+ * The repository whose Actions deploy this app's Worker. Forks set VITE_SETUP_REPO_URL at
+ * build time; a GitHub Pages build (owner.github.io/repo) is derived automatically.
+ */
+export function setupRepoUrl() {
+  const configured = import.meta.env.VITE_SETUP_REPO_URL?.trim();
+  if (configured && /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/?$/.test(configured)) return configured.replace(/\/$/, '');
+  const pages = window.location.hostname.match(/^([\w-]+)\.github\.io$/);
+  const repo = window.location.pathname.split('/').filter(Boolean)[0];
+  if (pages && repo) return `https://github.com/${pages[1]}/${repo}`;
+  return UPSTREAM_REPO;
+}
+const REPO = setupRepoUrl();
 
 export type StepGroup = 'core' | 'x' | 'instagram';
 
@@ -201,6 +215,8 @@ export const WIZARD_STEPS: WizardStep[] = [
     open: { label: 'Cloudflareを開く', href: 'https://dash.cloudflare.com/?to=/:account/workers/services/view/social-mission-api/production/settings' },
     todo: ['種類「テキスト」で下の値を追加 →「デプロイ」'],
     extra: () => <XPriceTable kind="read" />,
+    done: (status) => status.xInbox === 'ready',
+    verify: true,
     minutes: 5,
   },
   {
@@ -223,7 +239,10 @@ export const WIZARD_STEPS: WizardStep[] = [
     title: 'Instagram：サーバーに登録',
     why: 'Instagramの鍵をサーバーに預けます。',
     open: { label: 'Cloudflareを開く', href: 'https://dash.cloudflare.com/?to=/:account/workers/services/view/social-mission-api/production/settings' },
-    todo: ['シークレットとして下の3つを追加 →「デプロイ」'],
+    todo: [
+      'シークレットとして下の3つを追加 →「デプロイ」',
+      'Metaのアプリで「instagram_business_manage_comments」（コメントの管理）が許可されているか確認',
+    ],
     extra: () => <>
       <ul className="wizard-names">
         <li><code>INSTAGRAM_ACCESS_TOKEN</code> … 生成したトークン</li>

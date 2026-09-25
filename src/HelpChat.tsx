@@ -16,6 +16,9 @@ export default function HelpChat({ initialQuestion, context, onClose }: { initia
   const [draft, setDraft] = useState(initialQuestion || '');
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
+  // Set when the in-app AI could not answer (provider fallback, daily limit, request error),
+  // so the external AI links are offered right inside the chat.
+  const [externalQuestion, setExternalQuestion] = useState('');
   const containerRef = useModalA11y<HTMLElement>(onClose);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -34,9 +37,11 @@ export default function HelpChat({ initialQuestion, context, onClose }: { initia
     try {
       const result = await askHelpChat(next, context);
       setMessages([...next, { role: 'assistant', content: result.answer }]);
+      setExternalQuestion(result.provider === 'fallback' || result.provider === 'limit' ? content : '');
       if (result.remaining != null && result.remaining <= 5) setNote(`今日はあと${result.remaining}回使えます`);
     } catch (error) {
       setNote(friendlyReason(error instanceof Error ? error.message : 'アプリ内AIにつながりませんでした'));
+      setExternalQuestion(content);
     } finally {
       setBusy(false);
     }
@@ -58,10 +63,21 @@ export default function HelpChat({ initialQuestion, context, onClose }: { initia
         {busy && <p className="help-chat-ai is-typing">考えています…</p>}
       </div>
       {note && <p className="wizard-note" role="status">{note}</p>}
+      {externalQuestion && <div className="help-chat-external">
+        <span>ほかのAIで聞く（質問文が入った状態で開きます・無料版でOK）</span>
+        <div>
+          <a href={`https://chatgpt.com/?q=${encodeURIComponent(externalPrompt(externalQuestion))}`} target="_blank" rel="noopener noreferrer">ChatGPTに聞く</a>
+          <a href={`https://claude.ai/new?q=${encodeURIComponent(externalPrompt(externalQuestion))}`} target="_blank" rel="noopener noreferrer">Claudeに聞く</a>
+        </div>
+      </div>}
       <form className="help-chat-form" onSubmit={(event) => { event.preventDefault(); void send(); }}>
         <textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="例: GitHubの画面で Run workflow が見つかりません" rows={2} maxLength={1500} />
         <button type="submit" className="primary-button" disabled={busy || !draft.trim()}>送る</button>
       </form>
     </section>
   </div>;
+}
+
+function externalPrompt(question: string) {
+  return `「Social Mission」というスマホアプリ（XやInstagramでつながる相手をAIが探し、いいね・返信の文案を出すアプリ）について質問です。\n${question}\nスマホに詳しくない人向けに、やさしく1つずつ教えてください。`;
 }
