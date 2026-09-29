@@ -3,7 +3,7 @@ import { type ConnectionStatus, helpChatAvailable, useConnectionStatus } from '.
 import { friendlyReason } from './friendlyReason';
 import { GROUP_LABEL, helpPrompt, type StepGroup, WIZARD_STEPS, type WizardStep } from './setupSteps';
 import { useModalA11y } from './useModalA11y';
-import { isIosHomeScreenApp, loadPosition, loadTodoChecks, safariUrl, savePosition, saveTodoChecks } from './wizardMemory';
+import { clearTodoChecks, isIosHomeScreenApp, loadPosition, loadTodoChecks, safariUrl, savePosition, saveTodoChecks } from './wizardMemory';
 import './wizard.css';
 
 export const OPEN_SETUP_EVENT = 'sns-providers:open-setup';
@@ -68,7 +68,10 @@ export default function SetupWizard({ initialGroup, onClose, onGoToday, onGroupC
   const [group, setGroup] = useState<StepGroup>(() => initialGroup || (nextOpenStep('core', status) ? 'core' : 'x'));
   const steps = useMemo(() => WIZARD_STEPS.filter((step) => step.group === group), [group]);
   const [index, setIndex] = useState(() => {
-    const remembered = lastPosition || loadPosition();
+    // A persisted position only wins while the popup was left open (iOS reload); after an
+    // explicit close, resume from the first unfinished step instead.
+    const saved = loadPosition();
+    const remembered = lastPosition || (saved?.open ? saved : null);
     if (remembered?.group === group) {
       const resumed = steps.findIndex((item) => item.id === remembered.id);
       if (resumed >= 0) return resumed;
@@ -108,7 +111,11 @@ export default function SetupWizard({ initialGroup, onClose, onGoToday, onGroupC
       window.removeEventListener('focus', onVisible);
     };
   }, [leftAt]);
-  useEffect(() => setWelcomeBack(false), [step?.id]);
+  useEffect(() => {
+    // A new step starts fresh: only a link opened from this step counts as "returning".
+    setWelcomeBack(false);
+    setLeftAt(0);
+  }, [step?.id]);
 
   useEffect(() => {
     if (problem) problemRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -139,6 +146,7 @@ export default function SetupWizard({ initialGroup, onClose, onGoToday, onGroupC
     if (!step) return;
     if (!step.verify) {
       markDone(step.id);
+      clearTodoChecks([step.id]);
       go(index + 1);
       return;
     }
@@ -146,6 +154,7 @@ export default function SetupWizard({ initialGroup, onClose, onGoToday, onGroupC
     try {
       const latest = await refresh();
       if (step.done?.(latest)) {
+        clearTodoChecks([step.id]);
         go(index + 1);
       } else {
         setProblem(latest.error ? friendlyReason(latest.error) : 'まだ確認できませんでした。登録後、反映まで1〜2分かかることがあります。少し待ってからもう一度押してください。');
@@ -219,7 +228,11 @@ function GroupDone({ group, status, done, onGroup, onJump, onGoToday }: {
     <p className="wizard-why">{DONE_MESSAGE[group]}</p>
     <div className="wizard-choices">
       <button type="button" className="primary-button full" onClick={onGoToday}>「今日」を見る</button>
-      <button type="button" className="secondary-button full" onClick={() => onJump(WIZARD_STEPS.find((item) => item.group === group)!.id)}>手順を最初から見直す</button>
+      <button type="button" className="secondary-button full" onClick={() => {
+        const groupSteps = WIZARD_STEPS.filter((item) => item.group === group);
+        clearTodoChecks(groupSteps.map((item) => item.id));
+        onJump(groupSteps[0].id);
+      }}>手順を最初から見直す</button>
       {others.map((item) => <button type="button" key={item} className="secondary-button full" onClick={() => onGroup(item)}>{GROUP_LABEL[item]}（必要なら）</button>)}
     </div>
   </div>;

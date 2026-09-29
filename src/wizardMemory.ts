@@ -62,6 +62,13 @@ export function saveTodoChecks(stepId: string, checks: boolean[]) {
   write(TODO_KEY, { ...all, [stepId]: checks });
 }
 
+/** Forget ticks once a step is finished or the guide is restarted, so a rerun starts clean. */
+export function clearTodoChecks(stepIds: string[]) {
+  const all = read<Record<string, unknown>>(TODO_KEY, {});
+  for (const id of stepIds) delete all[id];
+  write(TODO_KEY, all);
+}
+
 /** iPhone / iPad home-screen app: links open in an overlay sheet that hides the popup. */
 export function isIosHomeScreenApp() {
   if (typeof navigator === 'undefined') return false;
