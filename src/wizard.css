@@ -19,8 +19,6 @@
 .wizard-open { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 56px; padding: 12px 18px; border-radius: 16px; background: var(--accent); color: var(--on-accent); font-size: 17px; font-weight: 800; text-decoration: none; text-align: center; }
 .wizard-open span { font-size: 18px; }
 .wizard-todo { margin: 0; padding: 0; list-style: none; counter-reset: todo; display: grid; gap: 10px; }
-.wizard-todo li { counter-increment: todo; position: relative; padding: 12px 14px 12px 50px; border-radius: 14px; background: var(--surface-2); font-size: 15px; line-height: 1.65; color: var(--text); overflow-wrap: anywhere; }
-.wizard-todo li::before { content: counter(todo); position: absolute; left: 12px; top: 11px; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: rgb(var(--accent-rgb) / .16); color: var(--accent); font-weight: 800; font-size: 14px; }
 .wizard-extra { display: grid; gap: 10px; }
 .wizard-note { margin: 0; font-size: 13px; line-height: 1.6; color: var(--muted); overflow-wrap: anywhere; }
 .wizard-names { margin: 0; padding-left: 18px; display: grid; gap: 6px; font-size: 14px; color: var(--text-2); }
@@ -55,3 +53,15 @@
 .help-chat-external span { font-size: 13px; color: var(--text-2); }
 .help-chat-external div { display: flex; gap: 16px; }
 .help-chat-external a { min-height: 36px; display: inline-flex; align-items: center; font-size: 15px; font-weight: 800; color: var(--info-text); }
+
+.wizard-todo li { list-style: none; }
+.wizard-todo button { width: 100%; display: grid; grid-template-columns: 30px 1fr; gap: 10px; align-items: start; padding: 12px 14px; border-radius: 14px; border: 2px solid transparent; background: var(--surface-2); color: var(--text); text-align: left; font-size: 15px; line-height: 1.65; overflow-wrap: anywhere; }
+.wizard-check { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: rgb(var(--accent-rgb) / .16); color: var(--accent); font-weight: 800; font-size: 14px; margin-top: 1px; }
+.wizard-todo .is-current button { border-color: rgb(var(--accent-rgb) / .6); }
+.wizard-todo .is-current em { display: inline-block; margin-left: 8px; padding: 0 8px; border-radius: 999px; background: var(--accent); color: var(--on-accent); font-style: normal; font-size: 12px; font-weight: 800; vertical-align: 2px; }
+.wizard-todo .is-checked button { opacity: .6; }
+.wizard-todo .is-checked button > span:last-child { text-decoration: line-through; }
+.wizard-todo .is-checked .wizard-check { background: var(--accent); color: var(--on-accent); }
+.wizard-open-wrap { display: grid; gap: 6px; }
+.wizard-open-wrap .wizard-note a { color: var(--info-text); margin-left: 4px; }
+.wizard-welcome { margin: 0; padding: 10px 14px; border-radius: 14px; background: rgb(var(--info-rgb) / .12); color: var(--text); font-size: 15px; line-height: 1.6; }

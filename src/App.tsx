@@ -18,6 +18,7 @@ import type { StepGroup } from './setupSteps';
 import HelpChat from './HelpChat';
 import DemoPreview from './DemoPreview';
 import { helpChatAvailable, useConnectionStatus } from './connectionStatus';
+import { loadPosition, markWizardClosed } from './wizardMemory';
 import { hasSeenOnboarding, markOnboardingSeen } from './onboardingState';
 import { resolveVisibleResult } from './resultResolution';
 import { addCandidateFromReference, applyMissionDestinations, applyRankResults, applySelfAnalysis, applyXProfiles, destinationsFromMission, loadState, MAX_MISSION_DESTINATIONS, saveState, setFollowBackStatus, spendingCeilingUsd, syncBudget, updateCandidateDraft, updateMission, updateRelationshipPolicy, updateSelfProfileInputs } from './store';
@@ -82,7 +83,9 @@ function App() {
   const [persistenceError, setPersistenceError] = useState('');
   const [showOnboarding, setShowOnboarding] = useState(() => !hasSeenOnboarding());
   const [showManual, setShowManual] = useState(false);
-  const [wizardGroup, setWizardGroup] = useState<StepGroup | null>(null);
+  // If the setup popup was open when the user left for Cloudflare / X and iOS reloaded the
+  // app, bring it back on the same step.
+  const [wizardGroup, setWizardGroup] = useState<StepGroup | null>(() => (loadPosition()?.open ? loadPosition()!.group : null));
   const [helpQuestion, setHelpQuestion] = useState<string | null>(null);
   const { status: connection } = useConnectionStatus();
   const [capabilityEpoch, setCapabilityEpoch] = useState(0);
@@ -593,7 +596,7 @@ function App() {
       {!showOnboarding && showManual && <Manual onClose={() => setShowManual(false)} canAskAi={helpChatAvailable(connection)} />}
       {/* Only the top dialog is mounted, so Escape in the help chat cannot also close the
           wizard underneath; the wizard remounts on its last step afterwards. */}
-      {!showOnboarding && wizardGroup && helpQuestion == null && <SetupWizard initialGroup={wizardGroup} onGroupChange={setWizardGroup} onClose={() => setWizardGroup(null)} onGoToday={() => setTab('today')} />}
+      {!showOnboarding && wizardGroup && helpQuestion == null && <SetupWizard initialGroup={wizardGroup} onGroupChange={setWizardGroup} onClose={() => { markWizardClosed(); setWizardGroup(null); }} onGoToday={() => setTab('today')} />}
       {helpQuestion != null && <HelpChat initialQuestion={helpQuestion} context={connectionContext(connection)} onClose={() => setHelpQuestion(null)} />}
     </div>
   );
