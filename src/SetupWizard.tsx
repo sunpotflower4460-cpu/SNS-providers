@@ -3,6 +3,7 @@ import { type ConnectionStatus, helpChatAvailable, useConnectionStatus } from '.
 import { friendlyReason } from './friendlyReason';
 import { GROUP_LABEL, helpPrompt, type StepGroup, WIZARD_STEPS, type WizardStep } from './setupSteps';
 import { useModalA11y } from './useModalA11y';
+import { clearTodoChecks, isIosHomeScreenApp, loadPosition, loadTodoChecks, safariUrl, savePosition, saveTodoChecks } from './wizardMemory';
 import './wizard.css';
 
 export const OPEN_SETUP_EVENT = 'sns-providers:open-setup';
@@ -67,8 +68,12 @@ export default function SetupWizard({ initialGroup, onClose, onGoToday, onGroupC
   const [group, setGroup] = useState<StepGroup>(() => initialGroup || (nextOpenStep('core', status) ? 'core' : 'x'));
   const steps = useMemo(() => WIZARD_STEPS.filter((step) => step.group === group), [group]);
   const [index, setIndex] = useState(() => {
-    if (lastPosition?.group === group) {
-      const resumed = steps.findIndex((item) => item.id === lastPosition?.id);
+    // A persisted position only wins while the popup was left open (iOS reload); after an
+    // explicit close, resume from the first unfinished step instead.
+    const saved = loadPosition();
+    const remembered = lastPosition || (saved?.open ? saved : null);
+    if (remembered?.group === group) {
+      const resumed = steps.findIndex((item) => item.id === remembered.id);
       if (resumed >= 0) return resumed;
     }
     const first = steps.findIndex((step) => !stepComplete(step, status, loadDone()));
@@ -87,7 +92,30 @@ export default function SetupWizard({ initialGroup, onClose, onGoToday, onGroupC
 
   useEffect(() => {
     lastPosition = step ? { group, id: step.id } : null;
+    // Persisted with open=true so the popup comes back on the same step if iOS reloads
+    // the home-screen app while the user is on Cloudflare / X.
+    savePosition(step ? { group, id: step.id, open: true } : null);
   }, [group, step]);
+
+  // Returning from the page the step opened: say where to continue.
+  const [leftAt, setLeftAt] = useState(0);
+  const [welcomeBack, setWelcomeBack] = useState(false);
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && leftAt && Date.now() - leftAt > 1500) setWelcomeBack(true);
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
+  }, [leftAt]);
+  useEffect(() => {
+    // A new step starts fresh: only a link opened from this step counts as "returning".
+    setWelcomeBack(false);
+    setLeftAt(0);
+  }, [step?.id]);
 
   useEffect(() => {
     if (problem) problemRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -118,6 +146,7 @@ export default function SetupWizard({ initialGroup, onClose, onGoToday, onGroupC
     if (!step) return;
     if (!step.verify) {
       markDone(step.id);
+      clearTodoChecks([step.id]);
       go(index + 1);
       return;
     }
@@ -125,6 +154,7 @@ export default function SetupWizard({ initialGroup, onClose, onGoToday, onGroupC
     try {
       const latest = await refresh();
       if (step.done?.(latest)) {
+        clearTodoChecks([step.id]);
         go(index + 1);
       } else {
         setProblem(latest.error ? friendlyReason(latest.error) : 'まだ確認できませんでした。登録後、反映まで1〜2分かかることがあります。少し待ってからもう一度押してください。');
@@ -146,8 +176,9 @@ export default function SetupWizard({ initialGroup, onClose, onGoToday, onGroupC
         <p className="wizard-kicker">次はこれをやりましょう · 約{step.minutes}分</p>
         <h2 id="wizard-title">{step.title}</h2>
         <p className="wizard-why">{step.why}</p>
-        {step.open && <a className="wizard-open" href={step.open.href} target="_blank" rel="noopener noreferrer">{step.open.label}<span aria-hidden="true">↗</span></a>}
-        <ol className="wizard-todo">{step.todo.map((line) => <li key={line}>{line}</li>)}</ol>
+        {welcomeBack && <p className="wizard-welcome" role="status">おかえりなさい。✓ が付いていないところから続けてください。</p>}
+        {step.open && <OpenLink href={step.open.href} label={step.open.label} onLeave={() => setLeftAt(Date.now())} />}
+        <TodoList stepId={step.id} items={step.todo} />
         {step.extra && <div className="wizard-extra">{step.extra()}</div>}
         {problem && <p ref={problemRef} className="wizard-problem" role="alert">{problem}</p>}
       </div> : <GroupDone group={group} status={status} done={done} onGroup={switchGroup} onJump={(id) => go(steps.findIndex((item) => item.id === id))} onGoToday={() => { onClose(); onGoToday(); }} />}
@@ -197,9 +228,49 @@ function GroupDone({ group, status, done, onGroup, onJump, onGoToday }: {
     <p className="wizard-why">{DONE_MESSAGE[group]}</p>
     <div className="wizard-choices">
       <button type="button" className="primary-button full" onClick={onGoToday}>「今日」を見る</button>
-      <button type="button" className="secondary-button full" onClick={() => onJump(WIZARD_STEPS.find((item) => item.group === group)!.id)}>手順を最初から見直す</button>
+      <button type="button" className="secondary-button full" onClick={() => {
+        const groupSteps = WIZARD_STEPS.filter((item) => item.group === group);
+        clearTodoChecks(groupSteps.map((item) => item.id));
+        onJump(groupSteps[0].id);
+      }}>手順を最初から見直す</button>
       {others.map((item) => <button type="button" key={item} className="secondary-button full" onClick={() => onGroup(item)}>{GROUP_LABEL[item]}（必要なら）</button>)}
     </div>
+  </div>;
+}
+
+/** Tickable todos, remembered per step, so "which one was I on?" has an answer. */
+function TodoList({ stepId, items }: { stepId: string; items: string[] }) {
+  const [checks, setChecks] = useState(() => loadTodoChecks(stepId));
+  function toggle(index: number) {
+    const next = items.map((_, position) => (position === index ? !checks[position] : checks[position] === true));
+    setChecks(next);
+    saveTodoChecks(stepId, next);
+  }
+  const current = items.findIndex((_, index) => !checks[index]);
+  return <ol className="wizard-todo">
+    {items.map((line, index) => (
+      <li key={line} className={checks[index] ? 'is-checked' : index === current ? 'is-current' : ''}>
+        <button type="button" role="checkbox" aria-checked={checks[index] === true} onClick={() => toggle(index)}>
+          <span className="wizard-check" aria-hidden="true">{checks[index] ? '✓' : index + 1}</span>
+          <span>{line}{index === current && <em>いまここ</em>}</span>
+        </button>
+      </li>
+    ))}
+  </ol>;
+}
+
+/**
+ * On an iPhone home-screen app a normal link opens in a sheet that covers the steps. Open
+ * the Safari app instead, so the user can flip between Safari and this app, with a plain
+ * link as the fallback for older iOS.
+ */
+function OpenLink({ href, label, onLeave }: { href: string; label: string; onLeave: () => void }) {
+  const ios = isIosHomeScreenApp();
+  return <div className="wizard-open-wrap">
+    <a className="wizard-open" href={ios ? safariUrl(href) : href} target="_blank" rel="noopener noreferrer" onClick={onLeave}>{ios ? label.replace(/を開く$/, 'をSafariで開く') : label}<span aria-hidden="true">↗</span></a>
+    <p className="wizard-note">{ios
+      ? <>Safariで開くので、画面の下のバーを左右にスワイプすると、このアプリとすぐ行き来できます。ここに戻ると同じ手順が表示されます。<a href={href} target="_blank" rel="noopener noreferrer" onClick={onLeave}>うまく開かないとき</a></>
+      : '別のタブで開きます。終わったらこのタブに戻ってください。同じ手順が表示されます。'}</p>
   </div>;
 }
 
