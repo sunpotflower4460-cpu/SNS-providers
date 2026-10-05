@@ -372,20 +372,28 @@ export function buildEnrichmentEnvelope(payload: EnrichmentPayload): EnrichmentE
   };
 }
 
-/** Pure: one artifact per distinct (platform, externalEventId), first occurrence wins, capped at 200. */
-export function buildEnrichmentArtifacts(events: readonly MySnsInboundEvent[], state: RelationshipState, now: Date): EnrichmentEnvelope[] {
+/**
+ * Pure: one artifact per distinct (platform, externalEventId), first occurrence wins, capped at MAX_ENRICHMENT_EVENTS.
+ * `truncated` is true when distinct events existed beyond the cap: the list is a prefix, never presented as the whole truth.
+ */
+export function buildEnrichmentArtifactsWithMeta(events: readonly MySnsInboundEvent[], state: RelationshipState, now: Date): { artifacts: EnrichmentEnvelope[]; truncated: boolean } {
   const seen = new Set<string>();
   const out: EnrichmentEnvelope[] = [];
+  let truncated = false;
   for (const event of events) {
     const key = `${event.platform}\u0000${event.externalEventId}`;
     if (seen.has(key)) continue;
     seen.add(key);
+    if (out.length >= MAX_ENRICHMENT_EVENTS) { truncated = true; break; }
     const envelope = buildEnrichmentEnvelope(scoreRelationship(event, state, now));
     if (!validateEnrichmentEnvelope(envelope)) continue; // defence in depth: never emit an invalid artifact
     out.push(envelope);
-    if (out.length >= MAX_ENRICHMENT_EVENTS) break;
   }
-  return out;
+  return { artifacts: out, truncated };
+}
+
+export function buildEnrichmentArtifacts(events: readonly MySnsInboundEvent[], state: RelationshipState, now: Date): EnrichmentEnvelope[] {
+  return buildEnrichmentArtifactsWithMeta(events, state, now).artifacts;
 }
 
 // ---------- Report (route body) ----------
@@ -395,7 +403,7 @@ export interface EnrichmentDb {
 }
 
 export type EnrichmentReportResult =
-  | { status: 200; body: { contractVersion: 1; service: 'sns-providers'; generatedAt: string; artifacts: EnrichmentEnvelope[] } }
+  | { status: 200; body: { contractVersion: 1; service: 'sns-providers'; generatedAt: string; artifacts: EnrichmentEnvelope[]; truncated: boolean; hasMore: boolean } }
   | { status: 502 | 503 | 504; body: { ok: false; contractVersion: 1; service: 'sns-providers'; code: string; reason: string } };
 
 function failure(status: 502 | 503 | 504, code: string, reason: string): EnrichmentReportResult {
@@ -410,7 +418,7 @@ export async function buildRelationshipEnrichmentReport(env: EnrichmentEnv & { D
     const status = feed.code === 'MY_SNS_NOT_CONFIGURED' ? 503 : feed.code === 'MY_SNS_TIMEOUT' ? 504 : 502;
     return failure(status, feed.code, feed.reason);
   }
-  if (feed.events.length === 0) return { status: 200, body: { contractVersion: 1, service: 'sns-providers', generatedAt: now.toISOString(), artifacts: [] } };
+  if (feed.events.length === 0) return { status: 200, body: { contractVersion: 1, service: 'sns-providers', generatedAt: now.toISOString(), artifacts: [], truncated: false, hasMore: false } };
   let state: RelationshipState | null = null;
   try {
     const row = await env.DB.prepare('SELECT state_json, updated_at FROM state_snapshots WHERE user_id = ?').bind('local-user').first<{ state_json: string }>();
@@ -419,5 +427,6 @@ export async function buildRelationshipEnrichmentReport(env: EnrichmentEnv & { D
     state = null;
   }
   if (!state) return failure(503, 'RELATIONSHIP_STATE_UNAVAILABLE', 'The relationship state snapshot is missing, unreadable or invalid; no enrichment was produced.');
-  return { status: 200, body: { contractVersion: 1, service: 'sns-providers', generatedAt: now.toISOString(), artifacts: buildEnrichmentArtifacts(feed.events, state, now) } };
+  const built = buildEnrichmentArtifactsWithMeta(feed.events, state, now);
+  return { status: 200, body: { contractVersion: 1, service: 'sns-providers', generatedAt: now.toISOString(), artifacts: built.artifacts, truncated: built.truncated, hasMore: built.truncated } };
 }

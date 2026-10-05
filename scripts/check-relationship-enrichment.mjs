@@ -349,6 +349,14 @@ for (const managedValue of ['artist_os_managed', 'bogus-mode']) {
   upstream = feedResponse(Array.from({ length: 250 }, (_, i) => ev(i + 1000)));
   const res = await GET(envFor('artist_os_managed', makeDb({ snapshot: state })), READ_TOKEN);
   assert(res.status === 200 && res.json.artifacts.length === 200, `cap: expected 200 artifacts, got ${res.json?.artifacts?.length}`);
+  assert(res.json.truncated === true && res.json.hasMore === true, `cap: a capped report must say truncated/hasMore, got ${res.json?.truncated}/${res.json?.hasMore}`);
+  // Exactly at the cap is NOT truncated; a report under the cap says so explicitly.
+  upstream = feedResponse(Array.from({ length: 200 }, (_, i) => ev(i + 1000)));
+  const exact = await GET(envFor('artist_os_managed', makeDb({ snapshot: state })), READ_TOKEN);
+  assert(exact.json.artifacts.length === 200 && exact.json.truncated === false && exact.json.hasMore === false, 'cap: exactly 200 events is complete, not truncated');
+  upstream = feedResponse(Array.from({ length: 3 }, (_, i) => ev(i + 1000)));
+  const small = await GET(envFor('artist_os_managed', makeDb({ snapshot: state })), READ_TOKEN);
+  assert(small.json.truncated === false && small.json.hasMore === false, 'under the cap: truncated/hasMore are explicit false');
 }
 
 // ===== (f) privacy: nothing from the upstream or the snapshot leaks beyond the strict payload =====
@@ -364,7 +372,7 @@ for (const managedValue of ['artist_os_managed', 'bogus-mode']) {
     assert(!res.text.includes(needle), `response leaked ${needle}`);
   }
   for (const a of res.json.artifacts) assert(Object.keys(a.payload).every((k) => STRICT_PAYLOAD_KEYS.has(k)), 'payload has non-contract keys');
-  assert(Object.keys(res.json).sort().join() === 'artifacts,contractVersion,generatedAt,service', `report has extra top-level keys: ${Object.keys(res.json)}`);
+  assert(Object.keys(res.json).sort().join() === 'artifacts,contractVersion,generatedAt,hasMore,service,truncated', `report has extra top-level keys: ${Object.keys(res.json)}`);
 }
 
 // ===== (g) fail closed on every upstream/state problem =====
