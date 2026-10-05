@@ -14,6 +14,12 @@
     // "artist_os_managed" to let My-SNS own Instagram inbound comment/DM events and the Meta webhook
     // (see docs/artist-os-managed-mode.md). Unknown non-empty values fail closed to managed.
     // "ARTIST_OS_MODE": "artist_os_managed"
+    // Managed-mode relationship enrichment (read-only; see docs/artist-os-managed-mode.md):
+    //   MY_SNS_URL (non-secret, https origin of My-SNS; set here or as a Worker var)
+    //   "MY_SNS_URL": "https://my-sns.example"
+    // Secrets (set with `wrangler secret put`, never commit values):
+    //   ARTIST_OS_READ_TOKEN_SHA256  hex SHA-256 of the read-scoped token Artist OS presents to /api/service/*
+    //   MY_SNS_READ_TOKEN            bearer token this Worker presents to My-SNS GET /api/service/v1/inbound-events
   },
   "d1_databases": [
     {
