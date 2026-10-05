@@ -3,6 +3,7 @@ import { syncInstagramComments } from './instagram/commentSync';
 import { syncInstagramDirectMessages } from './instagram/dmSync';
 import { syncXDirectMessages } from './x/dmSync';
 import { syncXInboundMentions } from './x/sync';
+import { isManagedMode } from '../artistOsMode';
 
 type SourceResult = Record<string, unknown> & { status?: string; enabled?: boolean; reason?: string };
 
@@ -45,8 +46,10 @@ export async function syncSocialInboxIsolated(
   const [xMentions, xDm, instagramComments, instagramDm] = await Promise.allSettled([
     runIsolated(() => runWithSourceLease(env.DB, userId, 'x_mentions_sync', SOURCE_LEASE_TTL_MS, () => mentions(env, body))),
     runIsolated(() => runWithSourceLease(env.DB, userId, 'x_dm_sync', SOURCE_LEASE_TTL_MS, () => dm(env, body))),
-    runIsolated(() => runWithSourceLease(env.DB, userId, 'instagram_comments_sync', SOURCE_LEASE_TTL_MS, () => comments(env, body))),
-    runIsolated(() => runWithSourceLease(env.DB, userId, 'instagram_dm_sync', SOURCE_LEASE_TTL_MS, () => igDm(env, body))),
+    // Managed mode: My-SNS owns Instagram inbound events. The sync functions return a disabled result
+    // themselves; skipping the lease keeps D1 untouched for these sources.
+    runIsolated(() => isManagedMode(env) ? comments(env, body) : runWithSourceLease(env.DB, userId, 'instagram_comments_sync', SOURCE_LEASE_TTL_MS, () => comments(env, body))),
+    runIsolated(() => isManagedMode(env) ? igDm(env, body) : runWithSourceLease(env.DB, userId, 'instagram_dm_sync', SOURCE_LEASE_TTL_MS, () => igDm(env, body))),
   ]);
   return {
     xMentions: wrap(fromSettled(xMentions)),

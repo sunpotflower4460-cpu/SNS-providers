@@ -27,6 +27,7 @@ await emit('budgetIntegrity.js', new URL('../worker/src/budgetIntegrity.ts', imp
 await emit('fetchWithTimeout.js', new URL('../worker/src/fetchWithTimeout.ts', import.meta.url));
 await emit('social/types.js', new URL('../worker/src/social/types.ts', import.meta.url));
 await emit('social/ids.js', new URL('../worker/src/social/ids.ts', import.meta.url));
+await emit('artistOsMode.js', new URL('../worker/src/artistOsMode.ts', import.meta.url));
 await emit('social/httpStatus.js', new URL('../worker/src/social/httpStatus.ts', import.meta.url));
 await emit('social/capabilities.js', new URL('../worker/src/social/capabilities.ts', import.meta.url));
 await emit('social/executeGuard.js', new URL('../worker/src/social/executeGuard.ts', import.meta.url));

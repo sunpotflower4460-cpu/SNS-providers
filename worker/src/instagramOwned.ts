@@ -1,6 +1,7 @@
 import { persistInstagramCommentEvidence, type PersistableInstagramEngager } from './social/instagram/persist';
 import { executionModeForAction, liveInstagramCapabilities } from './social/capabilities';
 import { fetchWithTimeout } from './fetchWithTimeout';
+import { isManagedMode } from './artistOsMode';
 
 export interface InstagramOwnedEnv {
   DB: D1Database;
@@ -10,6 +11,7 @@ export interface InstagramOwnedEnv {
   SOCIAL_WRITE_ENABLED?: string;
   SOCIAL_WRITE_MODE?: string;
   INSTAGRAM_COMMENT_REPLY_ENABLED?: string;
+  ARTIST_OS_MODE?: string;
 }
 
 export interface InstagramOwnedSyncRequest {
@@ -434,6 +436,9 @@ async function persistInstagramEvidenceSafe(
   receivedAt: string,
 ) {
   if (!Array.isArray(engagers) || !engagers.length) return;
+  // Artist OS managed mode: engager data stays available as relationship intelligence, but the
+  // comment events themselves are owned by My-SNS and must not be re-ingested as social_events/actions.
+  if (isManagedMode(env)) return;
   try {
     const caps = liveInstagramCapabilities(env);
     await persistInstagramCommentEvidence(

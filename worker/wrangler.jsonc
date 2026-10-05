@@ -10,6 +10,10 @@
     "DEEPSEEK_BASE_URL": "https://api.deepseek.com",
     "DEEPSEEK_MODEL": "deepseek-chat",
     "TAVILY_BILLING_MODE": "free"
+    // Optional, non-secret. Leave unset for standalone (default). Set ARTIST_OS_MODE to
+    // "artist_os_managed" to let My-SNS own Instagram inbound comment/DM events and the Meta webhook
+    // (see docs/artist-os-managed-mode.md). Unknown non-empty values fail closed to managed.
+    // "ARTIST_OS_MODE": "artist_os_managed"
   },
   "d1_databases": [
     {

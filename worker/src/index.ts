@@ -2,6 +2,7 @@ import { readActiveMonthUsage, reserveActiveMonthBudget } from './budgetIntegrit
 import { resolveEffectiveBudgetLimit } from './social/budgetCeiling';
 import { fetchWithTimeout } from './fetchWithTimeout';
 import { SOCIAL_CONTENT_SAFETY } from './social/promptSafety';
+import { artistOsModeReport } from './artistOsMode';
 
 const PROVIDER_TIMEOUT_MS = 75_000;
 // The PWA aborts /api/ai/rank after 120s; keep the whole chain comfortably inside it.
@@ -27,6 +28,12 @@ interface Env {
   X_USER_READ_USD?: string;
   DEFAULT_MONTHLY_BUDGET_USD?: string;
   ALLOWED_ORIGIN?: string;
+  ARTIST_OS_MODE?: string;
+  SOCIAL_WRITE_ENABLED?: string;
+  SOCIAL_WRITE_MODE?: string;
+  INSTAGRAM_COMMENT_REPLY_ENABLED?: string;
+  INSTAGRAM_DM_WRITE_ENABLED?: string;
+  X_REPLY_WRITE_ENABLED?: string;
 }
 
 interface CandidateInput {
@@ -133,7 +140,7 @@ export default {
     try {
       if (request.method === 'GET' && url.pathname === '/api/health') {
         const ledger = await monthUsage(env, 'health-check');
-        return json({ ok: true, service: 'social-mission-api', ledgerAvailable: ledger.available, time: new Date().toISOString() }, 200, cors);
+        return json({ ok: true, service: 'social-mission-api', ledgerAvailable: ledger.available, ...artistOsModeReport(env), time: new Date().toISOString() }, 200, cors);
       }
 
       if (request.method === 'GET' && url.pathname === '/api/budget') {

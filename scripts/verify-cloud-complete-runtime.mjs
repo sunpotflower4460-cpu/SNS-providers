@@ -31,6 +31,7 @@ const files = [
   ['xOAuth.js', '../worker/src/xOAuth.ts'],
   ['social/types.js', '../worker/src/social/types.ts'],
   ['social/ids.js', '../worker/src/social/ids.ts'],
+  ['artistOsMode.js', '../worker/src/artistOsMode.ts'],
   ['social/httpStatus.js', '../worker/src/social/httpStatus.ts'],
   ['social/capabilities.js', '../worker/src/social/capabilities.ts'],
   ['social/executeGuard.js', '../worker/src/social/executeGuard.ts'],

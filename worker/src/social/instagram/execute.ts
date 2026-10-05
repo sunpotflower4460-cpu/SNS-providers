@@ -1,16 +1,27 @@
 import { fetchWithTimeout } from '../../fetchWithTimeout';
 import type { ProviderWriteResult } from '../types';
+import { isManagedMode } from '../../artistOsMode';
 
 export interface InstagramReplyInput {
   commentId: string;
   message: string;
   accessToken: string;
   apiVersion: string;
+  artistOsMode?: string;
 }
 
 const COMMENT_ID = /^\d{1,30}$/;
 
 export async function replyToInstagramComment(input: InstagramReplyInput): Promise<ProviderWriteResult> {
+  if (isManagedMode({ ARTIST_OS_MODE: input.artistOsMode })) {
+    return {
+      certainty: 'failure',
+      retryable: false,
+      errorCode: 'HANDOFF_NOT_EXECUTABLE',
+      reason: 'Artist OS managed mode: My-SNS owns Instagram inbound replies.',
+      providerStatus: 'managed_mode',
+    };
+  }
   if (!COMMENT_ID.test(input.commentId)) {
     return {
       certainty: 'failure',

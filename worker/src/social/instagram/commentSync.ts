@@ -5,6 +5,7 @@ import { probeInstagramPermissions } from './probe';
 import { commitSyncCheckpoint, loadSyncCheckpoint, saveSyncContinuation } from '../syncCheckpoints';
 import { isNewerNumericProviderId, maxNumericProviderId, maxNumericProviderIdFrom } from '../providerIds';
 import { queryRecord } from '../query';
+import { isManagedMode, MANAGED_INBOUND_OWNER_CODE } from '../../artistOsMode';
 
 export interface InstagramCommentSyncEnv {
   DB: D1Database;
@@ -17,6 +18,7 @@ export interface InstagramCommentSyncEnv {
   INSTAGRAM_WEBHOOK_VERIFY_TOKEN?: string;
   INSTAGRAM_APP_SECRET?: string;
   INSTAGRAM_COMMENT_WEBHOOK_CONFIRMED?: string;
+  ARTIST_OS_MODE?: string;
 }
 
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
@@ -241,6 +243,7 @@ export async function syncInstagramComments(
   adapters: { getJson?: typeof igGet } = {},
 ) {
   const userId = sanitize(body.userId || 'local-user');
+  if (isManagedMode(env)) return managedSkipped('Instagram comment sync');
   const token = env.INSTAGRAM_ACCESS_TOKEN?.trim() || '';
   const igUserId = env.INSTAGRAM_USER_ID?.trim() || '';
   const version = env.INSTAGRAM_API_VERSION?.trim() || '';
@@ -496,4 +499,17 @@ function sanitize(value: string) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function managedSkipped(label: string) {
+  return {
+    enabled: false,
+    source: 'disabled',
+    status: 'disabled' as const,
+    costUsd: 0,
+    events: [],
+    checkpointComplete: false,
+    code: MANAGED_INBOUND_OWNER_CODE,
+    reason: `Artist OS managed mode: My-SNS owns Instagram inbound events; ${label} is skipped so no duplicate copy is ingested.`,
+  };
 }

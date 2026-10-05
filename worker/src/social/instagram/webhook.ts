@@ -1,10 +1,12 @@
 import { persistInstagramCommentEvidence } from './persist';
+import { isManagedMode, MANAGED_NOT_CANONICAL_META_RECEIVER_CODE } from '../../artistOsMode';
 
 const MAX_BODY_BYTES = 200_000;
 
 export interface InstagramWebhookEnv {
   INSTAGRAM_WEBHOOK_VERIFY_TOKEN?: string;
   INSTAGRAM_APP_SECRET?: string;
+  ARTIST_OS_MODE?: string;
 }
 
 export interface InstagramWebhookMessage {
@@ -24,7 +26,28 @@ export interface InstagramWebhookComment {
   occurredAt?: string;
 }
 
+/**
+ * Artist OS managed mode: My-SNS is the canonical Meta webhook receiver. The verify handshake fails
+ * (403) so Meta can never be pointed here, and deliveries are acknowledged with 200 (stops Meta
+ * retry storms) but ignored: no signature work, no ingestion, no D1 or budget access.
+ * Returns null in standalone mode.
+ */
+export function managedModeWebhookResponse(request: Request, env: InstagramWebhookEnv): Response | null {
+  if (!isManagedMode(env)) return null;
+  const headers = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
+  if (request.method === 'GET') {
+    return new Response(JSON.stringify({ ok: false, code: MANAGED_NOT_CANONICAL_META_RECEIVER_CODE, reason: 'Artist OS managed mode: My-SNS is the canonical Meta webhook receiver.' }), { status: 403, headers });
+  }
+  return new Response(JSON.stringify({
+    ignored: true,
+    reason: 'Artist OS managed mode: My-SNS is the canonical Meta webhook receiver; this delivery was not ingested.',
+    code: MANAGED_NOT_CANONICAL_META_RECEIVER_CODE,
+  }), { status: 200, headers });
+}
+
 export async function handleInstagramWebhookVerification(request: Request, env: InstagramWebhookEnv) {
+  const managed = managedModeWebhookResponse(request, env);
+  if (managed) return managed;
   const url = new URL(request.url);
   const mode = url.searchParams.get('hub.mode') || '';
   const token = url.searchParams.get('hub.verify_token') || '';

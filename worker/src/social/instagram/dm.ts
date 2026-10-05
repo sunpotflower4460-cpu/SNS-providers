@@ -1,6 +1,7 @@
 import { fetchWithTimeout } from '../../fetchWithTimeout';
 import { classifyProviderHttpStatus, providerErrorDetail } from '../httpStatus';
 import type { ProviderWriteResult } from '../types';
+import { isManagedMode } from '../../artistOsMode';
 
 const OBJECT_ID = /^\d{1,36}$/;
 const MESSAGE_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -12,6 +13,7 @@ export interface InstagramDmSendInput {
   accessToken: string;
   apiVersion: string;
   lastInboundAt?: string;
+  artistOsMode?: string;
 }
 
 export interface NormalizedInstagramDmEvent {
@@ -40,6 +42,15 @@ export function instagramMessagingWindowOpen(lastInboundAt: string | undefined, 
 }
 
 export async function sendInstagramDm(input: InstagramDmSendInput): Promise<ProviderWriteResult> {
+  if (isManagedMode({ ARTIST_OS_MODE: input.artistOsMode })) {
+    return {
+      certainty: 'failure',
+      retryable: false,
+      errorCode: 'HANDOFF_NOT_EXECUTABLE',
+      reason: 'Artist OS managed mode: My-SNS owns Instagram inbound replies.',
+      providerStatus: 'managed_mode',
+    };
+  }
   if (!OBJECT_ID.test(input.igUserId) || !OBJECT_ID.test(input.recipientId)) {
     return {
       certainty: 'failure',

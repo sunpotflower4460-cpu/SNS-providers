@@ -18,6 +18,7 @@ import { likeXTweet } from './x/like';
 import { sendXDm } from './x/dm';
 import { replyToXTweet } from './x/execute';
 import { X_USER_ID } from './ids';
+import { isInstagramInboundReplyActionId, isManagedMode, managedInboundOwnerBody, type ArtistOsModeEnv } from '../artistOsMode';
 import { getValidXAccessToken, xOAuthStatus, type XOAuthEnv } from '../xOAuth';
 import {
   claimActionForExecution,
@@ -32,7 +33,7 @@ import type {
   ProviderWriteResult,
 } from './types';
 
-export interface SocialExecuteEnv extends XOAuthEnv {
+export interface SocialExecuteEnv extends XOAuthEnv, ArtistOsModeEnv {
   SOCIAL_WRITE_ENABLED?: string;
   SOCIAL_WRITE_MODE?: string;
   INSTAGRAM_COMMENT_REPLY_ENABLED?: string;
@@ -96,7 +97,17 @@ export async function executeSocialAction(
   const parsed = parseExecuteBody(body);
   if (isExecuteGuardErr(parsed)) return { status: 400, body: parsed };
 
+  // Artist OS managed mode: My-SNS owns Instagram inbound comment/DM replies. Refuse by id before any
+  // D1 access, then again by canonical platform/type after load (ids alone must not be the only gate).
+  const managed = isManagedMode(env);
+  if (managed && isInstagramInboundReplyActionId(actionId)) {
+    return { status: 409, body: managedInboundOwnerBody() };
+  }
+
   const action = await loadCanonicalAction(env.DB, userId, actionId.trim());
+  if (managed && action && isInstagramInboundReplyAction(action)) {
+    return { status: 409, body: managedInboundOwnerBody() };
+  }
   if (!action) {
     return {
       status: 404,
@@ -470,6 +481,14 @@ async function performProviderWrite(
   authenticatedUserId: string,
   xAccessToken?: string,
 ): Promise<ProviderWriteResult> {
+  if (isManagedMode(env) && (operation === 'instagram_comment_reply' || operation === 'instagram_dm_write')) {
+    return {
+      certainty: 'failure',
+      retryable: false,
+      errorCode: 'HANDOFF_NOT_EXECUTABLE',
+      reason: 'Artist OS managed mode: My-SNS owns Instagram inbound replies.',
+    };
+  }
   if (env.SOCIAL_WRITE_MODE === 'test') {
     return {
       certainty: 'success',
@@ -488,6 +507,7 @@ async function performProviderWrite(
       message: context.draft,
       accessToken: env.INSTAGRAM_ACCESS_TOKEN?.trim() || '',
       apiVersion: env.INSTAGRAM_API_VERSION?.trim() || '',
+      artistOsMode: env.ARTIST_OS_MODE,
     });
   }
   if (operation === 'x_reply_write') {
@@ -529,6 +549,7 @@ async function performProviderWrite(
       accessToken: env.INSTAGRAM_ACCESS_TOKEN?.trim() || '',
       apiVersion: env.INSTAGRAM_API_VERSION?.trim() || '',
       lastInboundAt: context.event?.occurredAt || context.action.observedAt,
+      artistOsMode: env.ARTIST_OS_MODE,
     });
   }
   return {
@@ -555,6 +576,11 @@ async function loadBoundEvent(db: D1Database, userId: string, action: CanonicalS
       || await loadCanonicalEvent(db, userId, 'x', 'mention', action.externalEventId);
   }
   return null;
+}
+
+function isInstagramInboundReplyAction(action: Pick<CanonicalSocialAction, 'platform' | 'type'>) {
+  return action.platform === 'instagram'
+    && (action.type === 'comment_reply' || action.type === 'dm_reply' || action.type === 'dm_outbound');
 }
 
 function isExecuteGuardErr(value: unknown): value is ExecuteGuardErr {

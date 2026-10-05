@@ -7,6 +7,7 @@ import { commitSyncCheckpoint, loadSyncCheckpoint, saveSyncContinuation } from '
 import { probeInstagramPermissions } from './probe';
 import { normalizeInstagramDmMessages, type NormalizedInstagramDmEvent } from './dm';
 import { persistInstagramDmEvidence } from './persistDm';
+import { isManagedMode, MANAGED_INBOUND_OWNER_CODE } from '../../artistOsMode';
 
 export interface InstagramDmSyncEnv {
   DB: D1Database;
@@ -20,6 +21,7 @@ export interface InstagramDmSyncEnv {
   SOCIAL_WRITE_MODE?: string;
   INSTAGRAM_COMMENT_REPLY_ENABLED?: string;
   DEFAULT_MONTHLY_BUDGET_USD?: string;
+  ARTIST_OS_MODE?: string;
 }
 
 export interface InstagramDmThreadMaps {
@@ -205,6 +207,18 @@ export async function syncInstagramDirectMessages(
   adapters: { getJson?: typeof igGet } = {},
 ) {
   const userId = sanitize(body.userId || 'local-user');
+  if (isManagedMode(env)) {
+    return {
+      enabled: false,
+      source: 'disabled',
+      status: 'disabled' as const,
+      costUsd: 0,
+      events: [],
+      checkpointComplete: false,
+      code: MANAGED_INBOUND_OWNER_CODE,
+      reason: 'Artist OS managed mode: My-SNS owns Instagram inbound events; Instagram DM sync is skipped so no duplicate copy is ingested.',
+    };
+  }
   if (env.INSTAGRAM_DM_READ_ENABLED !== 'true' && env.SOCIAL_WRITE_MODE !== 'test') {
     return disabled('Instagram DM inbound sync is disabled until INSTAGRAM_DM_READ_ENABLED=true.');
   }

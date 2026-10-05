@@ -5,7 +5,7 @@ import { syncInstagramEngagers, type InstagramOwnedSyncRequest } from './instagr
 import { executeSocialAction } from './social/execute';
 import { executionModeForAction, liveInstagramCapabilities, liveSocialCapabilities } from './social/capabilities';
 import { probeInstagramPermissions } from './social/instagram/probe';
-import { extractInstagramWebhookComments, extractInstagramWebhookMessages, handleInstagramWebhookVerification, persistWebhookComments, readValidatedInstagramWebhook } from './social/instagram/webhook';
+import { managedModeWebhookResponse, extractInstagramWebhookComments, extractInstagramWebhookMessages, handleInstagramWebhookVerification, persistWebhookComments, readValidatedInstagramWebhook } from './social/instagram/webhook';
 import { persistInstagramDmEvidence } from './social/instagram/persistDm';
 import { lookupInstagramConversationByUser, syncInstagramDirectMessages } from './social/instagram/dmSync';
 import { syncXInboundMentions } from './social/x/sync';
@@ -18,6 +18,7 @@ import { loadRuntimeSettings, saveUserBudgetCeilingUsd, serverHardLimitUsd } fro
 import { syncSocialInboxIsolated } from './social/inboxSync';
 import { reserveSyncLease, releaseSyncLease } from './syncLease';
 import { completeXOAuth, disconnectXOAuth, parseOAuthIntent, startXOAuth, xOAuthStatus } from './xOAuth';
+import { artistOsModeReport, isManagedMode, MANAGED_INBOUND_OWNER_CODE } from './artistOsMode';
 import { syncOwnedXData, type XOwnedSyncRequest } from './xOwned';
 
 interface Env extends Omit<HelpEnv, 'DB'> {
@@ -64,6 +65,7 @@ interface Env extends Omit<HelpEnv, 'DB'> {
   INSTAGRAM_APP_SECRET?: string;
   INSTAGRAM_COMMENT_WEBHOOK_CONFIRMED?: string;
   SOCIAL_SCHEDULED_READ_ENABLED?: string;
+  ARTIST_OS_MODE?: string;
   DEFAULT_MONTHLY_BUDGET_USD?: string;
   ALLOWED_ORIGIN?: string;
   [key: string]: unknown;
@@ -271,6 +273,7 @@ export default {
         const probe = await probeInstagramPermissions(env, userId);
         const snapshot = liveSocialCapabilities(env, status.scopes || [], probe, status.connected);
         return json({
+          ...artistOsModeReport(env),
           instagram: {
             ...snapshot.instagram,
             readComments: snapshot.instagram.readComments,
@@ -545,6 +548,9 @@ export default {
     if (request.method === 'POST' && url.pathname === '/api/instagram/dm/sync') {
       const authorized = await authorizeSync(request, env);
       if (!authorized.ok) return json({ error: authorized.reason }, authorized.status, request, env);
+      if (isManagedMode(env)) {
+        return json({ enabled: false, source: 'disabled', status: 'disabled', costUsd: 0, events: [], code: MANAGED_INBOUND_OWNER_CODE, reason: 'Artist OS managed mode: My-SNS owns Instagram inbound events; sync skipped.' }, 200, request, env);
+      }
       try {
         const body = await request.json<{ userId?: string; monthlyLimitUsd?: number }>();
         const userId = sanitizeUserId(body?.userId || 'local-user');
@@ -782,6 +788,8 @@ async function recordFreeSearchUsage(env: Env, userId: string, credits: number) 
 }
 
 async function handleInstagramWebhookPost(request: Request, env: Env) {
+  const managed = managedModeWebhookResponse(request, env);
+  if (managed) return managed;
   const validated = await readValidatedInstagramWebhook(request, env);
   if (!validated.ok) {
     return new Response(JSON.stringify({ error: validated.reason }), {

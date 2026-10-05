@@ -37,6 +37,7 @@ const files = [
   ['social/syncCheckpoints.js', '../worker/src/social/syncCheckpoints.ts'],
   ['social/httpStatus.js', '../worker/src/social/httpStatus.ts'],
   ['social/ids.js', '../worker/src/social/ids.ts'],
+  ['artistOsMode.js', '../worker/src/artistOsMode.ts'],
   ['social/capabilities.js', '../worker/src/social/capabilities.ts'],
   ['social/repository.js', '../worker/src/social/repository.ts'],
   ['social/x/followReconcile.js', '../worker/src/social/x/followReconcile.ts'],
