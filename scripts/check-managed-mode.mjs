@@ -253,7 +253,9 @@ for (const [modeValue, expect] of [
 
 // 7. Artist OS contract-shaped health (/api/service/health): public, contract v1 fields, no secrets.
 for (const [modeValue, status, mode] of [[undefined, 'healthy', 'standalone'], ['artist_os_managed', 'healthy', 'artist_os_managed'], ['nonsense', 'degraded', 'artist_os_managed']]) {
-  const h = await call(envFor(modeValue, makeDb(rows), flagsOn), 'GET', '/api/service/health', undefined, {});
+  // Managed mode is only 'healthy' when the enrichment route is usable (read token + My-SNS URL + token configured).
+  const enrichmentEnv = { ARTIST_OS_READ_TOKEN_SHA256: sha, MY_SNS_URL: 'https://my-sns.test', MY_SNS_READ_TOKEN: 'x' };
+  const h = await call(envFor(modeValue, makeDb(rows), { ...flagsOn, ...enrichmentEnv }), 'GET', '/api/service/health', undefined, {});
   assert(h.status === 200, `service health status ${h.status}`);
   const b = h.json;
   assert(b.contractVersion === 1 && b.service === 'sns-providers' && typeof b.version === 'string' && b.status === status && typeof b.checkedAt === 'string', `service health shape wrong for ${modeValue}: ${h.text}`);

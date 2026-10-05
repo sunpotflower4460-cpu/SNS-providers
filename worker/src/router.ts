@@ -20,6 +20,7 @@ import { reserveSyncLease, releaseSyncLease } from './syncLease';
 import { completeXOAuth, disconnectXOAuth, parseOAuthIntent, startXOAuth, xOAuthStatus } from './xOAuth';
 import { artistOsModeReport, isManagedMode, MANAGED_INBOUND_OWNER_CODE } from './artistOsMode';
 import { syncOwnedXData, type XOwnedSyncRequest } from './xOwned';
+import { buildRelationshipEnrichmentReport, validReadTokenHash } from './relationshipEnrichment';
 
 interface Env extends Omit<HelpEnv, 'DB'> {
   DB: D1Database;
@@ -66,6 +67,9 @@ interface Env extends Omit<HelpEnv, 'DB'> {
   INSTAGRAM_COMMENT_WEBHOOK_CONFIRMED?: string;
   SOCIAL_SCHEDULED_READ_ENABLED?: string;
   ARTIST_OS_MODE?: string;
+  ARTIST_OS_READ_TOKEN_SHA256?: string;
+  MY_SNS_URL?: string;
+  MY_SNS_READ_TOKEN?: string;
   DEFAULT_MONTHLY_BUDGET_USD?: string;
   ALLOWED_ORIGIN?: string;
   [key: string]: unknown;
@@ -84,6 +88,7 @@ interface StateSyncRequest {
   expectedUpdatedAt?: string | null;
 }
 
+const RELATIONSHIP_ENRICHMENT_PATH = '/api/service/v1/relationship-enrichment';
 const MAX_ROUTED_BODY_BYTES = 2_100_000;
 const AUTO_DISCOVERY_COOLDOWN_MS = 20 * 60 * 60 * 1000;
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
@@ -142,6 +147,15 @@ export default {
     }
     if (request.method === 'POST' && url.pathname === '/api/instagram/webhook') {
       return handleInstagramWebhookPost(request, env);
+    }
+    // Artist OS service contract v1 (read-only). Exists ONLY in managed mode; standalone falls through to the
+    // normal router, which answers 404 as for any unknown path.
+    if (url.pathname === RELATIONSHIP_ENRICHMENT_PATH && isManagedMode(env)) {
+      if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405, request, env);
+      const authorized = await authorizeServiceRead(request, env);
+      if (!authorized.ok) return json({ error: authorized.reason }, authorized.status, request, env);
+      const report = await buildRelationshipEnrichmentReport(env);
+      return json(report.body, report.status, request, env);
     }
     if (request.method === 'OPTIONS' && isRoutedApiPath(url.pathname)) {
       return new Response(null, { status: 204, headers: corsHeaders(request, env) });
@@ -685,6 +699,24 @@ async function authorizeSync(request: Request, env: Env) {
   if (!token || token.length > 512) return { ok: false as const, status: 401, reason: 'Personal control authorization required.' };
   const actual = await sha256Hex(token);
   if (!constantTimeEqual(actual, expected)) return { ok: false as const, status: 401, reason: 'Invalid personal control authorization.' };
+  return { ok: true as const, status: 200, reason: '' };
+}
+
+// Read-scoped auth for /api/service/* READ routes only. Accepts the dedicated ARTIST_OS_READ_TOKEN_SHA256 token
+// or the existing personal sync token. authorizeSync (every other route) never accepts the read token.
+async function authorizeServiceRead(request: Request, env: Env) {
+  const readHash = (env.ARTIST_OS_READ_TOKEN_SHA256 || '').trim().toLowerCase();
+  const syncHash = (env.SYNC_TOKEN_SHA256 || '').trim().toLowerCase();
+  const readConfigured = validReadTokenHash(readHash);
+  const syncConfigured = /^[a-f0-9]{64}$/.test(syncHash);
+  if (!readConfigured && !syncConfigured) return { ok: false as const, status: 503, reason: 'Service read token is not configured.' };
+  const authorization = request.headers.get('authorization') || '';
+  const token = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
+  if (!token || token.length > 512) return { ok: false as const, status: 401, reason: 'Service read authorization required.' };
+  const actual = await sha256Hex(token);
+  const readOk = readConfigured && constantTimeEqual(actual, readHash);
+  const syncOk = syncConfigured && constantTimeEqual(actual, syncHash);
+  if (!readOk && !syncOk) return { ok: false as const, status: 401, reason: 'Invalid service read authorization.' };
   return { ok: true as const, status: 200, reason: '' };
 }
 

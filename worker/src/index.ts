@@ -2,7 +2,8 @@ import { readActiveMonthUsage, reserveActiveMonthBudget } from './budgetIntegrit
 import { resolveEffectiveBudgetLimit } from './social/budgetCeiling';
 import { fetchWithTimeout } from './fetchWithTimeout';
 import { SOCIAL_CONTENT_SAFETY } from './social/promptSafety';
-import { artistOsModeReport } from './artistOsMode';
+import { artistOsModeReport, resolveArtistOsMode } from './artistOsMode';
+import { enrichmentConfigProblem } from './relationshipEnrichment';
 
 const PROVIDER_TIMEOUT_MS = 75_000;
 // The PWA aborts /api/ai/rank after 120s; keep the whole chain comfortably inside it.
@@ -29,6 +30,9 @@ interface Env {
   DEFAULT_MONTHLY_BUDGET_USD?: string;
   ALLOWED_ORIGIN?: string;
   ARTIST_OS_MODE?: string;
+  ARTIST_OS_READ_TOKEN_SHA256?: string;
+  MY_SNS_URL?: string;
+  MY_SNS_READ_TOKEN?: string;
   SOCIAL_WRITE_ENABLED?: string;
   SOCIAL_WRITE_MODE?: string;
   INSTAGRAM_COMMENT_REPLY_ENABLED?: string;
@@ -147,13 +151,22 @@ export default {
       // in the shape Artist OS parses; `/api/health` keeps its legacy shape for existing consumers.
       if (request.method === 'GET' && url.pathname === '/api/service/health') {
         const report = artistOsModeReport(env);
+        const reasons: string[] = [];
+        if (report.modeInvalid) reasons.push('ARTIST_OS_MODE has an invalid value (treated as artist_os_managed).');
+        const capabilities = [...report.capabilities];
+        if (resolveArtistOsMode(env).managed) {
+          const problem = enrichmentConfigProblem(env);
+          if (problem) reasons.push(`relationship.enrichment.read is unavailable: ${problem}`);
+          else capabilities.push('relationship.enrichment.read');
+        }
         return json({
           contractVersion: 1,
           service: 'sns-providers',
           version: '0.1.0',
-          status: report.modeInvalid ? 'degraded' : 'healthy',
-          ...(report.modeInvalid ? { degradedReason: 'ARTIST_OS_MODE has an invalid value (treated as artist_os_managed).' } : {}),
+          status: reasons.length ? 'degraded' : 'healthy',
+          ...(reasons.length ? { degradedReason: reasons.join(' ') } : {}),
           ...report,
+          capabilities,
           checkedAt: new Date().toISOString(),
         }, 200, cors);
       }
