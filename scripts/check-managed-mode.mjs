@@ -251,4 +251,15 @@ for (const [modeValue, expect] of [
   assert(health.json.ownership.inboundReplyExecution.instagram === false && !health.json.capabilities.some((c) => c.startsWith('reply.instagram.')), 'standalone with flags off must not claim IG reply execution');
 }
 
+// 7. Artist OS contract-shaped health (/api/service/health): public, contract v1 fields, no secrets.
+for (const [modeValue, status, mode] of [[undefined, 'healthy', 'standalone'], ['artist_os_managed', 'healthy', 'artist_os_managed'], ['nonsense', 'degraded', 'artist_os_managed']]) {
+  const h = await call(envFor(modeValue, makeDb(rows), flagsOn), 'GET', '/api/service/health', undefined, {});
+  assert(h.status === 200, `service health status ${h.status}`);
+  const b = h.json;
+  assert(b.contractVersion === 1 && b.service === 'sns-providers' && typeof b.version === 'string' && b.status === status && typeof b.checkedAt === 'string', `service health shape wrong for ${modeValue}: ${h.text}`);
+  assert(b.runtimeMode === mode && Array.isArray(b.capabilities) && b.ownership, `service health ownership fields wrong for ${modeValue}`);
+  if (mode === 'artist_os_managed') assert(!b.capabilities.some((c) => c.startsWith('reply.instagram.')) && b.ownership.canonicalMetaWebhookReceiver === false, 'managed service health advertises IG reply execution or Meta receiver');
+  assert(!JSON.stringify(b).includes('app-secret'), 'service health leaked a secret');
+}
+
 console.log('Managed mode invariants passed.');

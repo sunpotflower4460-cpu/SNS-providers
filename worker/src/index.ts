@@ -143,6 +143,21 @@ export default {
         return json({ ok: true, service: 'social-mission-api', ledgerAvailable: ledger.available, ...artistOsModeReport(env), time: new Date().toISOString() }, 200, cors);
       }
 
+      // Artist OS service-contract v1 health (public, no secrets, no tenant data). Same facts as /api/health
+      // in the shape Artist OS parses; `/api/health` keeps its legacy shape for existing consumers.
+      if (request.method === 'GET' && url.pathname === '/api/service/health') {
+        const report = artistOsModeReport(env);
+        return json({
+          contractVersion: 1,
+          service: 'sns-providers',
+          version: '0.1.0',
+          status: report.modeInvalid ? 'degraded' : 'healthy',
+          ...(report.modeInvalid ? { degradedReason: 'ARTIST_OS_MODE has an invalid value (treated as artist_os_managed).' } : {}),
+          ...report,
+          checkedAt: new Date().toISOString(),
+        }, 200, cors);
+      }
+
       if (request.method === 'GET' && url.pathname === '/api/budget') {
         const userId = url.searchParams.get('userId') || 'local-user';
         const ledger = await monthUsage(env, userId);
