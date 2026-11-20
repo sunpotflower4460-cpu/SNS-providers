@@ -30,6 +30,9 @@ await emit('inbound.js', new URL('../worker/src/social/instagram/inbound.ts', im
 await emit('xInbound.js', new URL('../worker/src/social/x/inbound.ts', import.meta.url));
 await emit('xInboundStore.js', new URL('../src/xInboundStore.ts', import.meta.url));
 await emit('backup.js', new URL('../src/backup.ts', import.meta.url));
+await emit('requestContext.js', new URL('../src/requestContext.ts', import.meta.url));
+await emit('store.js', new URL('../src/store.ts', import.meta.url));
+await emit('resultResolution.js', new URL('../src/resultResolution.ts', import.meta.url));
 
 const { completeSocialAction,
   dismissSocialAction,
@@ -49,6 +52,8 @@ const { INSTAGRAM_PROFESSIONAL_CAPABILITIES, xCapabilitiesFromScopes, DISABLED_S
 const { instagramCommentEvent, sameLatestCommentEvent } = await import(pathToFileURL(`${outDir}/inbound.js`).href);
 const { normalizeXInboundEvents } = await import(pathToFileURL(`${outDir}/xInbound.js`).href);
 const { assertExecutable, parseExecuteBody } = await import(pathToFileURL(`${outDir}/executeGuard.js`).href);
+const { recordInteraction } = await import(pathToFileURL(`${outDir}/store.js`).href);
+const { resolveVisibleResult } = await import(pathToFileURL(`${outDir}/resultResolution.js`).href);
 
 function fail(message) {
   throw new Error(message);
@@ -94,6 +99,23 @@ const restored = normalizeAppState({
   ...emptyState,
   socialActions: undefined,
 });
+// Reopening a reviewed profile or resolving an old sheet after an async update
+// must not manufacture a second follow, relationship points, or Today progress.
+const reviewCandidate = { ...candidate, recommendedAction: 'review', stage: 'discovered', relationshipScore: 0 };
+const beforeFollow = { ...emptyState, candidates: [reviewCandidate] };
+const afterFollow = recordInteraction(beforeFollow, reviewCandidate.id, 'followed');
+if (afterFollow.interactions.length !== 1 || afterFollow.candidates[0].relationshipScore !== 6
+  || !afterFollow.candidates[0].followedAt) fail('The first confirmed follow was not recorded.');
+if (recordInteraction(afterFollow, reviewCandidate.id, 'followed') !== afterFollow) {
+  fail('An already-followed candidate gained another interaction or relationship points.');
+}
+if (resolveVisibleResult(afterFollow, reviewCandidate, 'followed') !== afterFollow) {
+  fail('A stale profile result sheet recorded the same follow again.');
+}
+const identityConflictState = { ...beforeFollow, candidates: [{ ...reviewCandidate, tags: ['identity-conflict'] }] };
+if (recordInteraction(identityConflictState, reviewCandidate.id, 'followed') !== identityConflictState) {
+  fail('An unresolved profile identity was accepted as a confirmed follow.');
+}
 if (!Array.isArray(restored.socialActions) || restored.socialActions.length !== 0) {
   fail('Old backup without socialActions did not restore to an empty array.');
 }

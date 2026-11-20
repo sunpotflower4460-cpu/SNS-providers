@@ -8,7 +8,7 @@ a,
 input,
 textarea,
 select {
-  -webkit-tap-highlight-color: rgba(121, 231, 197, .16);
+  -webkit-tap-highlight-color: rgb(var(--accent-rgb) / .16);
 }
 
 button {
@@ -98,8 +98,8 @@ input[type="range"]::-moz-range-thumb {
 
 @media (prefers-contrast: more) {
   :root {
-    --line: rgba(255, 255, 255, .2);
-    --muted: #b6c2d3;
+    --line: rgb(var(--tint-rgb) / .28);
+    --muted: var(--text-2);
   }
 
   .secondary-button,

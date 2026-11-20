@@ -519,6 +519,9 @@ export function recordInteraction(state: AppState, candidateId: string, action: 
   // Never create an orphan interaction for a candidate that no longer exists or has
   // already been dismissed by a newer state transition.
   if (!target || target.skipped) return state;
+  // Reopening a profile (or resolving a stale sheet after sync) cannot create
+  // another follow while this relationship is already marked as followed.
+  if (action === 'followed' && (target.followedAt || target.tags.includes('identity-conflict'))) return state;
   const cleanupKeep = action === 'kept' && target.recommendedAction === 'unfollow_review';
   const cleanupRemove = action === 'skipped' && target.recommendedAction === 'unfollow_review';
   // Keep cleanup completion distinct from a profile-only review. It is real Today work,

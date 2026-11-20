@@ -12,7 +12,7 @@ test('local iPhone flow records only confirmed actions and restores a JSON backu
   await page.getByRole('button', { name: 'スキップ' }).click();
   await expect(page.getByText('AIからのヒント')).toHaveCount(0);
 
-  await page.getByRole('button', { name: '候補を探す' }).click();
+  await page.getByRole('button', { name: /つながる相手を探す/ }).click();
   await expect(page.getByRole('heading', { name: '自分で候補を追加' })).toBeVisible();
   await expect(page.getByRole('button', { name: /新しい候補を探す/ })).toHaveCount(0);
   const reference = page.getByRole('textbox', { name: 'プロフィールURL または @username' });
@@ -47,6 +47,9 @@ test('local iPhone flow records only confirmed actions and restores a JSON backu
   await page.getByRole('button', { name: '探す', exact: true }).click();
   await page.getByRole('button', { name: /Instagramでプロフィールを確認/ }).click();
   await page.getByRole('button', { name: 'フォローした' }).click();
+  await page.getByRole('button', { name: /Instagramでプロフィールを確認/ }).click();
+  await expect(page.getByRole('button', { name: 'フォローした' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'プロフィールを確認した' }).click();
   await page.getByRole('button', { name: '関係', exact: true }).click();
   await expect(page.getByText('@daily_quality_test')).toBeVisible();
   await page.reload();
@@ -64,7 +67,8 @@ test('local iPhone flow records only confirmed actions and restores a JSON backu
   const envelope = JSON.parse(backup.toString('utf8'));
   expect(envelope.format).toBe('social-mission-backup');
   expect(envelope.state.candidates).toHaveLength(1);
-  expect(envelope.state.interactions.some((item: { action: string }) => item.action === 'followed')).toBe(true);
+  expect(envelope.state.interactions.filter((item: { action: string }) => item.action === 'followed')).toHaveLength(1);
+  expect(envelope.state.candidates[0].relationshipScore).toBe(6);
 
   const restoredContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const restored = await restoredContext.newPage();
@@ -97,7 +101,7 @@ test('a deferred handoff does not reopen after the user dismisses the result she
   await page.addInitScript(() => { window.open = (() => null) as typeof window.open; });
   await page.goto('/SNS-providers/');
   await page.getByRole('button', { name: 'スキップ' }).click();
-  await page.getByRole('button', { name: '候補を探す' }).click();
+  await page.getByRole('button', { name: /つながる相手を探す/ }).click();
   await page.getByRole('textbox', { name: 'プロフィールURL または @username' }).fill('@deferred_quality_test');
   await page.getByRole('button', { name: '追加', exact: true }).click();
   await page.getByRole('button', { name: /Instagramでプロフィールを確認/ }).click();
@@ -112,7 +116,7 @@ test('a changed profile identity does not restore an old result sheet', async ({
   await page.addInitScript(() => { window.open = (() => null) as typeof window.open; });
   await page.goto('/SNS-providers/');
   await page.getByRole('button', { name: 'スキップ' }).click();
-  await page.getByRole('button', { name: '候補を探す' }).click();
+  await page.getByRole('button', { name: /つながる相手を探す/ }).click();
   await page.getByRole('textbox', { name: 'プロフィールURL または @username' }).fill('@original_quality_test');
   await page.getByRole('button', { name: '追加', exact: true }).click();
   await page.getByRole('button', { name: /Instagramでプロフィールを確認/ }).click();
@@ -134,7 +138,7 @@ test('installed shell opens without a network connection after first load', asyn
   await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller))).toBe(true);
   await context.setOffline(true);
   await page.reload();
-  await expect(page.getByRole('heading', { name: 'まず、つながる候補を見つけましょう' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'はじめに' })).toBeVisible();
 });
 
 test('old example insights are removed from existing local state', async ({ page }) => {
@@ -147,7 +151,7 @@ test('old example insights are removed from existing local state', async ({ page
   await page.goto('/SNS-providers/');
   await page.getByRole('button', { name: 'スキップ' }).click();
   await expect(page.getByText('AIからのヒント')).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: 'まず、つながる候補を見つけましょう' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'はじめに' })).toBeVisible();
 });
 
 test('identity-conflicted profiles cannot be recorded as a new follow', async ({ page }) => {

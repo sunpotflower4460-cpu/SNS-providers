@@ -349,6 +349,8 @@ if (pkg.scripts.postinstall !== 'node scripts/workers-ci-build.mjs'
   || !viteConfig.includes('keep-dist-gitkeep')
   || !viteConfig.includes("writeFileSync('dist/.gitkeep'")
   || pagesWorkflow.includes('enablement: true')
+  // `secrets` is not available in a job-level `if:`; GitHub rejects the whole file.
+  || /^\s{4}if:\s*\$\{\{\s*secrets\./m.test(workerDeploy)
   || !workerDeploy.includes('id: credentials')
   || !workerDeploy.includes("steps.credentials.outputs.ready == 'true'")) {
   throw new Error('Workers Builds, Pages setup, or secretless Worker deploy configuration regressed.');

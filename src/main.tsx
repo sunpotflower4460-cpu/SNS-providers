@@ -3,11 +3,15 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import { installDialogBehavior } from './dialogBehavior';
 import { installStatusPresentation } from './statusPresentation';
+import { applyThemePreference, loadThemePreference } from './themePreference';
+import './theme.css';
 import './styles.css';
 import './integration.css';
 import './ux.css';
 import './devicePolish.css';
 import './accessibility.css';
+
+applyThemePreference(loadThemePreference());
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

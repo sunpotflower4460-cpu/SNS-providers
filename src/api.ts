@@ -751,3 +751,18 @@ function nonNegativeFinite(value: unknown): value is number {
 function missionText(mission: Mission) {
   return `${mission.primaryGoal.trim()}\n${mission.text.trim()}\nSecondary: ${mission.secondaryGoals.join(', ')}`.slice(0, 4000);
 }
+export interface HelpChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export async function askHelpChat(messages: HelpChatMessage[], context: string) {
+  const result = await apiFetch<unknown>('/api/help/chat', {
+    method: 'POST',
+    body: JSON.stringify({ messages, context }),
+  }, undefined, 60_000);
+  if (!isRecord(result) || typeof result.answer !== 'string' || typeof result.provider !== 'string') {
+    throw new Error('Help chat returned an invalid response');
+  }
+  return { answer: result.answer.slice(0, 4000), provider: result.provider, remaining: typeof result.remaining === 'number' ? result.remaining : null };
+}

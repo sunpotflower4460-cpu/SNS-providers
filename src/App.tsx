@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { friendlyReason } from './friendlyReason';
 import { analyzeSelfProfile, apiConfigured, discoverSocialCandidates, enrichXProfiles, fetchBudget, fetchCanonicalSocialActions, fetchSocialCapabilities, putRuntimeSettings, rankCandidates, syncSocialInbox } from './api';
 import { persistServerBudgetCeiling } from './budgetCeilingSave';
 import { completeSettingsBudgetSave, settingsBudgetIdentity, shouldInvalidatePendingSettingsSave } from './settingsSave';
@@ -10,6 +11,14 @@ import { mergeDiscoveredProfiles } from './discoveryStore';
 import Manual from './Manual';
 import MissionInbox from './MissionInbox';
 import Onboarding from './Onboarding';
+import QuickSearch from './QuickSearch';
+import SetupGuide, { SetupBanner, ThemeSwitcher } from './SetupGuide';
+import SetupWizard, { OPEN_HELP_CHAT_EVENT, OPEN_SETUP_EVENT, openSetupWizard } from './SetupWizard';
+import type { StepGroup } from './setupSteps';
+import HelpChat from './HelpChat';
+import DemoPreview from './DemoPreview';
+import { helpChatAvailable, useConnectionStatus } from './connectionStatus';
+import { loadPosition, markWizardClosed } from './wizardMemory';
 import { hasSeenOnboarding, markOnboardingSeen } from './onboardingState';
 import { clearPendingHandoff, rememberPendingHandoff, restorePendingHandoff } from './pendingHandoff';
 import { resolveVisibleResult } from './resultResolution';
@@ -76,6 +85,11 @@ function App() {
   const [handoffError, setHandoffError] = useState('');
   const [showOnboarding, setShowOnboarding] = useState(() => !hasSeenOnboarding());
   const [showManual, setShowManual] = useState(false);
+  // If the setup popup was open when the user left for Cloudflare / X and iOS reloaded the
+  // app, bring it back on the same step.
+  const [wizardGroup, setWizardGroup] = useState<StepGroup | null>(() => (loadPosition()?.open ? loadPosition()!.group : null));
+  const [helpQuestion, setHelpQuestion] = useState<string | null>(null);
+  const { status: connection } = useConnectionStatus();
   const [capabilityEpoch, setCapabilityEpoch] = useState(0);
   const [autoRetryTick, setAutoRetryTick] = useState(0);
   const autoReplenishingRef = useRef(false);
@@ -88,6 +102,20 @@ function App() {
   const localDay = useLocalDayKey();
   const storageError = persistenceError || handoffError;
   const statusNote = storageError || apiNote;
+  // The header status line is tiny and truncated on phones. Surface every result of a
+  // user-visible operation (AI評価, 探索, 同期…) as a readable toast as well.
+  const [toast, setToast] = useState('');
+  const firstNoteRef = useRef(true);
+  useEffect(() => {
+    if (firstNoteRef.current) {
+      firstNoteRef.current = false;
+      return;
+    }
+    if (!apiNote) return;
+    setToast(apiNote);
+    const timer = setTimeout(() => setToast(''), 7_000);
+    return () => clearTimeout(timer);
+  }, [apiNote]);
 
   useEffect(() => {
     const saved = saveState(state);
@@ -115,6 +143,21 @@ function App() {
       .catch(() => {
         setLiveSocialCapabilities(null);
       });
+  }, []);
+
+  useEffect(() => {
+    const onSetup = (event: Event) => {
+      const group = (event as CustomEvent<StepGroup | undefined>).detail;
+      setShowManual(false);
+      setWizardGroup(group || 'core');
+    };
+    const onHelp = (event: Event) => setHelpQuestion((event as CustomEvent<string | undefined>).detail || '');
+    window.addEventListener(OPEN_SETUP_EVENT, onSetup);
+    window.addEventListener(OPEN_HELP_CHAT_EVENT, onHelp);
+    return () => {
+      window.removeEventListener(OPEN_SETUP_EVENT, onSetup);
+      window.removeEventListener(OPEN_HELP_CHAT_EVENT, onHelp);
+    };
   }, []);
 
   useEffect(() => {
@@ -395,7 +438,8 @@ function App() {
 
   async function rerankCandidates() {
     if (!apiConfigured) {
-      setApiNote('Worker URLを設定するとAI再評価が使えます');
+      setApiNote('AI再評価はサーバー準備後に使えます。準備の案内を開きます');
+      openSetupWizard('core');
       return;
     }
     if (discovering || ranking || enrichingX) {
@@ -422,7 +466,8 @@ function App() {
 
   async function discoverCandidates() {
     if (!apiConfigured) {
-      setApiNote('Worker URLを設定すると無料候補探索が使えます');
+      setApiNote('自動の候補探しはサーバー準備後に使えます。準備の案内を開きます');
+      openSetupWizard('core');
       return;
     }
     if (discovering || ranking || enrichingX) {
@@ -453,7 +498,8 @@ function App() {
 
   async function enrichXCandidates() {
     if (!apiConfigured) {
-      setApiNote('Worker URLを設定するとX公式プロフィール補完が使えます');
+      setApiNote('X公式情報の更新はサーバー準備後に使えます。準備の案内を開きます');
+      openSetupWizard('core');
       return;
     }
     if (discovering || ranking || enrichingX) {
@@ -501,7 +547,8 @@ function App() {
       return;
     }
     if (!apiConfigured) {
-      setApiNote('Worker URLを設定すると自己分析が使えます');
+      setApiNote('AI分析はサーバー準備後に使えます。準備の案内を開きます');
+      openSetupWizard('core');
       return;
     }
     setAnalyzingSelf(true);
@@ -525,7 +572,7 @@ function App() {
         <div className="brand-mark" aria-hidden="true">S</div>
         <div className="topbar-copy">
           <strong>Social Mission</strong>
-          <span className="status-line" title={statusNote}><i aria-hidden="true" />{statusNote}</span>
+          <span className="status-line" title={friendlyReason(statusNote)}><i aria-hidden="true" />{friendlyReason(statusNote)}</span>
         </div>
         <div className="topbar-actions">
           <button className="help-button" onClick={() => setShowManual(true)} aria-label="使い方ガイドを開く">？</button>
@@ -537,10 +584,10 @@ function App() {
 
       <main className="page">
         {tab === 'today' && <Today state={state} onChange={setState} doneToday={doneToday} onOpen={onOpen} onTab={setTab} capabilityEpoch={capabilityEpoch} />}
-        {tab === 'discover' && <Discover state={state} candidates={active} onOpen={onOpen} onChange={setState} onDiscover={discoverCandidates} onRerank={rerankCandidates} onEnrichX={enrichXCandidates} discovering={discovering} ranking={ranking} enrichingX={enrichingX} />}
+        {tab === 'discover' && <Discover onOpenSettings={() => setTab('settings')} state={state} candidates={active} onOpen={onOpen} onChange={setState} onDiscover={discoverCandidates} onRerank={rerankCandidates} onEnrichX={enrichXCandidates} discovering={discovering} ranking={ranking} enrichingX={enrichingX} />}
         {tab === 'relations' && <Relations state={state} onOpen={onOpen} onChange={setState} />}
-        {tab === 'me' && <Me state={state} onAnalyze={analyzeMe} analyzing={analyzingSelf} />}
-        {tab === 'settings' && <Settings state={state} onChange={setState} onOpenManual={() => setShowManual(true)} />}
+        {tab === 'me' && <Me onOpenSettings={() => setTab('settings')} state={state} onAnalyze={analyzeMe} analyzing={analyzingSelf} />}
+        {tab === 'settings' && <Settings state={state} onChange={setState} />}
       </main>
 
       <nav className="bottom-nav" aria-label="メインナビゲーション">
@@ -551,11 +598,54 @@ function App() {
         ))}
       </nav>
 
+      {toast && <div className="status-toast" role="status" aria-live="polite"><p>{friendlyReason(toast)}</p><button type="button" aria-label="閉じる" onClick={() => setToast('')}>×</button></div>}
+
       {pending && <ResultSheet candidate={pending.candidate} action={pending.action} onResolve={resolvePending} />}
-      {showOnboarding && <Onboarding onFinish={() => { markOnboardingSeen(); setShowOnboarding(false); }} onOpenManual={() => setShowManual(true)} />}
-      {!showOnboarding && showManual && <Manual onClose={() => setShowManual(false)} />}
+      {showOnboarding && <Onboarding onFinish={() => { markOnboardingSeen(); setShowOnboarding(false); }} onStartSetup={() => openSetupWizard('core')} />}
+      {!showOnboarding && showManual && <Manual onClose={() => setShowManual(false)} canAskAi={helpChatAvailable(connection)} />}
+      {/* Only the top dialog is mounted, so Escape in the help chat cannot also close the
+          wizard underneath; the wizard remounts on its last step afterwards. */}
+      {!showOnboarding && wizardGroup && helpQuestion == null && <SetupWizard initialGroup={wizardGroup} onGroupChange={setWizardGroup} onClose={() => { markWizardClosed(); setWizardGroup(null); }} onGoToday={() => setTab('today')} />}
+      {helpQuestion != null && <HelpChat initialQuestion={helpQuestion} context={connectionContext(connection)} onClose={() => setHelpQuestion(null)} />}
     </div>
   );
+}
+
+function StartCard({ onDiscover }: { onDiscover: () => void }) {
+  const { status } = useConnectionStatus();
+  const ready = helpChatAvailable(status) || (status.ai === 'ready' && status.key === 'ready');
+  const [showDemo, setShowDemo] = useState(false);
+  return <section className="start-card" aria-labelledby="start-title">
+    <h2 id="start-title">はじめに</h2>
+    <ol className="start-steps">
+      <li className={ready ? 'is-done' : ''}>
+        <button type="button" onClick={() => openSetupWizard('core')}>
+          <span className="start-num" aria-hidden="true">{ready ? '✓' : '1'}</span>
+          <span><strong>{ready ? '準備はできています' : 'AIを使えるように準備する'}</strong><small>{ready ? '見直すときはここから' : '1画面ずつ案内します（約20分）'}</small></span>
+        </button>
+      </li>
+      <li>
+        <button type="button" onClick={onDiscover}>
+          <span className="start-num" aria-hidden="true">{ready ? '1' : '2'}</span>
+          <span><strong>つながる相手を探す</strong><small>{ready ? 'AIが自動で探して並べます' : '準備の前でも、キーワードで探せます'}</small></span>
+        </button>
+      </li>
+    </ol>
+    <button type="button" className="text-button start-demo" onClick={() => setShowDemo((current) => !current)}>{showDemo ? '見本を閉じる' : '使い方の見本を見る'}</button>
+    {showDemo && <DemoPreview />}
+  </section>;
+}
+
+function connectionContext(status: ReturnType<typeof useConnectionStatus>['status']) {
+  const label = { ready: '完了', todo: '未設定', partial: '途中', unknown: '未確認' } as const;
+  return [
+    `サーバー: ${label[status.server === 'todo' ? 'todo' : status.reachable]}`,
+    `個人管理キー: ${label[status.key]}`,
+    `AI: ${label[status.ai]}`,
+    `自動探索: ${label[status.discovery]}`,
+    `X: ${label[status.x]}`,
+    `Instagram: ${label[status.instagram]}`,
+  ].join(' / ');
 }
 
 function BudgetPill({ state }: { state: AppState }) {
@@ -581,15 +671,10 @@ function Today({ state, onChange, doneToday, onOpen, onTab, capabilityEpoch }: {
   const inbox = hasCandidates ? buildMissionInbox(state) : [];
   const remainingItems = inbox;
   const remaining = remainingItems.length;
-  const summary = {
-    connect: remainingItems.filter((item) => item.category === 'connect').length,
-    engage: remainingItems.filter((item) => item.category === 'reply' || item.category === 'outreach' || item.category === 'nurture').length,
-    cleanup: remainingItems.filter((item) => item.category === 'cleanup').length,
-  };
   const plannedTotal = hasCandidates ? doneToday + remaining : 0;
   const progress = plannedTotal > 0 ? Math.min(100, Math.round((doneToday / plannedTotal) * 100)) : 0;
-  const extraGoals = state.mission.secondaryGoals.map((goal) => goal.trim()).filter(Boolean);
-  const missionNote = state.mission.text.trim();
+  // Nothing to act on yet: show one "はじめに" card instead of an empty inbox plus banners.
+  const firstUse = !hasCandidates && !(state.socialActions || []).some((action) => action.status === 'pending' || action.status === 'ready');
 
   return <>
     <section className={hasCandidates ? 'mission-card' : 'mission-card mission-card-compact'}>
@@ -598,33 +683,18 @@ function Today({ state, onChange, doneToday, onOpen, onTab, capabilityEpoch }: {
         <button className="text-button" onClick={() => onTab('settings')}>目的を編集</button>
       </div>
       <h1>{state.mission.primaryGoal}</h1>
-      {extraGoals.length > 0 && (
-        <details className="mission-more">
-          <summary>ほか {extraGoals.length}件の目的地</summary>
-          <ul className="mission-destinations" aria-label="ほかの目的地">
-            {extraGoals.map((label, index) => <li key={`${index}:${label}`}>{label}</li>)}
-          </ul>
-        </details>
-      )}
-      {missionNote && (
-        <details className="mission-more">
-          <summary>詳しく</summary>
-          <p>{missionNote}</p>
-        </details>
-      )}
-      <div className={hasCandidates ? 'mission-meter' : 'mission-meter is-idle'}>
-        <div className="mission-progress-head"><span>今日の進捗</span><strong>{!hasCandidates ? '準備前' : plannedTotal > 0 ? `${doneToday} / ${plannedTotal}` : '候補確認中'}</strong></div>
+      {hasCandidates && <div className={hasCandidates ? 'mission-meter' : 'mission-meter is-idle'}>
+        <div className="mission-progress-head"><span>今日の進捗</span><strong>{plannedTotal > 0 ? `${doneToday} / ${plannedTotal}` : '候補確認中'}</strong></div>
         <div className="mission-progress" aria-label={`今日の進捗 ${progress}%`}><span style={{ width: `${progress}%` }} /></div>
-        <div className={hasCandidates ? 'today-summary' : 'today-summary is-idle'} aria-label="今日の残り内訳">
-          <span><b>{remaining}</b>残り</span>
-          <span><b>{summary.connect}</b>新規</span>
-          <span><b>{summary.engage}</b>交流</span>
-          <span><b>{summary.cleanup}</b>整理</span>
-        </div>
-      </div>
+      </div>}
     </section>
 
-    <MissionInbox state={state} onChange={onChange} onOpenCandidate={onOpen} onOpenMe={() => onTab('me')} onOpenDiscover={() => onTab('discover')} capabilityEpoch={capabilityEpoch} />
+    {firstUse
+      ? <StartCard onDiscover={() => onTab('discover')} />
+      : <>
+        <SetupBanner context="today" />
+        <MissionInbox state={state} onChange={onChange} onOpenCandidate={onOpen} onOpenMe={() => onTab('me')} onOpenDiscover={() => onTab('discover')} capabilityEpoch={capabilityEpoch} />
+      </>}
 
     {hasCandidates && state.insights[0] && <section className="coach-card">
       <div className="coach-icon">✦</div>
@@ -634,7 +704,8 @@ function Today({ state, onChange, doneToday, onOpen, onTab, capabilityEpoch }: {
   </>;
 }
 
-function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, onEnrichX, discovering, ranking, enrichingX }: {
+function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, onEnrichX, discovering, ranking, enrichingX, onOpenSettings }: {
+  onOpenSettings: () => void;
   state: AppState;
   candidates: Candidate[];
   onOpen: (c: Candidate) => void;
@@ -663,6 +734,7 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
   }).length;
   const storedCount = state.candidates.filter((candidate) => !candidate.skipped && matchesFilter(candidate)).length;
   const candidateOperationBusy = discovering || ranking || enrichingX;
+  const storedTotal = state.candidates.filter((candidate) => !candidate.skipped).length;
 
   useEffect(() => setVisibleLimit(12), [filter]);
 
@@ -721,6 +793,7 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
 
   return <>
     <PageHeading eyebrow="探す" title="つながる相手を見つける" text={apiConfigured ? 'まずは下のボタンから。見つかった人は目的との相性順に並びます。' : 'プロフィールURLか@usernameを登録して、公式SNSで相手を確認できます。'} />
+    <SetupBanner context="discover" />
 
     <section className="discover-primary-card">
       {apiConfigured ? <>
@@ -745,6 +818,11 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
     </section>
 
     <div className="discover-tools">
+      <details className="disclosure-card">
+        <summary><span><strong>キーワードで探す</strong><small>準備なしで使えます。X・Instagramの検索を開きます</small></span><b>⌕</b></summary>
+        <div className="disclosure-body"><QuickSearch mission={state.mission} compact /></div>
+      </details>
+
       {apiConfigured && <details className="disclosure-card">
         <summary><span><strong>自分で候補を追加</strong><small>URLや @username が分かっているとき</small></span><b>＋</b></summary>
         <div className="disclosure-body">{manualImport}</div>
@@ -760,12 +838,12 @@ function Discover({ state, candidates, onOpen, onChange, onDiscover, onRerank, o
       </details>}
     </div>
 
-    <div className="candidate-list-head">
+    {storedTotal > 0 && <div className="candidate-list-head">
       <div><span className="section-kicker">候補</span><strong>{visible.length}人</strong></div>
       <div className="segmented" role="group" aria-label="候補のSNS絞り込み">
         {(['all', 'x', 'instagram'] as const).map((item) => <button key={item} aria-pressed={filter === item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}>{item === 'all' ? 'すべて' : item === 'x' ? 'X' : 'Instagram'}</button>)}
       </div>
-    </div>
+    </div>}
     {visible.length > 0 ? <>
       <div className="card-stack">{displayed.map((candidate) => <CandidateCard key={candidate.id} candidate={candidate} onOpen={onOpen} onLater={snoozeCandidate} onEditDraft={editDraft} />)}</div>
       {hiddenCount > 0 && <button className="load-more-button" onClick={() => setVisibleLimit((current) => Math.min(visible.length, current + 12))}>
@@ -860,7 +938,7 @@ function Relations({ state, onOpen, onChange }: { state: AppState; onOpen: (c: C
   </>;
 }
 
-function Me({ state, onAnalyze, analyzing }: { state: AppState; onAnalyze: (profile: string, posts: string) => void; analyzing: boolean }) {
+function Me({ state, onAnalyze, analyzing, onOpenSettings }: { state: AppState; onAnalyze: (profile: string, posts: string) => void; analyzing: boolean; onOpenSettings: () => void }) {
   const [profile, setProfile] = useState(state.selfProfile.profileText);
   const [posts, setPosts] = useState(state.selfProfile.recentPostsText);
   const score = state.selfProfile.score;
@@ -871,7 +949,8 @@ function Me({ state, onAnalyze, analyzing }: { state: AppState; onAnalyze: (prof
   }, [state.selfProfile.profileText, state.selfProfile.recentPostsText]);
 
   return <>
-    <PageHeading eyebrow="自分" title="自分の発信も整える" text="プロフィールと最近の投稿が、今の目的に合っているかを確認できます。" />
+    <PageHeading eyebrow="自分" title="自分の発信も整える" text="プロフィールと最近の投稿が、今の目的に合っているかをAIが確認します。" />
+    <SetupBanner context="me" />
     <section className="score-card"><div><span>Missionとの一致度</span><strong>{score == null ? '—' : score}</strong>{score != null && <small>/100</small>}</div><p>{state.selfProfile.summary || 'まだ分析していません。プロフィールか最近の投稿を入れると、今の状態と優先して直す場所を整理します。'}</p></section>
     <section className="form-card self-analysis-card">
       <div className="form-intro"><strong>まず現在の発信を入れる</strong><p>片方だけでも分析できます。X同期済みなら自動で入っている場合があります。</p></div>
@@ -885,7 +964,7 @@ function Me({ state, onAnalyze, analyzing }: { state: AppState; onAnalyze: (prof
   </>;
 }
 
-function Settings({ state, onChange, onOpenManual }: { state: AppState; onChange: AppStateUpdater; onOpenManual: () => void }) {
+function Settings({ state, onChange }: { state: AppState; onChange: AppStateUpdater }) {
   const [missionText, setMissionText] = useState(state.mission.text);
   const [destinations, setDestinations] = useState(() => destinationsFromMission(state.mission));
   const [communicationDNA, setCommunicationDNA] = useState(state.mission.communicationDNA);
@@ -993,15 +1072,15 @@ function Settings({ state, onChange, onOpenManual }: { state: AppState; onChange
   }
 
   return <>
-    <PageHeading eyebrow="設定" title="目的を決める" text="ここだけ決めれば使えます。接続や細かい調整は下にまとめています。" />
-    <button className="text-button" onClick={onOpenManual}>使い方ガイドを見る</button>
+    <PageHeading eyebrow="設定" title="準備と目的" text="上から順に。細かい調整は一番下にまとめています。" />
+    <SetupGuide />
     <section className="form-card settings-primary-card">
-      <div className="form-intro"><strong>目的と話し方</strong><p>最優先の1件がTodayの見出し。追加した目的地も候補選びと評価に使います。</p></div>
+      <div className="form-intro"><strong>あなたの目的</strong><p>いちばん上の目的地が「今日」の見出しになります。</p></div>
       <label>このアプリに任せたいこと<textarea value={missionText} onChange={(event) => { setMissionText(event.target.value); markEdited(); }} /></label>
       <div className="destination-field">
         <span>目的地</span>
         <div className="destination-list">
-          {destinations.map((goal, index) => (
+          {destinations.slice(0, 1).map((goal, index) => (
             <div className={index === 0 ? 'destination-row is-primary' : 'destination-row'} key={index}>
               <label>
                 {index === 0 ? '最優先の目的地' : `目的地 ${index + 1}`}
@@ -1021,15 +1100,38 @@ function Settings({ state, onChange, onOpenManual }: { state: AppState; onChange
             </div>
           ))}
         </div>
-        {destinations.length < MAX_MISSION_DESTINATIONS
-          ? <button type="button" className="secondary-button destination-add" onClick={addDestination}>目的地を追加</button>
-          : <small>目的地は最大{MAX_MISSION_DESTINATIONS}件です。</small>}
+        <details className="inline-disclosure destination-more">
+          <summary><span><strong>{destinations.length > 1 ? `ほかの目的地（${destinations.length - 1}件）` : 'ほかの目的地を追加'}</strong><small>候補選びとAIの評価に使います</small></span><b>⌄</b></summary>
+          <div className="inline-disclosure-body destination-list">
+            {destinations.slice(1).map((goal, offset) => { const index = offset + 1; return (
+              <div className={index === 0 ? 'destination-row is-primary' : 'destination-row'} key={index}>
+              <label>
+                {index === 0 ? '最優先の目的地' : `目的地 ${index + 1}`}
+                <input
+                  value={goal}
+                  maxLength={index === 0 ? 400 : 180}
+                  placeholder={index === 0 ? '例: ファンと良質なつながりを増やす' : '例: アーティスト仲間'}
+                  onChange={(event) => updateDestination(index, event.target.value)}
+                />
+              </label>
+              {(index > 0 || destinations.length > 1) && (
+                <div className="destination-row-actions">
+                  {index > 0 && <button type="button" className="text-button" onClick={() => promoteDestination(index)}>最優先にする</button>}
+                  {destinations.length > 1 && <button type="button" className="text-button" onClick={() => removeDestination(index)}>削除</button>}
+                </div>
+              )}
+            </div>
+            ); })}
+            {destinations.length < MAX_MISSION_DESTINATIONS
+              ? <button type="button" className="secondary-button destination-add" onClick={addDestination}>目的地を追加</button>
+              : <small>目的地は最大{MAX_MISSION_DESTINATIONS}件です。</small>}
+          </div>
+        </details>
       </div>
-      <label>あなたらしい話し方<textarea value={communicationDNA} onChange={(event) => { setCommunicationDNA(event.target.value); markEdited(); }} /></label>
-
       <details className="inline-disclosure">
-        <summary><span><strong>予算と整理ルール</strong><small>必要なときだけ変更</small></span><b>⌄</b></summary>
+        <summary><span><strong>話し方・予算・整理ルール</strong><small>必要なときだけ変更</small></span><b>⌄</b></summary>
         <div className="inline-disclosure-body">
+          <label>あなたらしい話し方<textarea value={communicationDNA} onChange={(event) => { setCommunicationDNA(event.target.value); markEdited(); }} /></label>
           <label>月間AI / API予算 <span className="inline-value">${budget.toFixed(2)}</span><input className="range" type="range" min="0" max="10" step="0.5" value={budget} onChange={(event) => { setBudget(Number(event.target.value)); markEdited(); }} /></label>
           {budgetAuthority && (
             <p className="budget-authority">
@@ -1048,6 +1150,7 @@ function Settings({ state, onChange, onOpenManual }: { state: AppState; onChange
       <button className="primary-button" onClick={() => void persist()} disabled={saving} aria-live="polite">{saving ? '保存中…' : saved ? '保存しました' : 'この設定を保存'}</button>
     </section>
     <BackupControls state={state} onRestore={onChange} />
+    <ThemeSwitcher />
   </>;
 }
 
@@ -1094,7 +1197,7 @@ function ResultSheet({ candidate, action, onResolve }: { candidate: Candidate; a
   const containerRef = useModalA11y<HTMLElement>(() => onResolve('later'));
   const cleanup = action ? action.type === 'unfollow_review' : candidate.recommendedAction === 'unfollow_review';
   const profileReview = !action && candidate.recommendedAction === 'review';
-  const canRecordFollow = profileReview && !candidate.tags.includes('identity-conflict');
+  const canRecordFollow = profileReview && !candidate.followedAt && !candidate.tags.includes('identity-conflict');
   const completion = action ? outcomeForSocialAction(action) : outcomeForAction(candidate);
   const visibleActionLabel = action ? socialActionResultLabel(action.type) : actionLabel[candidate.recommendedAction];
   return <div className="sheet-backdrop"><section ref={containerRef} className="result-sheet" role="dialog" aria-modal="true" aria-labelledby="result-title" tabIndex={-1}>

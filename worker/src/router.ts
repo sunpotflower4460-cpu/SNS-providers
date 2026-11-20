@@ -1,4 +1,5 @@
 import api from './index';
+import { answerHelp, type HelpEnv } from './help';
 import { discoverSocialProfiles } from './discovery';
 import { syncInstagramEngagers, type InstagramOwnedSyncRequest } from './instagramOwned';
 import { executeSocialAction } from './social/execute';
@@ -19,7 +20,7 @@ import { reserveSyncLease, releaseSyncLease } from './syncLease';
 import { completeXOAuth, disconnectXOAuth, parseOAuthIntent, startXOAuth, xOAuthStatus } from './xOAuth';
 import { syncOwnedXData, type XOwnedSyncRequest } from './xOwned';
 
-interface Env {
+interface Env extends Omit<HelpEnv, 'DB'> {
   DB: D1Database;
   TAVILY_API_KEY?: string;
   TAVILY_BILLING_MODE?: 'free' | 'paid';
@@ -104,6 +105,7 @@ const ROUTER_CORS_PATHS = new Set([
   '/api/x/dm/sync',
   '/api/x/inbound/sync',
   '/api/preflight',
+  '/api/help/chat',
   '/api/settings/runtime',
 ]);
 
@@ -324,6 +326,18 @@ export default {
         }, 200, request, env);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Runtime settings failed';
+        return json({ error: message }, 400, request, env);
+      }
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/help/chat') {
+      const authorized = await authorizeSync(request, env);
+      if (!authorized.ok) return json({ error: authorized.reason, code: 'UNAUTHENTICATED' }, authorized.status, request, env);
+      try {
+        const body = await request.json<unknown>();
+        return json(await answerHelp(env, 'local-user', body), 200, request, env);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Help chat failed';
         return json({ error: message }, 400, request, env);
       }
     }

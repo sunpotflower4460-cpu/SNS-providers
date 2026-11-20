@@ -3,8 +3,16 @@ import { resolveEffectiveBudgetLimit } from './social/budgetCeiling';
 import { fetchWithTimeout } from './fetchWithTimeout';
 import { SOCIAL_CONTENT_SAFETY } from './social/promptSafety';
 
+const PROVIDER_TIMEOUT_MS = 75_000;
+// The PWA aborts /api/ai/rank after 120s; keep the whole chain comfortably inside it.
+const RANK_DEADLINE_MS = 105_000;
+const MIN_PROVIDER_WINDOW_MS = 15_000;
+
 interface Env {
   DB: D1Database;
+  SAKURA_AI_API_KEY?: string;
+  SAKURA_AI_BASE_URL?: string;
+  SAKURA_AI_MODEL?: string;
   GROQ_API_KEY?: string;
   GROQ_MODEL?: string;
   GROQ_BILLING_MODE?: 'free' | 'paid';
@@ -191,12 +199,27 @@ export default {
         const userId = body.userId || 'local-user';
         const budget = await budgetForRequest(env, userId, body.monthlyLimitUsd);
         const paidAllowed = body.paidAllowed !== false;
+        // One end-to-end deadline for the whole provider chain, inside the PWA's 120s
+        // request timeout, so a failover never outlives the client.
+        const deadline = Date.now() + RANK_DEADLINE_MS;
+        const timeLeft = () => deadline - Date.now() >= MIN_PROVIDER_WINDOW_MS;
 
-        if (env.GROQ_API_KEY) {
+        // さくらのAI Engine free plan: fixed monthly free requests, never auto-billed.
+        if (env.SAKURA_AI_API_KEY && timeLeft()) {
+          try {
+            const result = await rankWithProvider('sakura', body, env, deadline);
+            await recordFreeUsage(env, userId, 'sakura', 'rank_free', result.usage);
+            return json({ provider: 'sakura', paid: false, costUsd: 0, results: result.results }, 200, cors);
+          } catch {
+            // Continue to Groq / paid providers / local scoring.
+          }
+        }
+
+        if (env.GROQ_API_KEY && timeLeft()) {
           const paid = env.GROQ_BILLING_MODE === 'paid';
           if (!paid) {
             try {
-              const result = await rankWithProvider('groq', body, env);
+              const result = await rankWithProvider('groq', body, env, deadline);
               await recordFreeUsage(env, userId, 'groq', 'rank_free', result.usage);
               return json({ provider: 'groq', paid: false, costUsd: 0, results: result.results }, 200, cors);
             } catch {
@@ -206,7 +229,7 @@ export default {
             const rates = parseRates(env.GROQ_INPUT_PER_MILLION, env.GROQ_OUTPUT_PER_MILLION);
             const preflight = rates ? estimateMaxCost(body, rates) : Number.POSITIVE_INFINITY;
             if (rates && preflight <= budget.remainingUsd) {
-              const attempt = await runPaidRankingWithReservation('groq', body, env, userId, rates, preflight, budget.effectiveLimit);
+              const attempt = await runPaidRankingWithReservation('groq', body, env, userId, rates, preflight, budget.effectiveLimit, deadline);
               if (attempt.status === 'success') {
                 return json({ provider: 'groq', paid: true, costUsd: attempt.costUsd, results: attempt.results }, 200, cors);
               }
@@ -217,11 +240,11 @@ export default {
           }
         }
 
-        if (paidAllowed && env.DEEPSEEK_API_KEY && budget.ledgerAvailable && budget.remainingUsd > 0) {
+        if (paidAllowed && env.DEEPSEEK_API_KEY && budget.ledgerAvailable && budget.remainingUsd > 0 && timeLeft()) {
           const rates = parseRates(env.DEEPSEEK_INPUT_PER_MILLION, env.DEEPSEEK_OUTPUT_PER_MILLION);
           const preflight = rates ? estimateMaxCost(body, rates) : Number.POSITIVE_INFINITY;
           if (rates && preflight <= budget.remainingUsd) {
-            const attempt = await runPaidRankingWithReservation('deepseek', body, env, userId, rates, preflight, budget.effectiveLimit);
+            const attempt = await runPaidRankingWithReservation('deepseek', body, env, userId, rates, preflight, budget.effectiveLimit, deadline);
             if (attempt.status === 'success') {
               return json({ provider: 'deepseek', paid: true, costUsd: attempt.costUsd, results: attempt.results }, 200, cors);
             }
@@ -478,11 +501,12 @@ async function runPaidRankingWithReservation(
   rates: RatePair,
   preflightUsd: number,
   effectiveLimit: number,
+  deadline?: number,
 ) {
   const reservationId = await reserveBudget(env, userId, provider, 'rank_reservation', preflightUsd, effectiveLimit);
   if (!reservationId) return { status: 'unavailable' as const };
   try {
-    const result = await rankWithProvider(provider, body, env);
+    const result = await rankWithProvider(provider, body, env, deadline);
     const costUsd = calculateCost(result.usage, rates, preflightUsd);
     await finalizeReservation(env, reservationId, 'rank', costUsd, result.usage);
     return { status: 'success' as const, ...result, costUsd };
@@ -544,11 +568,15 @@ function buildProviderMessages(body: RankRequest) {
   return { system: SYSTEM_PROMPT, user: JSON.stringify(prompt), hasSelfProfile };
 }
 
-async function rankWithProvider(provider: 'groq' | 'deepseek', body: RankRequest, env: Env) {
+async function rankWithProvider(provider: 'sakura' | 'groq' | 'deepseek', body: RankRequest, env: Env, deadline?: number) {
   const isGroq = provider === 'groq';
-  const baseUrl = isGroq ? 'https://api.groq.com/openai/v1' : (env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com');
-  const apiKey = isGroq ? env.GROQ_API_KEY! : env.DEEPSEEK_API_KEY!;
-  const model = isGroq ? (env.GROQ_MODEL || 'llama-3.3-70b-versatile') : (env.DEEPSEEK_MODEL || 'deepseek-chat');
+  const baseUrl = provider === 'sakura'
+    ? (env.SAKURA_AI_BASE_URL || 'https://api.ai.sakura.ad.jp/v1')
+    : isGroq ? 'https://api.groq.com/openai/v1' : (env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com');
+  const apiKey = provider === 'sakura' ? env.SAKURA_AI_API_KEY! : isGroq ? env.GROQ_API_KEY! : env.DEEPSEEK_API_KEY!;
+  const model = provider === 'sakura'
+    ? (env.SAKURA_AI_MODEL || 'gpt-oss-120b')
+    : isGroq ? (env.GROQ_MODEL || 'llama-3.3-70b-versatile') : (env.DEEPSEEK_MODEL || 'deepseek-chat');
   const messages = buildProviderMessages(body);
 
   const response = await fetchWithTimeout(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
@@ -564,7 +592,7 @@ async function rankWithProvider(provider: 'groq' | 'deepseek', body: RankRequest
         { role: 'user', content: messages.user },
       ],
     }),
-  }, 75_000, `${provider} ranking`);
+  }, deadline ? Math.max(1_000, Math.min(PROVIDER_TIMEOUT_MS, deadline - Date.now())) : PROVIDER_TIMEOUT_MS, `${provider} ranking`);
 
   if (!response.ok) throw new Error(`${provider} returned ${response.status}`);
   const data = await response.json().catch(() => null) as { choices?: Array<{ message?: { content?: string } }>; usage?: Usage } | null;

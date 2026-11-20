@@ -104,9 +104,9 @@ export default function BackupControls({ state, onRestore }: { state: AppState; 
       <div className="settings-group-body"><WorkloadControls state={state} onChange={(next) => updateState(next)} /></div>
     </details>
 
-    <details className="settings-group">
+    <details className="settings-group" id="settings-connections">
       <summary>
-        <span><strong>アプリ・SNS・クラウド接続</strong><small>初期設定や端末を変えるときだけ使います</small></span>
+        <span><strong>アプリ・SNS・クラウド接続</strong><small>個人管理キーの入力、Xの接続、Instagramの取り込みはここ</small></span>
         <b>⌄</b>
       </summary>
       <div className="settings-group-body advanced-stack">
