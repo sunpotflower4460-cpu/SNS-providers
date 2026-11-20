@@ -40,11 +40,7 @@ const defaultState: AppState = {
     dailyCleanupLimit: 5,
     dailySelfImproveLimit: 1,
   },
-  insights: [
-    { id: 'i1', category: 'profile', priority: 'high', title: '初見の人への入口を強くする', body: '何を作っている人かに加えて、初めて来た人がすぐ音楽を聴ける導線をプロフィール上部に置くとMissionに近づきやすくなります。' },
-    { id: 'i2', category: 'content', priority: 'medium', title: 'リスナー向け投稿を少し増やす', body: '制作側の投稿だけでなく、曲の世界観や聴きどころを短く体験できる投稿を混ぜるとファン候補との接点が増えます。' },
-    { id: 'i3', category: 'network', priority: 'medium', title: '同業者への偏りを抑える', body: '新規交流の一部をリスナー・映像制作者・イベント関係へ振り分けるとネットワークがMissionに近づきます。' }
-  ],
+  insights: [],
   selfProfile: {
     profileText: '',
     recentPostsText: ''
@@ -237,7 +233,7 @@ export function addCandidateFromReference(state: AppState, platform: Platform, r
     match: 50,
     relationshipScore: 0,
     stage: 'discovered',
-    reason: '候補プールへ追加しました。プロフィール情報を補足するか、AI再評価でMissionとの相性を判定できます。',
+    reason: '候補プールへ追加しました。公式プロフィールを確認し、実際に行ったことを記録できます。AI再評価はクラウド接続後に利用できます。',
     tags: [],
     recommendedAction: 'review',
   };
@@ -523,6 +519,9 @@ export function recordInteraction(state: AppState, candidateId: string, action: 
   // Never create an orphan interaction for a candidate that no longer exists or has
   // already been dismissed by a newer state transition.
   if (!target || target.skipped) return state;
+  // Reopening a profile (or resolving a stale sheet after sync) cannot create
+  // another follow while this relationship is already marked as followed.
+  if (action === 'followed' && (target.followedAt || target.tags.includes('identity-conflict'))) return state;
   const cleanupKeep = action === 'kept' && target.recommendedAction === 'unfollow_review';
   const cleanupRemove = action === 'skipped' && target.recommendedAction === 'unfollow_review';
   // Keep cleanup completion distinct from a profile-only review. It is real Today work,
@@ -694,7 +693,7 @@ function normalizeLocalRelationshipAction(candidate: Candidate): Candidate {
   return candidate;
 }
 
-function parseUsername(platform: Platform, value: string) {
+export function parseUsername(platform: Platform, value: string) {
   const trimmed = value.trim();
   if (!trimmed) return '';
   const withoutAt = trimmed.replace(/^@/, '');
@@ -713,6 +712,7 @@ function parseUsername(platform: Platform, value: string) {
       if (platform === 'instagram' && (INSTAGRAM_RESERVED_PATHS.has(lowered) || parts.length !== 1)) return '';
       return sanitizeUsername(platform, first);
     }
+    if (/^https?:\/\//i.test(trimmed) || trimmed.includes('/')) return '';
   } catch {
     // Plain handles are supported below.
   }

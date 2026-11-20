@@ -18,7 +18,7 @@ Do not turn production writes on until the matching official permission, price, 
    - Enable **Builds for non-production branches** (Branch control). Pull-request `Workers Builds: sns-providers` stays `Deployment skipped` until this is on. The repo cannot flip that dashboard toggle.
    - Set **Build command** to `npm run build` if production builds still miss `./dist`. The repo also builds during Cloudflare install when `WORKERS_CI=1`, and `wrangler deploy` runs `[build]`.
    - Keep deploy as `npx wrangler deploy` (or `npm run deploy`) and non-production as `npx wrangler versions upload` (or `npm run upload`).
-5. Confirm GitHub Pages is using GitHub Actions (Settings → Pages). The deploy workflow now requests enablement automatically.
+5. Enable GitHub Pages once as a repository administrator (Settings → Pages → Build and deployment → GitHub Actions). The workflow token cannot create the site; after enablement, rerun Deploy PWA to Pages.
 6. Confirm `/api/preflight` from Settings → 本番準備チェック, or `npm run preflight:prod`.
 
 ## Meta / Instagram
