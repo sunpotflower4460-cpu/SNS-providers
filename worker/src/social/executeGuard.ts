@@ -35,6 +35,14 @@ export function parseExecuteBody(body: unknown): ExecuteGuardErr | ExecuteReques
   const executionId = typeof body.executionId === 'string' ? body.executionId.trim() : '';
   if (!EXECUTION_ID.test(executionId)) return fail('INVALID_ACTION', 'executionId is required and must be a single durable key.');
   const draft = typeof body.draft === 'string' ? body.draft.trim().slice(0, 2400) : '';
+  if ('museApproval' in body || executionId.startsWith('muse-')) {
+    const approval = body.museApproval;
+    if (typeof approval !== 'string' || !/^[a-f0-9]{64}$/.test(approval)
+      || executionId !== `muse-${approval}` || body.draft !== draft) {
+      return fail('INVALID_ACTION', 'Muse execution requires approval for one exact preview and draft.');
+    }
+    return { executionId, draft, museApproval: approval };
+  }
   return { executionId, draft };
 }
 

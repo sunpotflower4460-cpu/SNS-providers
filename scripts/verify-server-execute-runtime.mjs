@@ -1,4 +1,5 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
@@ -51,7 +52,7 @@ await emit('social/x/lookup.js', new URL('../worker/src/social/x/lookup.ts', imp
 await emit('syncLease.js', new URL('../worker/src/syncLease.ts', import.meta.url));
 await emit('xOAuth.js', new URL('../worker/src/xOAuth.ts', import.meta.url));
 
-const { executeSocialAction, executionBindingsConflict, knownWriteCost } = await import(pathToFileURL(`${outDir}/social/execute.js`).href);
+const { executeSocialAction, executionBindingsConflict, knownWriteCost, previewSocialAction } = await import(pathToFileURL(`${outDir}/social/execute.js`).href);
 const { assertExecutable, parseExecuteBody } = await import(pathToFileURL(`${outDir}/social/executeGuard.js`).href);
 const { persistInstagramCommentEvidence } = await import(pathToFileURL(`${outDir}/social/instagram/persist.js`).href);
 const { persistXInboundEvidence } = await import(pathToFileURL(`${outDir}/social/x/persist.js`).href);
@@ -430,6 +431,45 @@ const envBase = () => ({
   INSTAGRAM_USER_ID: '12345678',
   INSTAGRAM_API_VERSION: 'v24.0',
 });
+
+{
+  const env = {
+    ...envBase(),
+    SOCIAL_WRITE_MODE: '',
+    SOCIAL_WRITE_ENABLED: 'true',
+    INSTAGRAM_COMMENT_REPLY_ENABLED: 'true',
+  };
+  await seedInstagram(env.DB);
+  const userId = 'local-user';
+  const actionId = 'sa-ig-comment-111';
+  const preview = await previewSocialAction(env, userId, actionId);
+  const review = preview.body.review;
+  if (preview.status !== 200 || !review?.ready || review.recipient.id !== '789'
+    || review.target.externalEventId !== '111' || review.costUsd !== 0) {
+    fail('Muse preview did not return the canonical recipient, comment and cost.');
+  }
+  const draft = 'ありがとう';
+  const museApproval = createHash('sha256').update(JSON.stringify([review.binding, draft])).digest('hex');
+  const approved = { executionId: `muse-${museApproval}`, draft, museApproval };
+  const rejected = [
+    await executeSocialAction(env, userId, actionId, { executionId: approved.executionId, draft }),
+    await executeSocialAction(env, userId, actionId, { ...approved, draft: '別の本文' }),
+    await executeSocialAction({ ...env, INSTAGRAM_COMMENT_REPLY_USD: '0.02' }, userId, actionId, approved),
+    await executeSocialAction({ ...env, INSTAGRAM_USER_ID: '87654321' }, userId, actionId, approved),
+  ];
+  if (rejected.map((result) => result.status).join(',') !== '400,409,409,409'
+    || env.DB._executions.size !== 0 || providerCalls.length !== 0) {
+    fail('Muse approval did not fail closed before execution on a missing approval or changed preview.');
+  }
+  const result = await executeSocialAction(env, userId, actionId, approved, { replyToInstagramComment: fakeReply });
+  const readback = await previewSocialAction(env, userId, actionId);
+  if (result.body.status !== 'succeeded' || providerCalls.length !== 1
+    || providerCalls[0].message !== draft || readback.body.lastExecution?.executionId !== approved.executionId
+    || readback.body.lastExecution?.status !== 'succeeded' || readback.body.review?.ready) {
+    fail('Muse approval did not reuse single-action execution and result readback.');
+  }
+  providerCalls.length = 0;
+}
 
 {
   const env = envBase();

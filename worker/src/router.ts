@@ -2,7 +2,7 @@ import api from './index';
 import { answerHelp, type HelpEnv } from './help';
 import { discoverSocialProfiles } from './discovery';
 import { syncInstagramEngagers, type InstagramOwnedSyncRequest } from './instagramOwned';
-import { executeSocialAction } from './social/execute';
+import { executeSocialAction, previewSocialAction } from './social/execute';
 import { executionModeForAction, liveInstagramCapabilities, liveSocialCapabilities } from './social/capabilities';
 import { probeInstagramPermissions } from './social/instagram/probe';
 import { extractInstagramWebhookComments, extractInstagramWebhookMessages, handleInstagramWebhookVerification, persistWebhookComments, readValidatedInstagramWebhook } from './social/instagram/webhook';
@@ -120,6 +120,10 @@ function isSocialExecutePath(pathname: string) {
   return /^\/api\/social\/actions\/[^/]+\/execute$/.test(pathname);
 }
 
+function isSocialActionPreviewPath(pathname: string) {
+  return /^\/api\/social\/actions\/[^/]+\/preview$/.test(pathname);
+}
+
 function isSocialLifecyclePath(pathname: string) {
   return /^\/api\/social\/actions\/[^/]+\/(snooze|dismiss)$/.test(pathname);
 }
@@ -129,7 +133,8 @@ function isReconcilePath(pathname: string) {
 }
 
 function isRoutedApiPath(pathname: string) {
-  return ROUTER_CORS_PATHS.has(pathname) || isSocialExecutePath(pathname) || isSocialLifecyclePath(pathname) || isReconcilePath(pathname);
+  return ROUTER_CORS_PATHS.has(pathname) || isSocialExecutePath(pathname) || isSocialActionPreviewPath(pathname)
+    || isSocialLifecyclePath(pathname) || isReconcilePath(pathname);
 }
 
 export default {
@@ -364,6 +369,21 @@ export default {
         const message = error instanceof Error ? error.message : 'Social action list failed';
         return json({ error: message }, 400, request, env);
       }
+    }
+
+    if (request.method === 'GET' && isSocialActionPreviewPath(url.pathname)) {
+      const authorized = await authorizeSync(request, env);
+      if (!authorized.ok) return json({ error: authorized.reason, code: 'UNAUTHENTICATED' }, authorized.status, request, env);
+      let actionId: string;
+      try {
+        actionId = decodeURIComponent(url.pathname.split('/')[4]).trim();
+      } catch {
+        return json({ error: 'Invalid action ID.' }, 400, request, env);
+      }
+      if (!actionId || actionId.length > 180) return json({ error: 'Invalid action ID.' }, 400, request, env);
+      const userId = sanitizeUserId(url.searchParams.get('userId') || 'local-user');
+      const result = await previewSocialAction(env, userId, actionId);
+      return json(result.body, result.status, request, env);
     }
 
     if (request.method === 'POST' && url.pathname === '/api/social/actions/prepare') {
