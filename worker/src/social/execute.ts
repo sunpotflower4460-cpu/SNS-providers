@@ -28,6 +28,7 @@ import {
 import type {
   CanonicalExecuteContext,
   CanonicalSocialAction,
+  CanonicalSocialEvent,
   ExecuteRequest,
   ProviderWriteResult,
 } from './types';
@@ -147,6 +148,16 @@ export async function executeSocialAction(
       const oauth = await xOAuthStatus(env, userId);
       xScopes = oauth.scopes || [];
       storedXUserId = storedXUserId || oauth.xUserId || null;
+    }
+  }
+  if (parsed.museApproval) {
+    const review = await buildMuseReview(env, action, event, storedXUserId);
+    if (!review.ready || parsed.draft.length > review.maxDraftLength
+      || await museApprovalHash([review.binding, parsed.draft]) !== parsed.museApproval) {
+      return {
+        status: 409,
+        body: { ok: false as const, code: 'BINDING_MISMATCH', reason: 'The Muse preview changed. Request a new preview and approval.' },
+      };
     }
   }
   const capabilities = action.platform === 'instagram'
@@ -537,6 +548,83 @@ async function performProviderWrite(
     errorCode: 'HANDOFF_NOT_EXECUTABLE',
     reason: 'Live provider writes are not enabled for this action type; it stays HANDOFF.',
   };
+}
+
+export async function previewSocialAction(env: SocialExecuteEnv, userId: string, actionId: string) {
+  const action = await loadCanonicalAction(env.DB, userId, actionId);
+  if (!action) {
+    return { status: 404, body: { ok: false as const, code: 'NOT_FOUND', reason: 'Unknown social action.' } };
+  }
+  const [event, lastExecution, oauth] = await Promise.all([
+    loadBoundEvent(env.DB, userId, action),
+    loadLatestExecutionForAction(env, userId, action.id),
+    action.platform === 'x' ? xOAuthStatus(env, userId).catch(() => null) : null,
+  ]);
+  return {
+    status: 200,
+    body: {
+      ok: true as const,
+      action: {
+        id: action.id,
+        platform: action.platform,
+        type: action.type,
+        status: action.status,
+        externalEventId: action.externalEventId,
+        conversationId: action.conversationId,
+        targetUrl: action.targetUrl,
+        username: action.username,
+      },
+      review: await buildMuseReview(env, action, event, oauth?.xUserId),
+      lastExecution: lastExecution && {
+        executionId: lastExecution.idempotencyKey,
+        status: lastExecution.status,
+        externalResultId: lastExecution.externalResultId,
+        code: lastExecution.errorCode,
+      },
+    },
+  };
+}
+
+async function buildMuseReview(
+  env: SocialExecuteEnv,
+  action: CanonicalSocialAction,
+  event: CanonicalSocialEvent | null,
+  xUserId?: string | null,
+) {
+  if (!needsDraft(action.type)) {
+    return { ready: false as const, reason: 'This action stays in the official app.' };
+  }
+  if (!(action.status === 'pending' || action.status === 'ready' || (action.status === 'failed' && action.retryable))) {
+    return { ready: false as const, reason: 'This action is not ready for a new send.' };
+  }
+  const target = resolveWriteTarget(action, event);
+  if (isExecuteGuardErr(target)) return { ready: false as const, reason: target.reason };
+  const recipientId = action.platformUserId || event?.externalUserId;
+  if (!recipientId || action.identityConflict
+    || (event?.externalUserId && recipientId !== event.externalUserId)) {
+    return { ready: false as const, reason: 'The recipient cannot be verified.' };
+  }
+  const actorId = resolveFingerprintActorId(env, action.platform, xUserId ?? null);
+  const testMode = env.SOCIAL_WRITE_MODE === 'test';
+  const costUsd = testMode ? 0 : knownWriteCost(env, target.operation);
+  if (!actorId || !operationWriteEnabled(env, target.operation) || costUsd === null) {
+    return { ready: false as const, reason: 'Account, write flag, or operation price is not ready.' };
+  }
+  // Keep the approved text intact when the provider adapter has a lower limit.
+  const maxDraftLength = target.operation === 'instagram_comment_reply' ? 2200
+    : target.operation === 'instagram_dm_write' ? 1000
+      : 2400;
+  const recipient = { id: recipientId, username: action.username };
+  const binding = await museApprovalHash([
+    'muse-preview-v1', action.userId, action.id, action.status, action.updatedAt,
+    actorId, recipient, target, costUsd, testMode, maxDraftLength,
+  ]);
+  return { ready: true as const, binding, target, recipient, costUsd, maxDraftLength, testMode };
+}
+
+async function museApprovalHash(value: unknown) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(value)));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 async function loadBoundEvent(db: D1Database, userId: string, action: CanonicalSocialAction) {

@@ -82,6 +82,7 @@ export interface CanonicalCandidateIdentity {
 export interface ExecuteRequest {
   executionId: string;
   draft: string;
+  museApproval?: string;
 }
 
 export interface CanonicalExecuteContext {
