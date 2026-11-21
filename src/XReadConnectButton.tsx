@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { friendlyReason } from './friendlyReason';
 import { startXOAuth } from './xAccount';
 
-export default function XReadConnectButton({ className = 'primary-button' }: { className?: string }) {
+export default function XReadConnectButton({ className = 'primary-button', onStarted }: { className?: string; onStarted?: () => void }) {
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState('');
 
@@ -11,6 +11,7 @@ export default function XReadConnectButton({ className = 'primary-button' }: { c
     setError('');
     try {
       await startXOAuth('read');
+      onStarted?.();
     } catch (reason) {
       setError(friendlyReason(reason instanceof Error ? reason.message : 'Xの接続画面を開けませんでした'));
     } finally {

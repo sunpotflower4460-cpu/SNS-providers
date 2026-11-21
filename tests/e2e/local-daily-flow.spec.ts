@@ -9,7 +9,7 @@ test('local iPhone flow records only confirmed actions and restores a JSON backu
     }) as typeof window.open;
   });
   await page.goto('/SNS-providers/');
-  await page.getByRole('button', { name: 'スキップ' }).click();
+  await page.getByRole('button', { name: '今日を開く' }).click();
   await expect(page.getByText('AIからのヒント')).toHaveCount(0);
 
   await page.getByRole('button', { name: /つながる相手を探す/ }).click();
@@ -73,7 +73,7 @@ test('local iPhone flow records only confirmed actions and restores a JSON backu
   const restoredContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const restored = await restoredContext.newPage();
   await restored.goto('/SNS-providers/');
-  await restored.getByRole('button', { name: 'スキップ' }).click();
+  await restored.getByRole('button', { name: '今日を開く' }).click();
   await restored.getByRole('button', { name: '設定', exact: true }).click();
   await restored.getByText('バックアップ', { exact: true }).click();
   await restored.locator('input[type="file"]').setInputFiles({ name: 'backup.json', mimeType: 'application/json', buffer: backup });
@@ -100,7 +100,7 @@ test('local save failure is shown in a readable alert', async ({ page }) => {
 test('a deferred handoff does not reopen after the user dismisses the result sheet', async ({ page }) => {
   await page.addInitScript(() => { window.open = (() => null) as typeof window.open; });
   await page.goto('/SNS-providers/');
-  await page.getByRole('button', { name: 'スキップ' }).click();
+  await page.getByRole('button', { name: '今日を開く' }).click();
   await page.getByRole('button', { name: /つながる相手を探す/ }).click();
   await page.getByRole('textbox', { name: 'プロフィールURL または @username' }).fill('@deferred_quality_test');
   await page.getByRole('button', { name: '追加', exact: true }).click();
@@ -115,7 +115,7 @@ test('a deferred handoff does not reopen after the user dismisses the result she
 test('a changed profile identity does not restore an old result sheet', async ({ page }) => {
   await page.addInitScript(() => { window.open = (() => null) as typeof window.open; });
   await page.goto('/SNS-providers/');
-  await page.getByRole('button', { name: 'スキップ' }).click();
+  await page.getByRole('button', { name: '今日を開く' }).click();
   await page.getByRole('button', { name: /つながる相手を探す/ }).click();
   await page.getByRole('textbox', { name: 'プロフィールURL または @username' }).fill('@original_quality_test');
   await page.getByRole('button', { name: '追加', exact: true }).click();
@@ -132,7 +132,7 @@ test('a changed profile identity does not restore an old result sheet', async ({
 test('installed shell opens without a network connection after first load', async ({ page, context, browserName }) => {
   test.skip(browserName === 'webkit', 'Playwright WebKit fails internally on offline reload; verify this on a physical iPhone.');
   await page.goto('/SNS-providers/');
-  await page.getByRole('button', { name: 'スキップ' }).click();
+  await page.getByRole('button', { name: '今日を開く' }).click();
   await page.evaluate(() => navigator.serviceWorker.ready);
   await page.reload();
   await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller))).toBe(true);
@@ -149,7 +149,7 @@ test('old example insights are removed from existing local state', async ({ page
     }));
   });
   await page.goto('/SNS-providers/');
-  await page.getByRole('button', { name: 'スキップ' }).click();
+  await page.getByRole('button', { name: '今日を開く' }).click();
   await expect(page.getByText('AIからのヒント')).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'はじめに' })).toBeVisible();
 });
@@ -168,7 +168,7 @@ test('identity-conflicted profiles cannot be recorded as a new follow', async ({
     window.open = (() => null) as typeof window.open;
   });
   await page.goto('/SNS-providers/');
-  await page.getByRole('button', { name: 'スキップ' }).click();
+  await page.getByRole('button', { name: '今日を開く' }).click();
   await page.getByRole('button', { name: '探す', exact: true }).click();
   await page.getByRole('button', { name: /Instagramでプロフィールを確認/ }).click();
   await expect(page.getByRole('dialog')).toBeVisible();

@@ -1,0 +1,58 @@
+.easy-setup-sheet {
+  display: grid;
+  gap: 16px;
+  padding: 24px clamp(16px, 5vw, 28px) calc(20px + env(safe-area-inset-bottom));
+  overflow-y: auto;
+}
+
+.easy-setup-sheet h2 {
+  margin: 0;
+  font-size: clamp(1.65rem, 7vw, 2.1rem);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.easy-setup-sheet p {
+  margin: 0;
+  font-size: 1.125rem;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.easy-setup-form {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.easy-setup-form label {
+  display: grid;
+  gap: 8px;
+  font-size: 1.125rem;
+  font-weight: 700;
+}
+
+.easy-setup-sheet input,
+.easy-setup-sheet button,
+.setup-card .easy-setup-launch,
+.easy-setup-today .primary-button {
+  min-height: 56px;
+  font-size: 1.125rem;
+}
+
+.easy-setup-sheet input {
+  width: 100%;
+  min-width: 0;
+  padding: 12px 14px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.easy-setup-sheet .easy-setup-error { color: var(--danger-text); }
+.setup-banner.easy-setup-today { display: grid; gap: 12px; }
+.easy-setup-today p { font-size: 1.125rem; }
+.easy-setup-advanced { margin-top: 4px; }
+.easy-setup-advanced > summary { min-height: 48px; padding-block: 12px; }
+.easy-setup-advanced-actions { display: grid; gap: 8px; }

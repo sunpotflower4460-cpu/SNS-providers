@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 
 const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
-export function useModalA11y<T extends HTMLElement>(onDismiss: () => void) {
+export function useModalA11y<T extends HTMLElement>(onDismiss: () => void, initialFocus: 'first' | 'dialog' = 'first') {
   const containerRef = useRef<T>(null);
   // Keep the latest callback in a ref instead of the effect's dependency array.
   // Callers typically pass an inline arrow function, which gets a new identity
@@ -16,7 +16,7 @@ export function useModalA11y<T extends HTMLElement>(onDismiss: () => void) {
     const container = containerRef.current;
     const previouslyFocused = document.activeElement as HTMLElement | null;
     const focusable = container?.querySelectorAll<HTMLElement>(FOCUSABLE);
-    (focusable?.[0] || container)?.focus();
+    (initialFocus === 'first' ? focusable?.[0] || container : container)?.focus();
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
@@ -28,7 +28,8 @@ export function useModalA11y<T extends HTMLElement>(onDismiss: () => void) {
       if (!items.length) return;
       const first = items[0];
       const last = items[items.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === container
+        || (document.activeElement instanceof HTMLElement && document.activeElement.tabIndex === -1))) {
         event.preventDefault();
         last.focus();
       } else if (!event.shiftKey && document.activeElement === last) {
@@ -42,7 +43,7 @@ export function useModalA11y<T extends HTMLElement>(onDismiss: () => void) {
       document.removeEventListener('keydown', handleKeyDown);
       previouslyFocused?.focus?.();
     };
-  }, []);
+  }, [initialFocus]);
 
   return containerRef;
 }

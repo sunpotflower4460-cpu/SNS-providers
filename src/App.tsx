@@ -4,16 +4,16 @@ import { analyzeSelfProfile, apiConfigured, discoverSocialCandidates, enrichXPro
 import { persistServerBudgetCeiling } from './budgetCeilingSave';
 import { completeSettingsBudgetSave, settingsBudgetIdentity, shouldInvalidatePendingSettingsSave } from './settingsSave';
 import BackupControls from './BackupControls';
-import { getSyncToken } from './controlToken';
+import { CONTROL_TOKEN_CHANGED_EVENT, getSyncToken } from './controlToken';
 import { buildDailyQueue } from './daily';
 import { buildMissionInbox } from './missionInboxModel';
 import { mergeDiscoveredProfiles } from './discoveryStore';
 import Manual from './Manual';
 import MissionInbox from './MissionInbox';
-import Onboarding from './Onboarding';
 import QuickSearch from './QuickSearch';
 import SetupGuide, { SetupBanner, ThemeSwitcher } from './SetupGuide';
-import SetupWizard, { OPEN_HELP_CHAT_EVENT, OPEN_SETUP_EVENT, openSetupWizard } from './SetupWizard';
+import SetupWizard, { OPEN_HELP_CHAT_EVENT, OPEN_SETUP_EVENT } from './SetupWizard';
+import EasySetup, { OPEN_EASY_SETUP_EVENT, openEasySetup } from './EasySetup';
 import type { StepGroup } from './setupSteps';
 import HelpChat from './HelpChat';
 import DemoPreview from './DemoPreview';
@@ -87,11 +87,13 @@ function App() {
   const [apiNote, setApiNote] = useState(apiConfigured ? 'API接続待機' : 'ローカルモード');
   const [persistenceError, setPersistenceError] = useState('');
   const [handoffError, setHandoffError] = useState('');
-  const [showOnboarding, setShowOnboarding] = useState(() => !hasSeenOnboarding());
   const [showManual, setShowManual] = useState(false);
   // If the setup popup was open when the user left for Cloudflare / X and iOS reloaded the
   // app, bring it back on the same step.
   const [wizardGroup, setWizardGroup] = useState<StepGroup | null>(() => (loadPosition()?.open ? loadPosition()!.group : null));
+  const [showEasySetup, setShowEasySetup] = useState(() => (
+    !hasSeenOnboarding() && !loadPosition()?.open && pendingXReadAttempt() === null
+  ));
   const [helpQuestion, setHelpQuestion] = useState<string | null>(null);
   const { status: connection, refresh: refreshConnection } = useConnectionStatus();
   const [xReadNote, setXReadNote] = useState('');
@@ -104,6 +106,7 @@ function App() {
   const lastInboxSyncRef = useRef(0);
   const inboxSyncingRef = useRef(false);
   const checkXReturnAgain = useRef(false);
+  const refreshInboxForNewKey = useRef(false);
   const budgetLimitRef = useRef(spendingCeilingUsd(state.budget));
   budgetLimitRef.current = spendingCeilingUsd(state.budget);
   const localDay = useLocalDayKey();
@@ -135,37 +138,65 @@ function App() {
 
   useEffect(() => {
     if (!apiConfigured) return;
-    if (!getSyncToken().trim()) {
-      setApiNote('管理キー未設定 · ローカル利用可');
-      return;
-    }
-    fetchBudget()
-      .then((budget) => setState((current) => syncBudget(current, budget.usedUsd, budget.limitUsd)))
-      .catch((error) => setApiNote(error instanceof Error ? `予算同期: ${error.message}` : '予算同期に失敗しました'));
-    fetchSocialCapabilities()
-      .then((snapshot) => {
-        setLiveSocialCapabilities(snapshot);
-        setCapabilityEpoch((current) => current + 1);
-      })
-      .catch(() => {
+    let checkedToken: string | undefined;
+    function refreshAccount() {
+      const token = getSyncToken().trim();
+      if (token === checkedToken) return;
+      const changed = checkedToken !== undefined;
+      checkedToken = token;
+      if (!token) {
         setLiveSocialCapabilities(null);
-      });
+        setApiNote('このスマホで利用中');
+        return;
+      }
+      fetchBudget()
+        .then((budget) => {
+          if (getSyncToken().trim() !== token) return;
+          setState((current) => syncBudget(current, budget.usedUsd, budget.limitUsd));
+          if (changed) setApiNote('使う準備ができました');
+        })
+        .catch(() => {
+          if (getSyncToken().trim() === token) setApiNote('つながりを確認できませんでした');
+        });
+      fetchSocialCapabilities()
+        .then((snapshot) => {
+          if (getSyncToken().trim() !== token) return;
+          setLiveSocialCapabilities(snapshot);
+          setCapabilityEpoch((current) => current + 1);
+        })
+        .catch(() => {
+          if (getSyncToken().trim() === token) setLiveSocialCapabilities(null);
+        });
+    }
+    refreshAccount();
+    window.addEventListener(CONTROL_TOKEN_CHANGED_EVENT, refreshAccount);
+    return () => window.removeEventListener(CONTROL_TOKEN_CHANGED_EVENT, refreshAccount);
   }, []);
 
   useEffect(() => {
     const onSetup = (event: Event) => {
       const group = (event as CustomEvent<StepGroup | undefined>).detail;
       setShowManual(false);
+      setShowEasySetup(false);
       setWizardGroup(group || 'core');
+    };
+    const onEasySetup = () => {
+      setShowManual(false);
+      markWizardClosed();
+      setWizardGroup(null);
+      setShowEasySetup(true);
+      void refreshConnection();
     };
     const onHelp = (event: Event) => setHelpQuestion((event as CustomEvent<string | undefined>).detail || '');
     window.addEventListener(OPEN_SETUP_EVENT, onSetup);
+    window.addEventListener(OPEN_EASY_SETUP_EVENT, onEasySetup);
     window.addEventListener(OPEN_HELP_CHAT_EVENT, onHelp);
     return () => {
       window.removeEventListener(OPEN_SETUP_EVENT, onSetup);
+      window.removeEventListener(OPEN_EASY_SETUP_EVENT, onEasySetup);
       window.removeEventListener(OPEN_HELP_CHAT_EVENT, onHelp);
     };
-  }, []);
+  }, [refreshConnection]);
 
   useEffect(() => {
     const onCaps = () => setCapabilityEpoch((current) => current + 1);
@@ -183,6 +214,8 @@ function App() {
 
       markWizardClosed();
       setWizardGroup(null);
+      setShowEasySetup(false);
+      markOnboardingSeen();
       setTab('today');
       setXReadSyncing(true);
       setXReadNote('Xと接続しました。プロフィール・投稿・メンションを取り込んでいます…');
@@ -262,16 +295,19 @@ function App() {
         if (attempt !== null && await syncNewXConnection(attempt, token)) return;
         try {
           const canonical = await fetchCanonicalSocialActions();
+          if (getSyncToken().trim() !== token) return;
           setState((current) => applyCanonicalServerActions(current, canonical as Parameters<typeof applyCanonicalServerActions>[1]));
         } catch {
           // Canonical list is best-effort; local Mission Inbox remains usable.
         }
         const now = Date.now();
+        if (getSyncToken().trim() !== token) return;
         const newAttempt = pendingXReadAttempt();
         if (newAttempt !== null && newAttempt !== attempt) return;
         if (!forceReadSync && now - lastInboxSyncRef.current < 15 * 60 * 1000) return;
         lastInboxSyncRef.current = now;
         const inbox = await syncSocialInbox('local-user', budgetLimitRef.current);
+        if (getSyncToken().trim() !== token) return;
         setState((current) => {
           let next = current;
           const mentions = inbox.xMentions && typeof inbox.xMentions === 'object'
@@ -329,7 +365,10 @@ function App() {
         if (attempt !== null) setXReadNote('Xの接続をまだ確認できませんでした。');
       } finally {
         inboxSyncingRef.current = false;
-        if (checkXReturnAgain.current) {
+        if (refreshInboxForNewKey.current) {
+          refreshInboxForNewKey.current = false;
+          void refreshInbox(true);
+        } else if (checkXReturnAgain.current) {
           checkXReturnAgain.current = false;
           if (pendingXReadAttempt() !== null) void refreshInbox(false);
         }
@@ -339,11 +378,22 @@ function App() {
     const onVis = () => {
       if (document.visibilityState === 'visible') void refreshInbox(false);
     };
+    let lastToken = getSyncToken().trim();
+    const onKeyChange = () => {
+      const token = getSyncToken().trim();
+      if (token === lastToken) return;
+      lastToken = token;
+      if (!token) return;
+      if (inboxSyncingRef.current) refreshInboxForNewKey.current = true;
+      else void refreshInbox(true);
+    };
     document.addEventListener('visibilitychange', onVis);
     window.addEventListener('pageshow', onVis);
+    window.addEventListener(CONTROL_TOKEN_CHANGED_EVENT, onKeyChange);
     return () => {
       document.removeEventListener('visibilitychange', onVis);
       window.removeEventListener('pageshow', onVis);
+      window.removeEventListener(CONTROL_TOKEN_CHANGED_EVENT, onKeyChange);
     };
   }, [refreshConnection]);
 
@@ -536,9 +586,8 @@ function App() {
   }
 
   async function rerankCandidates() {
-    if (!apiConfigured) {
-      setApiNote('AI再評価はサーバー準備後に使えます。準備の案内を開きます');
-      openSetupWizard('core');
+    if (!apiConfigured || !getSyncToken().trim()) {
+      openEasySetup();
       return;
     }
     if (discovering || ranking || enrichingX) {
@@ -564,9 +613,8 @@ function App() {
   }
 
   async function discoverCandidates() {
-    if (!apiConfigured) {
-      setApiNote('自動の候補探しはサーバー準備後に使えます。準備の案内を開きます');
-      openSetupWizard('core');
+    if (!apiConfigured || !getSyncToken().trim()) {
+      openEasySetup();
       return;
     }
     if (discovering || ranking || enrichingX) {
@@ -596,9 +644,8 @@ function App() {
   }
 
   async function enrichXCandidates() {
-    if (!apiConfigured) {
-      setApiNote('X公式情報の更新はサーバー準備後に使えます。準備の案内を開きます');
-      openSetupWizard('core');
+    if (!apiConfigured || !getSyncToken().trim()) {
+      openEasySetup();
       return;
     }
     if (discovering || ranking || enrichingX) {
@@ -645,9 +692,8 @@ function App() {
       setApiNote('プロフィールまたは最近の投稿を入力してください');
       return;
     }
-    if (!apiConfigured) {
-      setApiNote('AI分析はサーバー準備後に使えます。準備の案内を開きます');
-      openSetupWizard('core');
+    if (!apiConfigured || !getSyncToken().trim()) {
+      openEasySetup();
       return;
     }
     setAnalyzingSelf(true);
@@ -663,6 +709,11 @@ function App() {
     } finally {
       setAnalyzingSelf(false);
     }
+  }
+
+  function closeEasySetup() {
+    markOnboardingSeen();
+    setShowEasySetup(false);
   }
 
   return (
@@ -683,8 +734,8 @@ function App() {
 
       <main className="page">
         {tab === 'today' && (xReadNote || xReadConnectAvailable(connection)) && (
-          <section className="setup-banner" aria-label="Xの読み取り連携">
-            <p role="status">{xReadNote || 'Xで許可すると、プロフィール・最近の投稿・メンションを予算内で取り込みます。'}</p>
+          <section className="setup-banner easy-setup-today" aria-label="Xの読み取り連携">
+            <p role="status">{xReadNote || 'Xの画面で「許可」を押すと、投稿や届いたお知らせを読めるようになります。'}</p>
             {!xReadSyncing && xReadConnectAvailable(connection) && <XReadConnectButton />}
           </section>
         )}
@@ -706,11 +757,11 @@ function App() {
       {toast && <div className="status-toast" role="status" aria-live="polite"><p>{friendlyReason(toast)}</p><button type="button" aria-label="閉じる" onClick={() => setToast('')}>×</button></div>}
 
       {pending && <ResultSheet candidate={pending.candidate} action={pending.action} onResolve={resolvePending} />}
-      {showOnboarding && <Onboarding onFinish={() => { markOnboardingSeen(); setShowOnboarding(false); }} onStartSetup={() => openSetupWizard('core')} />}
-      {!showOnboarding && showManual && <Manual onClose={() => setShowManual(false)} canAskAi={helpChatAvailable(connection)} />}
+      {!showEasySetup && showManual && <Manual onClose={() => setShowManual(false)} canAskAi={helpChatAvailable(connection)} />}
+      {showEasySetup && !pending && helpQuestion == null && <EasySetup status={connection} onRetry={() => void refreshConnection()} onClose={closeEasySetup} onToday={() => { closeEasySetup(); setTab('today'); }} onChange={setState} />}
       {/* Only the top dialog is mounted, so Escape in the help chat cannot also close the
           wizard underneath; the wizard remounts on its last step afterwards. */}
-      {!showOnboarding && wizardGroup && helpQuestion == null && <SetupWizard initialGroup={wizardGroup} onGroupChange={setWizardGroup} onClose={() => { markWizardClosed(); setWizardGroup(null); }} onGoToday={() => setTab('today')} />}
+      {!showEasySetup && wizardGroup && helpQuestion == null && <SetupWizard initialGroup={wizardGroup} onGroupChange={setWizardGroup} onClose={() => { markWizardClosed(); setWizardGroup(null); }} onGoToday={() => setTab('today')} />}
       {helpQuestion != null && <HelpChat initialQuestion={helpQuestion} context={connectionContext(connection)} onClose={() => setHelpQuestion(null)} />}
     </div>
   );
@@ -724,14 +775,14 @@ function StartCard({ onDiscover }: { onDiscover: () => void }) {
     <h2 id="start-title">はじめに</h2>
     <ol className="start-steps">
       <li className={ready ? 'is-done' : ''}>
-        <button type="button" onClick={() => openSetupWizard('core')}>
-          <span className="start-num" aria-hidden="true">{ready ? '✓' : '1'}</span>
-          <span><strong>{ready ? '準備はできています' : 'AIを使えるように準備する'}</strong><small>{ready ? '見直すときはここから' : '1画面ずつ案内します（約20分）'}</small></span>
+        <button type="button" onClick={openEasySetup}>
+          <span className="start-num" aria-hidden="true">{ready ? '✓' : '⚙'}</span>
+          <span><strong>{ready ? '使う準備を確認する' : 'かんたん設定'}</strong><small>{ready ? 'つながりを確認できます' : '必要なことを一つずつ案内します'}</small></span>
         </button>
       </li>
       <li>
         <button type="button" onClick={onDiscover}>
-          <span className="start-num" aria-hidden="true">{ready ? '1' : '2'}</span>
+          <span className="start-num" aria-hidden="true">⌕</span>
           <span><strong>つながる相手を探す</strong><small>{ready ? 'AIが自動で探して並べます' : '準備の前でも、キーワードで探せます'}</small></span>
         </button>
       </li>
