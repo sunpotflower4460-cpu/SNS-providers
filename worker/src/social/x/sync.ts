@@ -100,7 +100,7 @@ export async function paginateXMentions(input: {
   };
 }
 
-export async function syncXInboundMentions(env: XInboundEnv, body: XInboundSyncRequest) {
+export async function syncXInboundMentions(env: XInboundEnv, body: XInboundSyncRequest, maxPages = MAX_PAGES) {
   const userId = sanitizeUserId(body.userId || 'local-user');
   if (env.X_INBOUND_SYNC_ENABLED !== 'true') {
     return disabled('X inbound mention/reply sync is disabled until X_INBOUND_SYNC_ENABLED=true.');
@@ -163,7 +163,7 @@ export async function syncXInboundMentions(env: XInboundEnv, body: XInboundSyncR
       paginationToken: checkpoint?.continuationCursor || undefined,
       pendingNewestId,
       maxResults,
-      maxPages: MAX_PAGES,
+      maxPages,
       receivedAt,
       getJson: (url) => xFetch<MentionsResponse>(url, accessToken),
     });
@@ -200,7 +200,7 @@ export async function syncXInboundMentions(env: XInboundEnv, body: XInboundSyncR
     } else {
       const persisted = await saveSyncContinuation(env.DB, userId, 'x_mentions', paged.continuation, {
         pages: paged.pages,
-        budgetStop: paged.pages >= MAX_PAGES,
+        budgetStop: paged.pages >= maxPages,
         pendingNewestId: paged.newestId || pendingNewestId || null,
       });
       if (!persisted.ok) {

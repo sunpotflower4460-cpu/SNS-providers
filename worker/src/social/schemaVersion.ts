@@ -1,4 +1,4 @@
-export const EXPECTED_SCHEMA_VERSION = 7;
+export const EXPECTED_SCHEMA_VERSION = 8;
 
 export interface SchemaVersionSnapshot {
   connected: boolean;
@@ -45,7 +45,7 @@ export async function readSchemaVersion(db: D1Database): Promise<SchemaVersionSn
       partial: [],
       checksumMismatch: false,
       reason: missing
-        ? 'schema_migrations table is missing. Run npm run d1:migrate (or the production migration workflow).'
+        ? 'schema_migrations table is missing. Apply the D1 migrations in Cloudflare.'
         : 'D1 schema version could not be read. Fail closed until the ledger is reachable.',
     };
   }

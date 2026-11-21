@@ -1,35 +1,60 @@
 import { createHash } from 'node:crypto';
 
-const usage = `Usage: node scripts/muse-bridge/index.mjs <command>
+const usage = `Usage: node scripts/muse-bridge/index.mjs <command> [--json]
   preflight
   today
+  candidates
   show <id>
-  execute <id> [--confirm <confirmation>]
-  budget`;
+  execute <id> [--draft <text>] [--confirm <confirmation>]
+  budget
+  refresh
+  regenerate <candidate:id>
+  record <candidate:id> --completed | --skipped`;
 
 const hashPattern = /^[a-f0-9]{64}$/;
-const [command, id, flag, confirmation, ...extra] = process.argv.slice(2);
+const candidatePrefix = 'candidate:';
 const syncToken = process.env.SNSP_SYNC_TOKEN?.trim() || '';
+const operations = { follow: 'フォロー', like: 'いいね', reply: '返信', review: '確認' };
+const statuses = { pending: '未対応', ready: '未対応', executing: '結果確認中', completed: '完了', skipped: '見送り', dismissed: '見送り', failed: '前回失敗' };
+const refreshStatuses = { ok: '完了', cached: '直近の取得結果', partial: '途中まで取得', error: '取得エラー', unavailable: '利用不可', skipped: '省略' };
+let outputJson = false;
 
 try {
-  if (command === '--help' && id === undefined) {
-    console.log(usage);
-  } else {
-    validateCommand();
-    await run(readWorkerOrigin());
+  const options = parseCommand(process.argv.slice(2));
+  if (options.command === '--help') console.log(usage);
+  else {
+    outputJson = options.json;
+    await run(readWorkerOrigin(), options);
   }
 } catch (error) {
-  console.error(redact(error.message));
+  const message = redact(error instanceof Error ? error.message : 'Muse Bridge failed.');
+  console.error(outputJson ? JSON.stringify({ ok: false, error: message }) : message);
   process.exitCode = 1;
 }
 
-function validateCommand() {
-  if (['preflight', 'today', 'budget'].includes(command) && id === undefined) return;
-  const validId = typeof id === 'string' && id.length <= 180 && id.trim() === id
-    && !id.startsWith('-') && !/[\u0000-\u001f\u007f]/.test(id) && id !== '' && id !== '.' && id !== '..';
-  if (validId && command === 'show' && flag === undefined) return;
-  if (validId && command === 'execute' && (flag === undefined
-    || (flag === '--confirm' && hashPattern.test(confirmation) && extra.length === 0))) return;
+function parseCommand(args) {
+  const [command, ...rest] = args;
+  if (command === '--help' && !rest.length) return { command };
+  const options = { command, json: false };
+  const optionsWithValue = { '--confirm': 'confirmation', '--draft': 'draft' };
+  for (let index = 0; index < rest.length; index++) {
+    const arg = rest[index];
+    if (arg === '--json' && !options.json) options.json = true;
+    else if (['--completed', '--skipped'].includes(arg) && !options.outcome) options.outcome = arg.slice(2);
+    else if (Object.hasOwn(optionsWithValue, arg) && options[optionsWithValue[arg]] === undefined && index + 1 < rest.length) {
+      options[optionsWithValue[arg]] = rest[++index];
+    } else if (!options.id && /^[A-Za-z0-9._:-]{1,180}$/.test(arg) && !arg.startsWith('-') && arg !== '.' && arg !== '..') {
+      options.id = arg;
+    } else throw new Error(usage);
+  }
+  const { id, outcome, draft, confirmation } = options;
+  const candidate = id?.startsWith(candidatePrefix);
+  if (['preflight', 'today', 'candidates', 'budget', 'refresh'].includes(command)
+    && !id && !outcome && draft === undefined && confirmation === undefined) return options;
+  if (command === 'show' && id && !outcome && draft === undefined && confirmation === undefined) return options;
+  if (command === 'regenerate' && candidate && !outcome && draft === undefined && confirmation === undefined) return options;
+  if (command === 'record' && candidate && outcome && draft === undefined && confirmation === undefined) return options;
+  if (command === 'execute' && id && !outcome && (confirmation === undefined || hashPattern.test(confirmation))) return options;
   throw new Error(usage);
 }
 
@@ -49,7 +74,7 @@ function readWorkerOrigin() {
   return url.origin;
 }
 
-async function request(origin, path, payload) {
+async function request(origin, path, payload, timeout = payload ? 60_000 : 30_000) {
   const headers = { accept: 'application/json', authorization: `Bearer ${syncToken}` };
   if (payload) headers['content-type'] = 'application/json';
   const response = await fetch(origin + path, {
@@ -57,7 +82,7 @@ async function request(origin, path, payload) {
     headers,
     body: payload ? JSON.stringify(payload) : undefined,
     redirect: 'error',
-    signal: AbortSignal.timeout(payload ? 60_000 : 30_000),
+    signal: AbortSignal.timeout(timeout),
   }).catch(() => {
     throw new Error('Worker request failed (connection, timeout, or redirect).');
   });
@@ -72,33 +97,57 @@ async function read(origin, path) {
   return body;
 }
 
-async function snapshot(origin) {
-  const result = await read(origin, '/api/sync/state');
-  if (result.found === false && result.state === null) return { state: {}, updatedAt: null };
-  if (result.found !== true || !record(result.state) || typeof result.updatedAt !== 'string') {
-    throw new Error('Worker returned an invalid D1 snapshot.');
-  }
-  return result;
+async function prepare(origin, path, payload, timeout) {
+  const { status, body } = await request(origin, path, payload, timeout);
+  if (status !== 200 || body.ok !== true) throw new Error(`Muse preparation failed (HTTP ${status}).`);
+  return body;
 }
 
-async function run(origin) {
+async function run(origin, options) {
+  const { command, id, outcome } = options;
   switch (command) {
     case 'preflight':
-      print(await read(origin, '/api/preflight'));
+      print(await read(origin, '/api/preflight'), preflightText);
       break;
     case 'budget':
-      print(await budget(origin));
+      print(await budget(origin), budgetText);
       break;
     case 'today':
-      print(await today(origin));
+      print(await read(origin, '/api/muse/today'), todayText);
+      break;
+    case 'candidates':
+      print(await read(origin, '/api/muse/candidates'), ({ candidates }) => candidateList(candidates));
       break;
     case 'show':
-      print(id.startsWith('candidate:') ? await showCandidate(origin, id) : await reviewAction(origin, id));
+      if (id.startsWith(candidatePrefix)) {
+        print(await read(origin, candidatePath(id)), ({ candidate }) => candidateText(candidate));
+      } else {
+        print(await reviewAction(origin, id), ({ action, draft, blockedReason, lastExecution }) => [
+          replyText({ ...action, draft }), blockedReason, lastExecution && executionText(lastExecution),
+        ].filter(Boolean).join('\n'));
+      }
+      break;
+    case 'refresh': {
+      const intake = await prepare(origin, '/api/muse/refresh', { phase: 'intake' }, 180_000);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(intake.dateJst)) throw new Error('Worker returned an invalid refresh date.');
+      print(await prepare(origin, '/api/muse/refresh', { phase: 'prepare', dateJst: intake.dateJst }, 180_000), todayText);
+      break;
+    }
+    case 'regenerate':
+      print(await prepare(origin, `${candidatePath(id)}/draft`, {}), ({ candidate }) => candidateText(candidate));
+      break;
+    case 'record':
+      print(await prepare(origin, `${candidatePath(id)}/record`, { outcome }),
+        ({ id: candidateId, status }) => `${candidateId} ${status === 'completed' ? '実施済み' : '見送り'}を記録しました。`);
       break;
     case 'execute':
-      await execute(origin);
+      await execute(origin, options);
       break;
   }
+}
+
+function candidatePath(id) {
+  return `/api/muse/candidates/${encodeURIComponent(id)}`;
 }
 
 async function budget(origin) {
@@ -119,168 +168,164 @@ async function budget(origin) {
   };
 }
 
-async function today(origin) {
-  const [inbox, { state, updatedAt }] = await Promise.all([
-    read(origin, '/api/social/actions'),
-    snapshot(origin),
-  ]);
-  if (inbox.ok !== true || !Array.isArray(inbox.actions)) {
-    throw new Error('The canonical Inbox is unavailable.');
-  }
-  const now = Date.now();
-  const inboxStatuses = new Set(['pending', 'ready', 'failed', 'executing']);
-  return {
-    snapshotUpdatedAt: updatedAt,
-    actions: inbox.actions.filter((action) => record(action) && (
-      inboxStatuses.has(action.status)
-      || (action.status === 'snoozed' && Date.parse(action.snoozedUntil) <= now)
-    )).map(({ id, platform, type, status, username, targetUrl, externalEventId }) => ({
-      id, platform, type, status, username, targetUrl,
-      hasSavedDraft: Boolean(draftText(findSavedAction(state, { id, platform, type, externalEventId }))),
-    })),
-    candidates: records(state.candidates)
-      .filter((candidate) => typeof candidate.id === 'string' && candidate.id && !candidate.skipped
-        && !(Date.parse(candidate.snoozedUntil) > now))
-      .map(candidateSummary),
-  };
-}
-
-function candidateSummary(candidate) {
-  return {
-    id: `candidate:${candidate.id}`,
-    platform: candidate.platform,
-    username: candidate.username,
-    operation: candidate.recommendedAction,
-    targetUrl: candidate.engagementUrl || candidate.profileUrl,
-    mode: 'handoff',
-  };
-}
-
-async function showCandidate(origin, candidateId) {
-  const { state, updatedAt } = await snapshot(origin);
-  const matches = records(state.candidates).filter((candidate) => candidate.id === candidateId.slice('candidate:'.length));
-  if (matches.length !== 1) throw new Error('Candidate is missing or ambiguous in the D1 snapshot.');
-  return { ...candidateSummary(matches[0]), draft: draftText(matches[0]), snapshotUpdatedAt: updatedAt };
-}
-
-async function reviewAction(origin, actionId) {
-  const [payload, { state, updatedAt }] = await Promise.all([
+async function reviewAction(origin, actionId, editedDraft) {
+  const [preview, details] = await Promise.all([
     read(origin, `/api/social/actions/${encodeURIComponent(actionId)}/preview`),
-    snapshot(origin),
+    read(origin, `/api/muse/replies/${encodeURIComponent(actionId)}`),
   ]);
-  const { action, review, lastExecution } = payload;
-  if (payload.ok !== true || !record(action) || action.id !== actionId || !record(review)) {
-    throw new Error('Worker returned an invalid action preview.');
+  const { action, review, lastExecution } = preview;
+  const item = details.action;
+  if (preview.ok !== true || details.ok !== true || !record(action) || !record(item) || !record(review)
+    || action.id !== actionId || item.id !== actionId || action.platform !== 'x' || action.type !== 'reply_inbound'
+    || !action.externalEventId || item.externalEventId !== action.externalEventId || action.status !== item.status) {
+    throw new Error('The X reply changed or is unavailable. Read it again before approval.');
   }
-  const saved = findSavedAction(state, action);
-  const draft = draftText(saved);
+  const draft = editedDraft === undefined ? item.draft : editedDraft.trim();
   let blockedReason = review.ready === false ? review.reason : null;
   if (review.ready === true) {
-    if (!record(review.recipient) || !review.recipient.id || !record(review.target) || !review.target.operation
-      || !isAmount(review.costUsd) || !hashPattern.test(review.binding)
-      || !Number.isInteger(review.maxDraftLength) || review.maxDraftLength < 1) {
+    if (!record(review.recipient) || review.recipient.id !== item.recipientId || !record(review.target)
+      || review.target.operation !== 'x_reply_write' || review.target.externalEventId !== item.externalEventId
+      || !isAmount(review.costUsd) || !hashPattern.test(review.binding) || !Number.isInteger(review.maxDraftLength)
+      || review.maxDraftLength < 1) {
       throw new Error('Worker returned an incomplete target or price.');
     }
-    if (!draft) blockedReason = 'Save the draft in the PWA and push the latest snapshot to D1.';
-    else if (draft.length > review.maxDraftLength) blockedReason = 'The saved draft is over the provider text limit.';
-    else if (saved.unknownExecution || ['completed', 'dismissed', 'executing', 'expired'].includes(saved.status)) {
-      blockedReason = 'The saved Inbox marks this action as closed or awaiting a result.';
+    if (item.suppressed) blockedReason = '見送り済み、対応済み、または結果確認中の返信です。';
+    else if (!draft) blockedReason = '文案を用意してから承認してください。';
+    else if (draft.length > review.maxDraftLength) blockedReason = '本文が文字数の上限を超えています。';
+    else if (draft.includes(syncToken)) blockedReason = '本文に個人管理キーが含まれています。';
+    else if (/https?:\/\/|www\.|\b[a-z0-9-]+\.(com|net|org|jp|io|co|me|ly|gl|app|dev|link)\b/i.test(draft)) {
+      blockedReason = '送信する返信本文からURLを取り除いてください。';
     }
   }
-  return { action, draft, snapshotUpdatedAt: updatedAt, review, blockedReason, lastExecution };
+  return { action: item, draft, review, blockedReason, lastExecution };
 }
 
-async function execute(origin) {
-  if (id.startsWith('candidate:')) throw new Error('Candidate suggestions open in the official app.');
-  const preview = await reviewAction(origin, id);
-  const { action, draft, review, blockedReason } = preview;
+async function execute(origin, { id, draft: editedDraft, confirmation }) {
+  if (id.startsWith(candidatePrefix)) throw new Error('Candidate suggestions open in the official app.');
+  const { action, draft, review, blockedReason } = await reviewAction(origin, id, editedDraft);
   const code = review.ready === true && !blockedReason
-    ? createHash('sha256').update(JSON.stringify([review.binding, draft])).digest('hex')
-    : null;
-  const approvedItem = {
-    actionId: action.id,
-    platform: action.platform,
-    operation: review.target?.operation || action.type,
-    recipient: review.recipient || { username: action.username },
-    target: review.target || { targetUrl: action.targetUrl },
-    draft,
-    costUsd: review.costUsd ?? null,
-    testMode: review.testMode ?? false,
-    status: action.status,
-    blockedReason,
-    confirmation: code,
+    ? createHash('sha256').update(JSON.stringify([review.binding, draft])).digest('hex') : null;
+  const item = {
+    actionId: action.id, platform: action.platform, operation: 'x_reply_write',
+    recipient: review.recipient || { id: action.recipientId, username: action.username },
+    target: { externalEventId: action.externalEventId, targetUrl: action.targetUrl },
+    draft, costUsd: review.costUsd ?? null, testMode: review.testMode ?? false,
+    status: action.status, blockedReason, confirmation: code,
   };
-  if (flag === undefined) {
-    print(approvedItem);
+  if (confirmation === undefined) {
+    print(item, approvalText);
     return;
   }
   if (!code || code !== confirmation) {
     throw new Error('Approval is missing or the preview changed. Present a new execute preview before asking for approval.');
   }
   const executionId = `muse-${code}`;
-  console.error(format({ ...approvedItem, executionId }));
+  console.error(outputJson ? json({ ...item, executionId }) : redact(approvalText(item)));
   let outcome;
   try {
-    outcome = await request(origin, `/api/social/actions/${encodeURIComponent(id)}/execute`, {
-      executionId,
-      draft,
-      museApproval: code,
-    });
+    outcome = await request(origin, `/api/social/actions/${encodeURIComponent(id)}/execute`, { executionId, draft, museApproval: code });
   } catch {
-    return unknownResult(executionId);
+    return unknownResult(id, executionId);
   }
   const { body, status } = outcome;
   if (status >= 500 || body.certainty === 'unknown' || body.code === 'UNKNOWN_RESULT') {
-    return unknownResult(executionId);
+    return unknownResult(id, executionId);
   }
   if (status === 200 && body.ok === true && body.executionId === executionId && body.status === 'succeeded') {
-    print({ ok: true, executionId, status: body.status, externalResultId: body.externalResultId ?? null });
+    print({ ok: true, executionId, status: body.status, externalResultId: body.externalResultId ?? null }, executionText);
   } else if (body.ok === false || body.status === 'failed') {
-    print({ ok: false, executionId, status: 'rejected', httpStatus: status, code: body.code ?? null });
+    print({ ok: false, executionId, status: 'rejected', httpStatus: status, code: body.code ?? null }, executionText);
     process.exitCode = 1;
   } else {
-    unknownResult(executionId);
+    unknownResult(id, executionId);
   }
 }
 
-function unknownResult(executionId) {
-  print({ ok: false, executionId, status: 'unknown', next: `show ${id}` });
+function unknownResult(id, executionId) {
+  print({ ok: false, executionId, status: 'unknown', next: `show ${id}` }, executionText);
   process.exitCode = 1;
 }
 
-function findSavedAction(state, action) {
-  if (!action.externalEventId) return null;
-  const matches = records(state.socialActions).filter((item) => item.id === action.id
-    && item.platform === action.platform && item.type === action.type
-    && item.externalEventId === action.externalEventId);
-  return matches.length === 1 ? matches[0] : null;
+function todayText({ actions, candidates, target, candidateReserve, refresh, alreadyStarted }) {
+  if (!Array.isArray(actions) || !Array.isArray(candidates)) throw new Error('Worker returned an invalid evening list.');
+  return [
+    `今夜の交流 ${actions.length + candidates.length}件（目安 ${target}件、候補の在庫 ${candidateReserve}件）`,
+    refresh ? `準備 ${refresh.dateJst}（日本時間） ${refresh.finishedAt
+      ? `メンション ${refreshStatuses[refresh.mentions] || '未確認'} ／ 候補探し ${refreshStatuses[refresh.discovery] || '未確認'}` : '開始済み。保存されている項目を表示しています。'}`
+      : '準備の記録はまだありません。',
+    alreadyStarted && '今日の準備はすでに開始しています。',
+    actions.length && ['**届いた返信とメンション**', ...actions.map(replyText)].join('\n\n'),
+    candidates.length && ['**交流の候補**', candidateList(candidates)].join('\n\n'),
+  ].filter(Boolean).join('\n\n');
 }
 
-function draftText(item) {
-  const text = item?.draft ?? item?.aiDraft;
-  return typeof text === 'string' && text.trim() ? text.trim() : null;
+function candidateList(candidates) {
+  return candidates.length ? candidates.map(candidateText).join('\n\n') : '表示できる候補はありません。';
 }
 
-function record(value) {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
+function candidateText(item) {
+  return [
+    `**${item.rank ? `${item.rank}. ` : ''}${operations[item.operation] || '確認'} · @${item.username}** （${statuses[item.status] || item.status}）`,
+    item.targetUrl, item.postUrl && item.postUrl !== item.targetUrl && `投稿 ${item.postUrl}`,
+    item.profileSummary && quote(item.profileSummary),
+    item.reason && `おすすめの理由\n${quote(item.reason)}`,
+    item.draft && `挨拶の文案\n${copyable(item.draft)}`,
+    `ID ${item.id}`,
+  ].filter(Boolean).join('\n');
 }
 
-function records(value) {
-  return Array.isArray(value) ? value.filter(record) : [];
+function replyText(item) {
+  return [
+    `**返信 · ${item.username ? `@${item.username}` : `Xユーザー ${item.recipientId || ''}`}** （${statuses[item.status] || item.status}）`,
+    item.targetUrl, item.inboundText && `届いた内容\n${quote(item.inboundText)}`,
+    item.draft ? `返信の文案\n${copyable(item.draft)}` : '返信の文案はまだありません。',
+    `ID ${item.id}`,
+  ].filter(Boolean).join('\n');
 }
 
-function isAmount(value) {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+function approvalText(item) {
+  return [
+    `承認内容 · Xで返信 · ${item.recipient.username ? `@${item.recipient.username}` : item.recipient.id}`, item.target.targetUrl,
+    `料金 ${item.costUsd === null ? '未確認' : dollars(item.costUsd)}`, item.testMode && 'テストモード',
+    item.draft && copyable(item.draft), item.blockedReason,
+    item.confirmation && `確認番号 ${item.confirmation}`,
+  ].filter(Boolean).join('\n');
 }
 
-function print(value) {
-  console.log(format(value));
+function preflightText(data) {
+  const schema = data.database;
+  return [
+    schema && `D1 スキーマ ${schema.migrationVersion ?? '未確認'} / ${schema.expectedMigrationVersion}`,
+    data.inboxSources?.xMentions && `Xのメンション読み取り ${data.inboxSources.xMentions.status}`,
+    `Xの返信権限 ${data.x?.replyReady ? '準備済み' : '未確認または準備待ち'}`,
+    `無料AI ${data.ai?.groqFree || data.ai?.sakura ? '利用可' : '未確認または準備待ち'}`,
+    `候補探し ${data.ai?.discovery ? '利用可' : '未確認または準備待ち'}`,
+  ].filter(Boolean).join('\n');
 }
 
-function format(value) {
-  return JSON.stringify(value, (_, field) => typeof field === 'string' ? redact(field) : field, 2);
+function budgetText({ effectiveLimitUsd, usedUsd, remainingUsd }) {
+  return `月の上限 ${dollars(effectiveLimitUsd)} ／ 使用額 ${dollars(usedUsd)} ／ 残り ${dollars(remainingUsd)}`;
 }
 
-function redact(value) {
-  return syncToken ? value.replaceAll(syncToken, '[REDACTED]') : value;
+function executionText({ executionId, status, externalResultId, code, next }) {
+  const result = { succeeded: '送信完了', pending: '結果確認中', failed: '失敗', rejected: '送信できませんでした', unknown: '送信結果を確認中' };
+  return [result[status] || status, code, `実行ID ${executionId}`, externalResultId && `投稿ID ${externalResultId}`, next && `状態の確認 ${next}`]
+    .filter(Boolean).join('\n');
 }
+
+function quote(value) {
+  return String(value).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').split(/\r?\n/).map((line) => `> ${line}`).join('\n');
+}
+
+function copyable(value) {
+  const length = Math.max(2, ...(value.match(/`+/g) || []).map((run) => run.length)) + 1;
+  const fence = '`'.repeat(length);
+  return `${fence}\n${value}\n${fence}`;
+}
+
+function dollars(value) { return value === null ? '未確認' : `$${value.toFixed(4)}`; }
+function record(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
+function isAmount(value) { return typeof value === 'number' && Number.isFinite(value) && value >= 0; }
+function print(value, render) { console.log(outputJson ? json(value) : redact(render(value))); }
+function json(value) { return JSON.stringify(value, (_, field) => typeof field === 'string' ? redact(field) : field, 2); }
+function redact(value) { return syncToken ? value.replaceAll(syncToken, '[REDACTED]') : value; }

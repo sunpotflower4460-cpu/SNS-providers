@@ -46,6 +46,11 @@ CREATE TABLE IF NOT EXISTS candidates (
   skipped INTEGER NOT NULL DEFAULT 0 CHECK(skipped IN (0,1)),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
+  platform_user_id TEXT,
+  engagement_url TEXT,
+  activity_text TEXT,
+  strategy TEXT,
+  greeting_draft TEXT,
   UNIQUE(user_id, platform, username)
 );
 
@@ -245,6 +250,27 @@ CREATE TABLE IF NOT EXISTS user_runtime_settings (
   user_id TEXT PRIMARY KEY,
   monthly_budget_ceiling_usd REAL NOT NULL CHECK(monthly_budget_ceiling_usd >= 0),
   updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS muse_reply_drafts (
+  user_id TEXT NOT NULL,
+  action_id TEXT NOT NULL,
+  context_hash TEXT NOT NULL,
+  draft TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, action_id),
+  FOREIGN KEY (action_id) REFERENCES social_actions(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS muse_refreshes (
+  user_id TEXT NOT NULL,
+  evening_date TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  intake_finished_at TEXT,
+  preparation_started_at TEXT,
+  finished_at TEXT,
+  summary_json TEXT NOT NULL DEFAULT '{}',
+  PRIMARY KEY (user_id, evening_date)
 );
 
 CREATE INDEX IF NOT EXISTS idx_candidates_user_match ON candidates(user_id, mission_match DESC);
