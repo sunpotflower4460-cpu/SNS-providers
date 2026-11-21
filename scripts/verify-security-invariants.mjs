@@ -67,12 +67,12 @@ if (!syncClient.includes('validIso(result.updatedAt)') || !syncClient.includes('
 }
 if (!apiClient.includes('(tokenOverride ?? getSyncToken()).trim()')
   || !apiClient.includes("fetchBudget(userId = 'local-user', tokenOverride?: string)")
-  || !syncControls.includes("fetchBudget('local-user', next)")
+  || !syncControls.includes('await verifyAndSaveControlToken(next)')
   || !syncControls.includes('変更は保存していません')) {
   throw new Error('Replacement control tokens can no longer be verified before persistence.');
 }
-const candidateVerifyIndex = syncControls.indexOf("fetchBudget('local-user', next)");
-const candidatePersistIndex = syncControls.indexOf('const tokenPersisted = setSyncToken(next);', candidateVerifyIndex);
+const candidateVerifyIndex = syncClient.indexOf("fetchBudget('local-user', next)");
+const candidatePersistIndex = syncClient.indexOf('const tokenPersisted = setSyncToken(next);', candidateVerifyIndex);
 if (candidateVerifyIndex < 0 || candidatePersistIndex < 0 || candidateVerifyIndex > candidatePersistIndex) {
   throw new Error('A replacement control token can be persisted before the Worker validates it.');
 }

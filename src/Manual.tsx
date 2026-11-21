@@ -1,6 +1,6 @@
 import { GUIDE_SECTIONS } from './guideContent';
-import { GuideSectionBody } from './Onboarding';
-import { OPEN_HELP_CHAT_EVENT, openSetupWizard } from './SetupWizard';
+import { OPEN_HELP_CHAT_EVENT } from './SetupWizard';
+import { openEasySetup } from './EasySetup';
 import { useModalA11y } from './useModalA11y';
 import './guide.css';
 
@@ -21,7 +21,7 @@ export default function Manual({ onClose, canAskAi }: Props) {
           <button className="guide-close" onClick={onClose} aria-label="閉じる">×</button>
         </div>
         <div className="guide-quick">
-          <button type="button" className="primary-button" onClick={() => { onClose(); openSetupWizard('core'); }}>準備を1ステップずつ進める</button>
+          <button type="button" className="primary-button" onClick={() => { onClose(); openEasySetup(); }}>かんたん設定を開く</button>
           {canAskAi
             ? <button type="button" className="secondary-button" onClick={() => { onClose(); window.dispatchEvent(new CustomEvent(OPEN_HELP_CHAT_EVENT, { detail: '' })); }}>アプリ内AIに聞く</button>
             : <a className="secondary-button" href={`https://chatgpt.com/?q=${encodeURIComponent(EXTERNAL_PROMPT)}`} target="_blank" rel="noopener noreferrer">ChatGPTに聞く（無料版でOK）</a>}
@@ -38,4 +38,13 @@ export default function Manual({ onClose, canAskAi }: Props) {
       </section>
     </div>
   );
+}
+
+function GuideSectionBody({ section }: { section: (typeof GUIDE_SECTIONS)[number] }) {
+  return <>
+    {section.paragraphs && section.paragraphs.map((text, index) => <p key={index}>{text}</p>)}
+    {section.steps && <ol className="guide-list">{section.steps.map((text, index) => <li key={index}>{text}</li>)}</ol>}
+    {section.items && <dl className="guide-terms">{section.items.map((item) => <div key={item.term}><dt>{item.term}</dt><dd>{item.desc}</dd></div>)}</dl>}
+    {section.bullets && <ul className="guide-list">{section.bullets.map((text, index) => <li key={index}>{text}</li>)}</ul>}
+  </>;
 }

@@ -3,7 +3,7 @@ import { friendlyReason } from './friendlyReason';
 import { apiConfigured, fetchBudget } from './api';
 import { normalizeAppState, validateAppState } from './backup';
 import { detachExternalAccountSummaries } from './restoreSafety';
-import { clearRemoteStateVersion, clearSyncToken, downloadRemoteState, getRemoteStateVersion, getSyncToken, setSyncToken, uploadRemoteState } from './sync';
+import { clearRemoteStateVersion, clearSyncToken, downloadRemoteState, getRemoteStateVersion, getSyncToken, setSyncToken, uploadRemoteState, verifyAndSaveControlToken } from './sync';
 import { syncBudget } from './store';
 import type { AppState, AppStateUpdater } from './types';
 import './sync.css';
@@ -41,17 +41,13 @@ export default function SyncControls({ state, onRestore }: { state: AppState; on
     setBusy(true);
     setStatus('個人管理キーが正しいか確認しています…');
     try {
-      // Validate the candidate token directly. Do not stage an unverified replacement in
-      // localStorage and then attempt a rollback if the Worker rejects it.
-      const budget = await fetchBudget('local-user', next);
-      const versionCleared = previous === next ? true : clearRemoteStateVersion();
-      const tokenPersisted = setSyncToken(next);
+      const { budget, persisted } = await verifyAndSaveControlToken(next);
       onRestore((current) => syncBudget(current, budget.usedUsd, budget.limitUsd));
-      setStatus(tokenPersisted && versionCleared
+      setStatus(persisted
         ? '個人管理キーを保存し、クラウド接続を確認しました'
         : 'クラウド接続は確認できましたが、この端末へのキーまたは同期情報の保存に失敗しました');
     } catch (error) {
-      setToken(previous);
+      setToken(getSyncToken());
       const message = error instanceof Error ? error.message : '個人管理キーを確認できませんでした';
       setStatus(`${message} · 変更は保存していません`);
     } finally {

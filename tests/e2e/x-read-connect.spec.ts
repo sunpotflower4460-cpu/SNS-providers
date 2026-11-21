@@ -131,3 +131,82 @@ test('X quick connect verifies consent, then reads profile, posts and mentions o
     '/api/x/inbound/sync', '/api/x/oauth/start', '/api/x/owned/sync',
   ]);
 });
+
+test('first-phone setup offers one step at a time and reuses a saved key', async ({ page }) => {
+  const worker = new URL(workerPath, app).href;
+  const key = 'beginner-setup-fixture';
+  await page.setViewportSize({ width: 320, height: 650 });
+  await page.addInitScript((keyToPaste) => {
+    let first = true;
+    Object.defineProperty(navigator, 'clipboard', { value: { readText: async () => {
+      if (first) {
+        first = false;
+        throw new DOMException('Paste permission needed', 'NotAllowedError');
+      }
+      return keyToPaste;
+    } } });
+    if (!localStorage.getItem('sns-providers:v1')) {
+      localStorage.setItem('sns-providers:v1', JSON.stringify({ relationshipPolicy: { autoReplenishEnabled: false } }));
+    }
+  }, key);
+
+  let reachable = false;
+  let oauthStarted = false;
+  await page.route(`${worker}/**`, (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname.slice(workerPath.length);
+    if (path === '/api/health') return route.fulfill({ status: reachable ? 200 : 503, json: { ok: reachable } });
+    if (path === '/api/x/oauth/start') oauthStarted = true;
+    if (request.headers().authorization !== `Bearer ${key}`) {
+      return route.fulfill({ status: 401, json: { error: 'Invalid personal control authorization.' } });
+    }
+    const replies: Record<string, unknown> = {
+      '/api/budget': { usedUsd: 0, limitUsd: 3, remainingUsd: 3, ledgerAvailable: true },
+      '/api/preflight': {
+        ai: { groq: true, groqFree: true, discovery: true },
+        x: { configured: true, tokenValid: false },
+      },
+      '/api/social/actions': { ok: true, actions: [] },
+      '/api/social/inbox/sync': {},
+    };
+    return route.fulfill({ status: replies[path] ? 200 : 404, json: replies[path] || {} });
+  });
+
+  await page.goto(app);
+  const setup = page.getByRole('dialog', { name: 'かんたん設定' });
+  const retry = setup.getByRole('button', { name: 'もう一度ためす' });
+  await expect(retry).toBeVisible();
+  reachable = true;
+  await retry.click();
+  const field = setup.getByLabel('アプリの鍵');
+  const paste = setup.getByRole('button', { name: '鍵を貼り付けて進む' });
+  await expect(field).toBeVisible();
+  await expect(paste).toBeVisible();
+  expect((await paste.boundingBox())?.height).toBeGreaterThanOrEqual(56);
+  await expect(setup.locator('.primary-button')).toHaveCount(1);
+  await paste.click();
+  await expect(setup.getByRole('alert')).toContainText('入力欄を長く押して');
+
+  await field.fill('incorrect-fixture');
+  await setup.getByRole('button', { name: 'この鍵で進む' }).click();
+  await expect(setup.getByRole('alert')).toContainText('鍵が合いませんでした');
+  expect(await page.evaluate(() => Boolean(localStorage.getItem('sns-providers:sync-token')))).toBe(false);
+  await field.fill('');
+  await paste.click();
+  await expect(setup.getByRole('button', { name: 'Xをつなぐ' })).toBeVisible();
+  await expect(field).toHaveCount(0);
+  await setup.getByRole('button', { name: '今はつながない' }).click();
+  await expect(setup).toHaveCount(0);
+  expect(oauthStarted).toBe(false);
+
+  await page.getByRole('button', { name: '設定', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'かんたん設定' })).toBeVisible();
+  const advanced = page.getByRole('button', { name: 'アプリを用意する人向けの設定' });
+  await expect(advanced).toBeHidden();
+  await page.getByText('くわしい設定', { exact: true }).click();
+  await expect(advanced).toBeVisible();
+  await page.evaluate(() => localStorage.removeItem('sns-providers:onboarding-seen'));
+  await page.reload();
+  await expect(setup.getByRole('button', { name: 'Xをつなぐ' })).toBeVisible();
+  await expect(field).toHaveCount(0);
+});

@@ -1,6 +1,6 @@
-import { apiBaseUrl, apiConfigured } from './api';
+import { apiBaseUrl, apiConfigured, fetchBudget } from './api';
 import { normalizeAppState, validateAppState } from './backup';
-import { getSyncToken } from './controlToken';
+import { getSyncToken, setSyncToken } from './controlToken';
 import { fetchWithTimeout } from './fetchWithTimeout';
 import type { AppState } from './types';
 
@@ -44,6 +44,16 @@ export function clearRemoteStateVersion() {
     memoryVersionAuthoritative = true;
     return false;
   }
+}
+
+export async function verifyAndSaveControlToken(token: string) {
+  const next = token.trim();
+  const previous = getSyncToken().trim();
+  const budget = await fetchBudget('local-user', next);
+  if (getSyncToken().trim() !== previous) throw new Error('別の設定画面で鍵が変更されました。');
+  const versionCleared = previous === next || clearRemoteStateVersion();
+  const tokenPersisted = setSyncToken(next);
+  return { budget, persisted: tokenPersisted && versionCleared };
 }
 
 function setRemoteStateVersion(updatedAt: string | null) {

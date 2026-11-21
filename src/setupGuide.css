@@ -50,13 +50,9 @@
 .setup-banner p { margin: 0; flex: 1; font-size: 15px; line-height: 1.6; color: var(--text); }
 .setup-banner button { flex: none; min-height: 44px; padding: 0 16px; border-radius: 12px; border: 0; background: var(--warn); color: var(--bg); font-weight: 800; font-size: 15px; }
 .setup-card { display: grid; gap: 10px; padding: 18px 16px; margin: 0 0 16px; border-radius: 20px; border: 1px solid var(--line); background: var(--surface); }
-.setup-card h2 { margin: 0; font-size: 21px; }
-.setup-card p { margin: 0; font-size: 15px; line-height: 1.6; color: var(--text-2); }
+.setup-card h2 { margin: 0; font-size: 1.5rem; }
+.setup-card p { margin: 0; font-size: 1.125rem; line-height: 1.6; color: var(--text-2); }
 .setup-card small { font-size: 13px; color: var(--muted); }
-.setup-card-progress { height: 8px; border-radius: 999px; background: rgb(var(--tint-rgb) / .1); overflow: hidden; }
-.setup-card-progress span { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
-.setup-card-optional { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.setup-card-optional button { min-height: 48px; font-size: 14px; }
 .theme-switcher { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; margin: 0 0 16px; border-radius: 16px; border: 1px solid var(--line); background: var(--surface); font-size: 15px; font-weight: 700; }
 .theme-switcher-options { display: flex; gap: 4px; padding: 4px; border-radius: 12px; background: var(--surface-2); }
 .theme-switcher-options button { min-height: 40px; min-width: 60px; padding: 0 12px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); font-size: 14px; font-weight: 700; }
