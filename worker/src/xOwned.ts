@@ -22,6 +22,7 @@ export interface XOwnedSyncRequest {
   maxFollowers?: number;
   maxFollowing?: number;
   maxPosts?: number;
+  profileAndPostsOnly?: boolean;
   trackedAccounts?: TrackedXAccount[];
   force?: boolean;
 }
@@ -110,9 +111,10 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
   // budget so a missing/corrupt OAuth connection cannot consume the monthly cap.
   const accessToken = await getValidXAccessToken(env, userId);
 
-  const requestedFollowers = clampInt(body.maxFollowers, 100, 0, 500);
-  const requestedFollowing = clampInt(body.maxFollowing, 100, 0, 500);
-  const requestedPosts = clampInt(body.maxPosts, 20, 0, 50);
+  const profileAndPostsOnly = body.profileAndPostsOnly === true;
+  const requestedFollowers = profileAndPostsOnly ? 0 : clampInt(body.maxFollowers, 100, 0, 500);
+  const requestedFollowing = profileAndPostsOnly ? 0 : clampInt(body.maxFollowing, 100, 0, 500);
+  const requestedPosts = profileAndPostsOnly ? 5 : clampInt(body.maxPosts, 20, 0, 50);
   const pacedCapUsd = Math.min(budget.remainingUsd, Math.max(userReadRate, budget.remainingUsd / daysRemainingInUtcMonth()));
   const maxOwnedResourcesByBudget = Math.max(0, Math.floor(((pacedCapUsd - userReadRate) + 1e-9) / ownedReadRate));
   const allocation = allocateResources(maxOwnedResourcesByBudget, requestedFollowers, requestedFollowing, requestedPosts);
@@ -225,6 +227,8 @@ export async function syncOwnedXData(env: XOwnedEnv, body: XOwnedSyncRequest) {
     // or reconstructs the conservative reservation as before.
     await finalizeReservation(env, reservationId, actualCost, 1 + followerCount + followingCount + postCount);
     reservationFinalized = true;
+    // Initial onboarding reads must never replace a full owned-account cache or a paging checkpoint.
+    if (profileAndPostsOnly) return validatedProviderResult;
 
     let followEvidence = null;
     let followEvidenceDegraded = false;

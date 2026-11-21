@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { type ConnectionStatus, helpChatAvailable, useConnectionStatus } from './connectionStatus';
+import { type ConnectionStatus, helpChatAvailable, useConnectionStatus, xReadConnectAvailable } from './connectionStatus';
 import { friendlyReason } from './friendlyReason';
 import { GROUP_LABEL, helpPrompt, type StepGroup, WIZARD_STEPS, type WizardStep } from './setupSteps';
 import { useModalA11y } from './useModalA11y';
+import XReadConnectButton from './XReadConnectButton';
 import { clearTodoChecks, isIosHomeScreenApp, loadPosition, loadTodoChecks, safariUrl, savePosition, saveTodoChecks } from './wizardMemory';
 import './wizard.css';
 
@@ -83,7 +84,8 @@ export default function SetupWizard({ initialGroup, onClose, onGoToday, onGroupC
   const [problem, setProblem] = useState('');
   const containerRef = useModalA11y<HTMLElement>(onClose);
   const problemRef = useRef<HTMLParagraphElement>(null);
-  const step = steps[index];
+  const quickConnectX = group === 'x' && xReadConnectAvailable(status);
+  const step = quickConnectX ? undefined : steps[index];
 
   useEffect(() => {
     const remembered = rememberAutoCompleted(status);
@@ -172,7 +174,11 @@ export default function SetupWizard({ initialGroup, onClose, onGoToday, onGroupC
       </div>
       <div className="wizard-progress" aria-hidden="true"><span style={{ width: `${Math.round((Math.min(index, steps.length) / steps.length) * 100)}%` }} /></div>
 
-      {step ? <div className="wizard-body" key={step.id}>
+      {quickConnectX ? <div className="wizard-body">
+        <h2 id="wizard-title">Xの読み取り連携</h2>
+        <p className="wizard-why">Xでアクセスを許可すると、プロフィール・最近の投稿・メンションを予算内で取り込みます。</p>
+        <XReadConnectButton className="primary-button full" />
+      </div> : step ? <div className="wizard-body" key={step.id}>
         <p className="wizard-kicker">次はこれをやりましょう · 約{step.minutes}分</p>
         <h2 id="wizard-title">{step.title}</h2>
         <p className="wizard-why">{step.why}</p>
@@ -233,7 +239,9 @@ function GroupDone({ group, status, done, onGroup, onJump, onGoToday }: {
         clearTodoChecks(groupSteps.map((item) => item.id));
         onJump(groupSteps[0].id);
       }}>手順を最初から見直す</button>
-      {others.map((item) => <button type="button" key={item} className="secondary-button full" onClick={() => onGroup(item)}>{GROUP_LABEL[item]}（必要なら）</button>)}
+      {others.map((item) => item === 'x' && xReadConnectAvailable(status)
+        ? <XReadConnectButton key={item} className="secondary-button full" />
+        : <button type="button" key={item} className="secondary-button full" onClick={() => onGroup(item)}>{GROUP_LABEL[item]}（必要なら）</button>)}
     </div>
   </div>;
 }

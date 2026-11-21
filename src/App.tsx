@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { friendlyReason } from './friendlyReason';
-import { analyzeSelfProfile, apiConfigured, discoverSocialCandidates, enrichXProfiles, fetchBudget, fetchCanonicalSocialActions, fetchSocialCapabilities, putRuntimeSettings, rankCandidates, syncSocialInbox } from './api';
+import { analyzeSelfProfile, apiConfigured, discoverSocialCandidates, enrichXProfiles, fetchBudget, fetchCanonicalSocialActions, fetchSocialCapabilities, putRuntimeSettings, rankCandidates, syncSocialInbox, syncXInbound } from './api';
 import { persistServerBudgetCeiling } from './budgetCeilingSave';
 import { completeSettingsBudgetSave, settingsBudgetIdentity, shouldInvalidatePendingSettingsSave } from './settingsSave';
 import BackupControls from './BackupControls';
@@ -17,7 +17,7 @@ import SetupWizard, { OPEN_HELP_CHAT_EVENT, OPEN_SETUP_EVENT, openSetupWizard } 
 import type { StepGroup } from './setupSteps';
 import HelpChat from './HelpChat';
 import DemoPreview from './DemoPreview';
-import { helpChatAvailable, useConnectionStatus } from './connectionStatus';
+import { helpChatAvailable, useConnectionStatus, xReadConnectAvailable } from './connectionStatus';
 import { loadPosition, markWizardClosed } from './wizardMemory';
 import { hasSeenOnboarding, markOnboardingSeen } from './onboardingState';
 import { clearPendingHandoff, rememberPendingHandoff, restorePendingHandoff } from './pendingHandoff';
@@ -29,6 +29,10 @@ import { setLiveSocialCapabilities, SOCIAL_CAPABILITIES_CHANGED } from './social
 import { applyInstagramDmEvents, applyXDmEvents } from './dmInboundStore';
 import { applyInstagramEngagers } from './instagramOwnedStore';
 import { applyXInboundEvents } from './xInboundStore';
+import { fetchXOAuthStatus, syncOwnedXData } from './xAccount';
+import { applyOwnedXSyncWithDiscovery } from './xOwnedStore';
+import { consumeXReadAttempt, pendingXReadAttempt, readXConsentCompleted, takeXOAuthReturn } from './xReadAttempt';
+import XReadConnectButton from './XReadConnectButton';
 import type { AppState, AppStateUpdater, Candidate, Platform, SocialAction } from './types';
 import { useLocalDayKey } from './useLocalDay';
 import { useModalA11y } from './useModalA11y';
@@ -89,7 +93,9 @@ function App() {
   // app, bring it back on the same step.
   const [wizardGroup, setWizardGroup] = useState<StepGroup | null>(() => (loadPosition()?.open ? loadPosition()!.group : null));
   const [helpQuestion, setHelpQuestion] = useState<string | null>(null);
-  const { status: connection } = useConnectionStatus();
+  const { status: connection, refresh: refreshConnection } = useConnectionStatus();
+  const [xReadNote, setXReadNote] = useState('');
+  const [xReadSyncing, setXReadSyncing] = useState(false);
   const [capabilityEpoch, setCapabilityEpoch] = useState(0);
   const [autoRetryTick, setAutoRetryTick] = useState(0);
   const autoReplenishingRef = useRef(false);
@@ -97,6 +103,7 @@ function App() {
   const autoReplenishRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastInboxSyncRef = useRef(0);
   const inboxSyncingRef = useRef(false);
+  const checkXReturnAgain = useRef(false);
   const budgetLimitRef = useRef(spendingCeilingUsd(state.budget));
   budgetLimitRef.current = spendingCeilingUsd(state.budget);
   const localDay = useLocalDayKey();
@@ -168,10 +175,91 @@ function App() {
 
   useEffect(() => {
     if (!apiConfigured) return;
+
+    async function syncNewXConnection(attempt: number, token: string) {
+      const verified = await fetchXOAuthStatus();
+      if (getSyncToken().trim() !== token || !verified.connected || !readXConsentCompleted(attempt, verified.updatedAt)) return false;
+      if (!consumeXReadAttempt(attempt)) return true;
+
+      markWizardClosed();
+      setWizardGroup(null);
+      setTab('today');
+      setXReadSyncing(true);
+      setXReadNote('Xと接続しました。プロフィール・投稿・メンションを取り込んでいます…');
+      setState((current) => ({ ...current, xAccount: {} }));
+      lastInboxSyncRef.current = Date.now();
+      try {
+        const limit = budgetLimitRef.current;
+        const [profile, inbox] = await Promise.allSettled([
+          syncOwnedXData(limit, [], 'local-user', { profileAndPostsOnly: true }),
+          syncXInbound('local-user', limit),
+        ]);
+        if (getSyncToken().trim() !== token) return true;
+        const current = await fetchXOAuthStatus();
+        if (getSyncToken().trim() !== token) return true;
+        const sameConnection = verified.xUserId
+          ? current.xUserId === verified.xUserId
+          : current.updatedAt === verified.updatedAt;
+        if (!current.connected || !sameConnection) {
+          setXReadNote('Xの接続先が変わったため、今回の取り込みを停止しました。');
+          return true;
+        }
+
+        const owned = profile.status === 'fulfilled' ? profile.value : null;
+        const mentions = inbox.status === 'fulfilled' ? inbox.value : null;
+        setState((state) => {
+          const withProfile = owned?.enabled ? applyOwnedXSyncWithDiscovery(state, owned) : state;
+          return mentions?.enabled ? applyXInboundEvents(withProfile, mentions) : withProfile;
+        });
+        const profileNote = owned?.enabled
+          ? (owned.requested?.posts
+            ? `プロフィールを取得。最近の投稿 ${owned.posts?.length ?? 0}件`
+            : 'プロフィールを取得。投稿の取得は予算の範囲で見送りました')
+          : `プロフィール・投稿: ${friendlyReason(owned?.reason || '取得できませんでした')}`;
+        const mentionsNote = mentions?.enabled
+          ? `メンション ${mentions.events.length}件を確認`
+          : `メンション: ${friendlyReason(mentions?.reason || '取得できませんでした')}`;
+        setXReadNote(`X接続済み · ${profileNote} · ${mentionsNote}`);
+        void fetchBudget().then((budget) => {
+          if (getSyncToken().trim() === token && budget.ledgerAvailable !== false) {
+            setState((state) => syncBudget(state, budget.usedUsd, budget.limitUsd));
+          }
+        }).catch(() => undefined);
+      } catch {
+        setXReadNote('Xには接続しましたが、取り込み結果を確認できませんでした。');
+      } finally {
+        setXReadSyncing(false);
+        void refreshConnection();
+      }
+      return true;
+    }
+
     const refreshInbox = async (forceReadSync: boolean) => {
-      if (!getSyncToken().trim() || inboxSyncingRef.current) return;
+      const returned = takeXOAuthReturn();
+      if (returned === 'upgraded') {
+        setXReadNote('Xの権限を追加しました。');
+      } else if (returned === 'account_mismatch') {
+        setXReadNote('別のXアカウントが選ばれたため、権限の追加を中止しました。');
+      } else if (returned && returned !== 'connected') {
+        const attempt = pendingXReadAttempt();
+        if (attempt !== null) consumeXReadAttempt(attempt);
+        setXReadNote(returned === 'access_denied'
+          ? 'Xのアクセス許可がキャンセルされました。'
+          : 'Xの接続を完了できませんでした。');
+      }
+      const attempt = pendingXReadAttempt();
+      const token = getSyncToken().trim();
+      if (!token) {
+        if (returned === 'connected') setXReadNote('いつものSocial Missionを開くと、Xの接続を確認できます。');
+        return;
+      }
+      if (inboxSyncingRef.current) {
+        checkXReturnAgain.current ||= attempt !== null;
+        return;
+      }
       inboxSyncingRef.current = true;
       try {
+        if (attempt !== null && await syncNewXConnection(attempt, token)) return;
         try {
           const canonical = await fetchCanonicalSocialActions();
           setState((current) => applyCanonicalServerActions(current, canonical as Parameters<typeof applyCanonicalServerActions>[1]));
@@ -179,6 +267,8 @@ function App() {
           // Canonical list is best-effort; local Mission Inbox remains usable.
         }
         const now = Date.now();
+        const newAttempt = pendingXReadAttempt();
+        if (newAttempt !== null && newAttempt !== attempt) return;
         if (!forceReadSync && now - lastInboxSyncRef.current < 15 * 60 * 1000) return;
         lastInboxSyncRef.current = now;
         const inbox = await syncSocialInbox('local-user', budgetLimitRef.current);
@@ -236,8 +326,13 @@ function App() {
         });
       } catch {
         // Read sync fail-closes on the Worker; the local inbox stays visible.
+        if (attempt !== null) setXReadNote('Xの接続をまだ確認できませんでした。');
       } finally {
         inboxSyncingRef.current = false;
+        if (checkXReturnAgain.current) {
+          checkXReturnAgain.current = false;
+          if (pendingXReadAttempt() !== null) void refreshInbox(false);
+        }
       }
     };
     void refreshInbox(true);
@@ -245,8 +340,12 @@ function App() {
       if (document.visibilityState === 'visible') void refreshInbox(false);
     };
     document.addEventListener('visibilitychange', onVis);
-    return () => document.removeEventListener('visibilitychange', onVis);
-  }, []);
+    window.addEventListener('pageshow', onVis);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('pageshow', onVis);
+    };
+  }, [refreshConnection]);
 
   useEffect(() => {
     if (state.relationshipPolicy.autoReplenishEnabled === false
@@ -583,6 +682,12 @@ function App() {
       {storageError && <div className="persistence-alert" role="alert">{storageError}</div>}
 
       <main className="page">
+        {tab === 'today' && (xReadNote || xReadConnectAvailable(connection)) && (
+          <section className="setup-banner" aria-label="Xの読み取り連携">
+            <p role="status">{xReadNote || 'Xで許可すると、プロフィール・最近の投稿・メンションを予算内で取り込みます。'}</p>
+            {!xReadSyncing && xReadConnectAvailable(connection) && <XReadConnectButton />}
+          </section>
+        )}
         {tab === 'today' && <Today state={state} onChange={setState} doneToday={doneToday} onOpen={onOpen} onTab={setTab} capabilityEpoch={capabilityEpoch} />}
         {tab === 'discover' && <Discover onOpenSettings={() => setTab('settings')} state={state} candidates={active} onOpen={onOpen} onChange={setState} onDiscover={discoverCandidates} onRerank={rerankCandidates} onEnrichX={enrichXCandidates} discovering={discovering} ranking={ranking} enrichingX={enrichingX} />}
         {tab === 'relations' && <Relations state={state} onOpen={onOpen} onChange={setState} />}

@@ -1,6 +1,7 @@
 import { apiBaseUrl, apiConfigured } from './api';
 import { getSyncToken } from './controlToken';
 import { fetchWithTimeout } from './fetchWithTimeout';
+import { rememberXReadAttempt } from './xReadAttempt';
 import type { Candidate, PublicMetrics } from './types';
 
 export interface XOAuthStatus {
@@ -17,6 +18,7 @@ export interface XOAuthStatus {
   expiresAt: string | null;
   updatedAt: string | null;
   refreshable?: boolean;
+  xUserId?: string | null;
 }
 
 export interface XOwnedUser {
@@ -137,6 +139,8 @@ export async function startXOAuth(intent: 'read' | 'reply' | 'relationship' | 'e
   if (intent === 'dm' && (!granted.has('dm.read') || !granted.has('dm.write'))) {
     throw new Error('X DM権限の追加要求が不正です');
   }
+  if (getSyncToken().trim() !== token) throw new Error('個人管理キーが切り替わりました。もう一度お試しください。');
+  if (intent === 'read') rememberXReadAttempt();
   window.location.assign(result.authorizeUrl);
 }
 
@@ -148,7 +152,12 @@ export async function disconnectXOAuth(userId = 'local-user') {
   return { ok: true };
 }
 
-export async function syncOwnedXData(monthlyLimitUsd: number, candidates: Candidate[] = [], userId = 'local-user') {
+export async function syncOwnedXData(
+  monthlyLimitUsd: number,
+  candidates: Candidate[] = [],
+  userId = 'local-user',
+  options?: { profileAndPostsOnly: true },
+) {
   if (!apiConfigured) throw new Error('サーバーが未接続です（設定 →「準備をはじめる」）');
   const token = requiredControlToken();
   const trackedAccounts = candidates
@@ -171,9 +180,10 @@ export async function syncOwnedXData(monthlyLimitUsd: number, candidates: Candid
     body: JSON.stringify({
       userId,
       monthlyLimitUsd,
-      maxFollowers: 100,
-      maxFollowing: 100,
-      maxPosts: 20,
+      maxFollowers: options?.profileAndPostsOnly ? 0 : 100,
+      maxFollowing: options?.profileAndPostsOnly ? 0 : 100,
+      maxPosts: options?.profileAndPostsOnly ? 5 : 20,
+      profileAndPostsOnly: options?.profileAndPostsOnly,
       trackedAccounts,
     }),
   }, token, 90_000);
@@ -214,6 +224,7 @@ function validOAuthStatus(value: unknown): value is XOAuthStatus {
     && value.scopes.every((scope) => typeof scope === 'string' && scope.length <= 80)
     && nullableIso(value.expiresAt)
     && nullableIso(value.updatedAt)
+    && (value.xUserId == null || (typeof value.xUserId === 'string' && /^\d{1,30}$/.test(value.xUserId)))
     && (value.refreshable == null || typeof value.refreshable === 'boolean')
     && (value.capabilities == null || validXCapabilities(value.capabilities));
 }

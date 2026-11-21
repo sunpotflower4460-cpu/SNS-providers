@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { coreReady, useConnectionStatus } from './connectionStatus';
+import { coreReady, useConnectionStatus, xReadConnectAvailable } from './connectionStatus';
 import { nextOpenStep, openSetupWizard, rememberAutoCompleted } from './SetupWizard';
 import { GROUP_LABEL, type StepGroup, WIZARD_STEPS } from './setupSteps';
 import { loadThemePreference, saveThemePreference, type ThemePreference } from './themePreference';
+import XReadConnectButton from './XReadConnectButton';
 import './setupGuide.css';
 
 /** Settings summary: one progress bar and one button that resumes the step-by-step popup. */
@@ -24,6 +25,9 @@ export default function SetupGuide() {
       : <button type="button" className="secondary-button full" onClick={() => openSetupWizard('core')}>準備の手順を見直す（キーの入れ替えなど）</button>}
     <div className="setup-card-optional">
       {optional.map((group) => {
+        if (group === 'x' && xReadConnectAvailable(status)) {
+          return <XReadConnectButton key={group} className="secondary-button" />;
+        }
         const pending = nextOpenStep(group, status);
         // The checkmark follows the wizard's own completion (for X that includes the inbox
         // pricing step), not just a valid token.

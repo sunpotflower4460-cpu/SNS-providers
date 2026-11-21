@@ -1,9 +1,7 @@
 import type { ReactNode } from 'react';
 import type { ConnectionStatus } from './connectionStatus';
-import { useState } from 'react';
-import { friendlyReason } from './friendlyReason';
 import { appUrl, CopyField, PersonalKeyMaker, serverUrl, XPriceTable, XServerValues, XSetupValues } from './setupHelpers';
-import { startXOAuth } from './xAccount';
+import XReadConnectButton from './XReadConnectButton';
 
 const UPSTREAM_REPO = 'https://github.com/sunpotflower4460-cpu/SNS-providers';
 
@@ -175,7 +173,7 @@ export const WIZARD_STEPS: WizardStep[] = [
     open: { label: 'Xの開発者ページを開く', href: 'https://console.x.com/' },
     todo: [
       '「Apps」→ 新しいアプリ（Production / Pay-per-use）',
-      '「Settings」→「User authentication settings」: Web App、権限は Read and write',
+      '「Settings」→「User authentication settings」: Web App、権限は Read',
       'Callback URI と Website URL に下の値を貼って保存 →「Keys and tokens」で Client ID / Secret をメモ',
     ],
     extra: () => <XSetupValues />,
@@ -201,8 +199,8 @@ export const WIZARD_STEPS: WizardStep[] = [
     group: 'x',
     title: 'X：ログインする',
     why: 'ここを押すとXの確認画面が開きます。「許可」を押せば接続完了です。',
-    todo: ['下の「Xでログイン」を押す', 'Xの画面で「アプリにアクセスを許可」'],
-    extra: () => <XLoginButton />,
+    todo: ['下の「Xをつなぐ」を押す', 'Xの画面で「アプリにアクセスを許可」'],
+    extra: () => <XReadConnectButton className="primary-button full" />,
     done: (status) => status.x === 'ready',
     verify: true,
     minutes: 1,
@@ -271,23 +269,4 @@ export function helpPrompt(step: WizardStep) {
     step.open ? `開くページ: ${step.open.href}` : '',
     'どこを押せばいいか分からないので、パソコンやスマホに詳しくない人向けに、画面の見た目も含めてやさしく1つずつ教えてください。',
   ].filter(Boolean).join('\n');
-}
-
-function XLoginButton() {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  async function login() {
-    setBusy(true);
-    setError('');
-    try {
-      await startXOAuth('read');
-    } catch (reason) {
-      setError(friendlyReason(reason instanceof Error ? reason.message : 'Xのログインを開始できませんでした'));
-      setBusy(false);
-    }
-  }
-  return <>
-    <button type="button" className="primary-button full" disabled={busy} onClick={() => void login()}>{busy ? 'Xを開いています…' : 'Xでログイン（読み取りのみ）'}</button>
-    {error && <p className="wizard-problem" role="alert">{error}</p>}
-  </>;
 }

@@ -115,6 +115,10 @@ export function coreReady(status: ConnectionStatus) {
   return status.server === 'ready' && status.reachable !== 'todo' && status.key === 'ready';
 }
 
+export function xReadConnectAvailable(status: ConnectionStatus) {
+  return coreReady(status) && status.x === 'partial';
+}
+
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? value as Record<string, unknown> : {};
 }
