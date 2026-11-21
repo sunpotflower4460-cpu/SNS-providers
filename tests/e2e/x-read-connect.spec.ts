@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { createServer, type ViteDevServer } from 'vite';
 
-const worker = 'https://x-read-test.example.invalid';
+const workerPath = '/fixture-worker';
 const scopes = ['tweet.read', 'users.read', 'follows.read', 'offline.access'];
 let server: ViteDevServer;
 let app: string;
@@ -9,7 +9,7 @@ let app: string;
 test.beforeAll(async () => {
   server = await createServer({
     base: '/SNS-providers/',
-    define: { 'import.meta.env.VITE_API_BASE_URL': JSON.stringify(worker) },
+    define: { 'import.meta.env.VITE_API_BASE_URL': JSON.stringify(workerPath) },
     server: { host: '127.0.0.1', port: 0, hmr: false },
   });
   await server.listen();
@@ -23,6 +23,7 @@ test.afterAll(async () => {
 });
 
 test('X quick connect verifies consent, then reads profile, posts and mentions once', async ({ page }) => {
+  const worker = new URL(workerPath, app).href;
   await page.addInitScript((appUrl) => {
     if (location.origin !== new URL(appUrl).origin) return;
     localStorage.setItem('sns-providers:onboarding-seen', '1');
@@ -36,7 +37,7 @@ test('X quick connect verifies consent, then reads profile, posts and mentions o
   const xPosts: Array<{ path: string; body: unknown }> = [];
   const consentUrl = new URL('https://x.com/i/oauth2/authorize');
   consentUrl.searchParams.set('scope', scopes.join(' '));
-  await page.route('https://x.com/i/oauth2/authorize?*', (route) => route.fulfill({
+  await page.route((url) => url.origin === consentUrl.origin && url.pathname === consentUrl.pathname, (route) => route.fulfill({
     contentType: 'text/html',
     body: '<!doctype html><meta charset="utf-8"><a href="/fixture-consent">アプリにアクセスを許可</a>',
   }));
@@ -46,13 +47,7 @@ test('X quick connect verifies consent, then reads profile, posts and mentions o
   });
   await page.route(`${worker}/**`, (route) => {
     const request = route.request();
-    const path = new URL(request.url()).pathname;
-    const headers = {
-      'access-control-allow-origin': '*',
-      'access-control-allow-headers': 'authorization, content-type',
-      'access-control-allow-methods': 'GET, POST, OPTIONS',
-    };
-    if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
+    const path = new URL(request.url()).pathname.slice(workerPath.length);
     if (request.method() === 'POST' && path.startsWith('/api/x/')) {
       xPosts.push({ path, body: request.postDataJSON() });
     }
@@ -99,7 +94,7 @@ test('X quick connect verifies consent, then reads profile, posts and mentions o
       '/api/social/inbox/sync': {},
     };
     const json = replies[path];
-    return route.fulfill({ status: json ? 200 : 404, headers, json: json || {} });
+    return route.fulfill({ status: json ? 200 : 404, json: json || {} });
   });
 
   await page.goto(`${app}?x_oauth=connected`);
@@ -112,9 +107,10 @@ test('X quick connect verifies consent, then reads profile, posts and mentions o
   await expect(page.getByRole('button', { name: 'Xをつなぐ', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '今日', exact: true }).click();
   await button.click();
+  await expect.poll(() => xPosts).toEqual([{ path: '/api/x/oauth/start', body: { intent: 'read' } }]);
+  await expect(page).toHaveURL(consentUrl.href);
   const consent = page.getByRole('link', { name: 'アプリにアクセスを許可' });
   await expect(consent).toBeVisible();
-  expect(xPosts).toEqual([{ path: '/api/x/oauth/start', body: { intent: 'read' } }]);
   await consent.click();
   await expect.poll(() => connectedAt).not.toBeNull();
   await expect(quickConnect).toContainText('プロフィールを取得。最近の投稿 1件');

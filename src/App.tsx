@@ -215,10 +215,10 @@ function App() {
           ? (owned.requested?.posts
             ? `プロフィールを取得。最近の投稿 ${owned.posts?.length ?? 0}件`
             : 'プロフィールを取得。投稿の取得は予算の範囲で見送りました')
-          : `プロフィール・投稿: ${friendlyReason(owned?.reason || '取得できませんでした')}`;
+          : `「プロフィール・投稿」 ${friendlyReason(owned?.reason || '取得できませんでした')}`;
         const mentionsNote = mentions?.enabled
           ? `メンション ${mentions.events.length}件を確認`
-          : `メンション: ${friendlyReason(mentions?.reason || '取得できませんでした')}`;
+          : `「メンション」 ${friendlyReason(mentions?.reason || '取得できませんでした')}`;
         setXReadNote(`X接続済み · ${profileNote} · ${mentionsNote}`);
         void fetchBudget().then((budget) => {
           if (getSyncToken().trim() === token && budget.ledgerAvailable !== false) {
