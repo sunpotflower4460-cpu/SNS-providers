@@ -77,7 +77,7 @@ export async function buildProductionPreflight(env: PreflightEnv, userId: string
   const checks: Check[] = [];
   checks.push(schema.connected && schema.partial.length === 0 && schema.currentVersion === EXPECTED_SCHEMA_VERSION
     ? ok('database', 'D1 schema matches the expected migration version.')
-    : block('database', schema.reason || `D1 is at version ${schema.currentVersion ?? 'unknown'}; expected ${EXPECTED_SCHEMA_VERSION}.`, 'Run the GitHub Action “Migrate production D1” (workflow_dispatch).'));
+    : block('database', schema.reason || `D1 is at version ${schema.currentVersion ?? 'unknown'}; expected ${EXPECTED_SCHEMA_VERSION}.`, 'Apply the versioned D1 migrations in Cloudflare.'));
   checks.push(socialActionsReady
     ? ok('socialActionSchemaReady', 'social_actions table is ready.')
     : block('socialActionSchemaReady', 'social_actions table is missing.', 'Run production D1 migrations.'));

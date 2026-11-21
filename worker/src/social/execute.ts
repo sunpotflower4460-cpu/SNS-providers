@@ -151,7 +151,7 @@ export async function executeSocialAction(
     }
   }
   if (parsed.museApproval) {
-    const review = await buildMuseReview(env, action, event, storedXUserId);
+    const review = await buildMuseReview(env, action, event, storedXUserId, xScopes);
     if (!review.ready || parsed.draft.length > review.maxDraftLength
       || await museApprovalHash([review.binding, parsed.draft]) !== parsed.museApproval) {
       return {
@@ -179,7 +179,7 @@ export async function executeSocialAction(
   if ('ok' in target && target.ok === false) return { status: 400, body: target };
 
   const now = new Date().toISOString();
-  const claimed = await claimActionForExecution(env.DB, userId, action.id, now);
+  const claimed = await claimActionForExecution(env.DB, userId, action.id, now, parsed.museApproval ? action.updatedAt : null);
   if (!claimed) {
     const latest = await loadCanonicalAction(env.DB, userId, action.id);
     if (latest?.status === 'executing') {
@@ -574,7 +574,7 @@ export async function previewSocialAction(env: SocialExecuteEnv, userId: string,
         targetUrl: action.targetUrl,
         username: action.username,
       },
-      review: await buildMuseReview(env, action, event, oauth?.xUserId),
+      review: await buildMuseReview(env, action, event, oauth?.xUserId, oauth?.scopes),
       lastExecution: lastExecution && {
         executionId: lastExecution.idempotencyKey,
         status: lastExecution.status,
@@ -590,6 +590,7 @@ async function buildMuseReview(
   action: CanonicalSocialAction,
   event: CanonicalSocialEvent | null,
   xUserId?: string | null,
+  xScopes: readonly string[] = [],
 ) {
   if (!needsDraft(action.type)) {
     return { ready: false as const, reason: 'This action stays in the official app.' };
@@ -609,6 +610,9 @@ async function buildMuseReview(
   const costUsd = testMode ? 0 : knownWriteCost(env, target.operation);
   if (!actorId || !operationWriteEnabled(env, target.operation) || costUsd === null) {
     return { ready: false as const, reason: 'Account, write flag, or operation price is not ready.' };
+  }
+  if (target.operation === 'x_reply_write' && !liveXCapabilities(env, xScopes).sendReply) {
+    return { ready: false as const, reason: 'Xの返信権限を有効にしてから、アプリでXに再接続してください。' };
   }
   // Keep the approved text intact when the provider adapter has a lower limit.
   const maxDraftLength = target.operation === 'instagram_comment_reply' ? 2200

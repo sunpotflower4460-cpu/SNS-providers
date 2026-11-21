@@ -138,15 +138,16 @@ export async function upsertProviderSocialAction(db: D1Database, action: Canonic
   ).run();
 }
 
-export async function claimActionForExecution(db: D1Database, userId: string, actionId: string, nowIso: string) {
+export async function claimActionForExecution(db: D1Database, userId: string, actionId: string, nowIso: string, expectedUpdatedAt: string | null = null) {
   try {
     const result = await db.prepare(
       `UPDATE social_actions
        SET status = 'executing', updated_at = ?
        WHERE id = ? AND user_id = ?
          AND status IN ('pending', 'ready', 'failed')
-         AND (status <> 'failed' OR retryable = 1)`
-    ).bind(nowIso, actionId, userId).run();
+         AND (status <> 'failed' OR retryable = 1)
+         AND (? IS NULL OR updated_at = ?)`
+    ).bind(nowIso, actionId, userId, expectedUpdatedAt, expectedUpdatedAt).run();
     return (result.meta.changes || 0) === 1;
   } catch {
     return false;

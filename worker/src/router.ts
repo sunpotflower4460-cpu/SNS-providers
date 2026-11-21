@@ -1,6 +1,7 @@
 import api from './index';
 import { answerHelp, type HelpEnv } from './help';
 import { discoverSocialProfiles } from './discovery';
+import { handleMuseRequest, isMusePath } from './muse';
 import { syncInstagramEngagers, type InstagramOwnedSyncRequest } from './instagramOwned';
 import { executeSocialAction, previewSocialAction } from './social/execute';
 import { executionModeForAction, liveInstagramCapabilities, liveSocialCapabilities } from './social/capabilities';
@@ -134,7 +135,7 @@ function isReconcilePath(pathname: string) {
 
 function isRoutedApiPath(pathname: string) {
   return ROUTER_CORS_PATHS.has(pathname) || isSocialExecutePath(pathname) || isSocialActionPreviewPath(pathname)
-    || isSocialLifecyclePath(pathname) || isReconcilePath(pathname);
+    || isSocialLifecyclePath(pathname) || isReconcilePath(pathname) || isMusePath(pathname);
 }
 
 export default {
@@ -158,6 +159,13 @@ export default {
     if (PROVIDER_COST_PATHS.has(url.pathname)) {
       const authorized = await authorizeSync(request, env);
       if (!authorized.ok) return json({ error: authorized.reason }, authorized.status, request, env);
+    }
+
+    if (isMusePath(url.pathname)) {
+      const authorized = await authorizeSync(request, env);
+      if (!authorized.ok) return json({ error: authorized.reason, code: 'UNAUTHENTICATED' }, authorized.status, request, env);
+      const result = await handleMuseRequest(request, url.pathname, env, 'local-user');
+      return json(result.body, result.status, request, env);
     }
 
     if (request.method === 'POST' && url.pathname === '/api/x/oauth/start') {
@@ -680,7 +688,7 @@ async function enforceSingleUserRequest(request: Request, url: URL) {
       } catch {
         return { ok: false as const, status: 400, reason: 'Request body must be valid JSON.' };
       }
-      if (Object.prototype.hasOwnProperty.call(body, 'userId') && body.userId != null) {
+      if (body && Object.prototype.hasOwnProperty.call(body, 'userId') && body.userId != null) {
         if (typeof body.userId !== 'string' || body.userId.trim() !== 'local-user') {
           return { ok: false as const, status: 400, reason: 'This deployment only supports userId=local-user.' };
         }
