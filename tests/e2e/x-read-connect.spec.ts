@@ -6,6 +6,8 @@ const scopes = ['tweet.read', 'users.read', 'follows.read', 'offline.access'];
 let server: ViteDevServer;
 let app: string;
 
+test.use({ serviceWorkers: 'block' });
+
 test.beforeAll(async () => {
   server = await createServer({
     base: '/SNS-providers/',
@@ -37,13 +39,14 @@ test('X quick connect verifies consent, then reads profile, posts and mentions o
   const xPosts: Array<{ path: string; body: unknown }> = [];
   const consentUrl = new URL('https://x.com/i/oauth2/authorize');
   consentUrl.searchParams.set('scope', scopes.join(' '));
+  const consentReturn = `${app}?x_oauth=connected&fixture_consent=1`;
   await page.route((url) => url.origin === consentUrl.origin && url.pathname === consentUrl.pathname, (route) => route.fulfill({
     contentType: 'text/html',
-    body: '<!doctype html><meta charset="utf-8"><a href="/fixture-consent">アプリにアクセスを許可</a>',
+    body: `<!doctype html><meta charset="utf-8"><a href="${consentReturn.replace('&', '&amp;')}">アプリにアクセスを許可</a>`,
   }));
-  await page.route('https://x.com/fixture-consent', (route) => {
+  await page.route((url) => url.href === consentReturn, (route) => {
     connectedAt = new Date().toISOString();
-    return route.fulfill({ status: 302, headers: { location: `${app}?x_oauth=connected` } });
+    return route.continue();
   });
   await page.route(`${worker}/**`, (route) => {
     const request = route.request();
