@@ -4,7 +4,10 @@ import { selectCandidatesForRanking } from './localFilter';
 import { candidateRequestKey, missionRequestKey, selfRequestKey, xProfileRequestKey } from './requestContext';
 import type { Candidate, Mission, PublicMetrics } from './types';
 
-const rawBase = import.meta.env.VITE_API_BASE_URL?.trim() || '';
+const hostedBase = typeof document === 'undefined'
+  ? ''
+  : document.querySelector<HTMLMetaElement>('meta[name="social-mission-api-origin"]')?.content || '';
+const rawBase = import.meta.env.VITE_API_BASE_URL?.trim() || hostedBase;
 export const apiBaseUrl = rawBase.replace(/\/$/, '');
 export const apiConfigured = Boolean(apiBaseUrl);
 
