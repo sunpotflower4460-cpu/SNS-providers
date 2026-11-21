@@ -14,7 +14,7 @@ const rules: Array<[RegExp, string]> = [
   [/X_BEARER_TOKEN|X_USER_READ_USD/, 'X公式情報の更新はサーバーで未設定です（X_BEARER_TOKEN と X_USER_READ_USD）。使わなくても他の機能は動きます。'],
   [/X account is not connected/i, 'Xがまだ接続されていません。設定 →「アプリ・SNS・クラウド接続」→「Xを読み取り専用で接続」を押してください。'],
   [/HARD LIMIT/i, '今月の予算上限に達したため、有料の処理を止めました。設定 →「予算と整理ルール」で上限を確認できます。'],
-  [/Budget ledger|budget-ledger|D1 .*unavailable|no such table/i, 'サーバーのデータベースが未準備です。GitHub → Actions →「Migrate production D1」を実行してください。'],
+  [/Budget ledger|budget-ledger|D1 .*unavailable|no such table/i, 'サーバーのデータベースを確認できません。運用側でD1の状態を確認してください。'],
   [/TAVILY_API_KEY/, '自動の候補探しはサーバーで未設定です（TAVILY_API_KEY）。「今すぐ探す」のキーワード検索は使えます。'],
   [/Only Tavily free-mode/i, '自動の候補探しは TAVILY_BILLING_MODE=free のときだけ動きます。Cloudflareの変数を確認してください。'],
   [/INSTAGRAM_ACCESS_TOKEN|Instagram token, professional user ID, and API version/i, 'Instagram連携がサーバーで未設定です。設定 →「Instagramとつなぐ」を行ってください。'],

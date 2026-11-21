@@ -29,23 +29,6 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
   const [note, setNote] = useState(apiConfigured ? 'Xの接続状態を確認しています…' : 'X接続はまだ利用できません');
 
   useEffect(() => {
-    const currentUrl = new URL(window.location.href);
-    const oauthResult = currentUrl.searchParams.get('x_oauth');
-    if (oauthResult) {
-      if (oauthResult === 'connected') {
-        onChange((current) => ({ ...current, xAccount: {} }));
-        setNote('X接続を更新しました。Xの情報を更新すると現在のアカウント情報を表示します');
-      } else if (oauthResult === 'upgraded') {
-        setNote('同じXアカウントへ権限を追加しました。既存の読み取りデータは残しています');
-      } else if (oauthResult === 'account_mismatch') {
-        setNote('別のXアカウントが選ばれたため権限追加を中止しました。以前の接続はそのままです');
-      } else {
-        setNote('X接続を完了できませんでした。もう一度接続をお試しください');
-      }
-      currentUrl.searchParams.delete('x_oauth');
-      window.history.replaceState(window.history.state, '', `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`);
-    }
-
     if (!apiConfigured) return;
     let cancelled = false;
     let requestGeneration = 0;
@@ -90,6 +73,7 @@ export default function XAccountControls({ state, onChange }: { state: AppState;
       await startXOAuth('read');
     } catch (error) {
       setNote(error instanceof Error ? error.message : 'Xへの接続を開始できませんでした');
+    } finally {
       setLoading(false);
     }
   }
